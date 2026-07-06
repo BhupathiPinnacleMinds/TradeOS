@@ -1,0 +1,420 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum CustomerStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum JobStatus {
+  LEAD
+  QUOTED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  OTHER
+}
+
+enum MessageChannel {
+  SMS
+  EMAIL
+  INTERNAL
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  DRAFT
+  AWAITING_CONFIRMATION
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+enum AiActionType {
+  SEND_SMS
+  SEND_EMAIL
+  SEND_QUOTE
+  SEND_INVOICE
+}
+
+enum AiActionStatus {
+  DRAFT
+  AWAITING_CONFIRMATION
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  FAILED
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model Business {
+  id              String           @id @default(cuid())
+  name            String
+  abn             String?
+  timezone        String           @default("Australia/Sydney")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  users           User[]
+  customers       Customer[]
+  jobs            Job[]
+  quotes          Quote[]
+  invoices        Invoice[]
+  payments        Payment[]
+  messages        Message[]
+  notifications   Notification[]
+  aiConversations AiConversation[]
+  aiMessages      AiMessage[]
+  aiActions       AiAction[]
+  documents       Document[]
+  integrations    Integration[]
+}
+
+model User {
+  id              String           @id @default(cuid())
+  businessId      String
+  email           String
+  firstName       String
+  lastName        String
+  role            Role             @default(STAFF)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  notifications   Notification[]
+  aiConversations AiConversation[]
+
+  @@unique([businessId, email])
+  @@unique([id, businessId])
+  @@index([businessId, role])
+}
+
+model Customer {
+  id         String         @id @default(cuid())
+  businessId String
+  firstName  String
+  lastName   String?
+  company    String?
+  email      String?
+  phone      String?
+  address    String?
+  notes      String?
+  status     CustomerStatus @default(ACTIVE)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  jobs       Job[]
+  quotes     Quote[]
+  invoices   Invoice[]
+  messages   Message[]
+
+  @@unique([id, businessId])
+  @@index([businessId, status])
+  @@index([businessId, lastName, firstName])
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  businessId  String
+  customerId  String
+  title       String
+  description String?
+  status      JobStatus @default(LEAD)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  address     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer    Customer  @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  quotes      Quote[]
+  invoices    Invoice[]
+  messages    Message[]
+  documents   Document[]
+
+  @@unique([id, businessId])
+  @@index([businessId, status, startsAt])
+  @@index([businessId, customerId])
+}
+
+model Quote {
+  id         String      @id @default(cuid())
+  businessId String
+  customerId String
+  jobId      String?
+  number     String
+  status     QuoteStatus @default(DRAFT)
+  issueDate  DateTime    @default(now())
+  expiryDate DateTime?
+  subtotal   Decimal     @db.Decimal(12, 2)
+  gst        Decimal     @db.Decimal(12, 2)
+  total      Decimal     @db.Decimal(12, 2)
+  notes      String?
+  sentAt     DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  business   Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer   Customer    @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  job        Job?        @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  lineItems  QuoteLineItem[]
+
+  @@unique([businessId, number])
+  @@unique([id, businessId])
+  @@index([businessId, status, issueDate])
+  @@index([businessId, customerId])
+}
+
+model QuoteLineItem {
+  id          String  @id @default(cuid())
+  businessId  String
+  quoteId     String
+  description String
+  quantity    Decimal @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  total       Decimal @db.Decimal(12, 2)
+  sortOrder   Int     @default(0)
+  quote       Quote   @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, quoteId])
+}
+
+model Invoice {
+  id         String        @id @default(cuid())
+  businessId String
+  customerId String
+  jobId      String?
+  number     String
+  status     InvoiceStatus @default(DRAFT)
+  issueDate  DateTime      @default(now())
+  dueDate    DateTime
+  subtotal   Decimal       @db.Decimal(12, 2)
+  gst        Decimal       @db.Decimal(12, 2)
+  total      Decimal       @db.Decimal(12, 2)
+  amountPaid Decimal       @default(0) @db.Decimal(12, 2)
+  notes      String?
+  sentAt     DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer   Customer      @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  job        Job?          @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  lineItems  InvoiceLineItem[]
+  payments   Payment[]
+
+  @@unique([businessId, number])
+  @@unique([id, businessId])
+  @@index([businessId, status, dueDate])
+  @@index([businessId, customerId])
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(cuid())
+  businessId  String
+  invoiceId   String
+  description String
+  quantity    Decimal @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  total       Decimal @db.Decimal(12, 2)
+  sortOrder   Int     @default(0)
+  invoice     Invoice @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, invoiceId])
+}
+
+model Payment {
+  id         String        @id @default(cuid())
+  businessId String
+  invoiceId  String
+  amount     Decimal       @db.Decimal(12, 2)
+  status     PaymentStatus @default(PENDING)
+  method     PaymentMethod
+  reference  String?
+  paidAt     DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice    Invoice       @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@index([businessId, status, paidAt])
+  @@index([businessId, invoiceId])
+}
+
+model Message {
+  id          String           @id @default(cuid())
+  businessId  String
+  customerId  String?
+  jobId       String?
+  channel     MessageChannel
+  direction   MessageDirection
+  status      MessageStatus    @default(DRAFT)
+  recipient   String?
+  subject     String?
+  body        String
+  confirmedBy String?
+  confirmedAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer    Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: SetNull)
+  job         Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+
+  @@index([businessId, status, createdAt])
+  @@index([businessId, customerId])
+}
+
+model Notification {
+  id         String             @id @default(cuid())
+  businessId String
+  userId     String
+  title      String
+  body       String
+  status     NotificationStatus @default(UNREAD)
+  readAt     DateTime?
+  createdAt  DateTime           @default(now())
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, userId, status])
+}
+
+model AiConversation {
+  id         String     @id @default(cuid())
+  businessId String
+  userId     String
+  title      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
+  messages   AiMessage[]
+  actions    AiAction[]
+
+  @@unique([id, businessId])
+  @@index([businessId, userId, updatedAt])
+}
+
+model AiMessage {
+  id             String         @id @default(cuid())
+  businessId     String
+  conversationId String
+  role           AiMessageRole
+  content        String
+  createdAt      DateTime       @default(now())
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   AiConversation @relation(fields: [conversationId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, conversationId, createdAt])
+}
+
+model AiAction {
+  id             String         @id @default(cuid())
+  businessId     String
+  conversationId String
+  type           AiActionType
+  status         AiActionStatus @default(DRAFT)
+  payload        Json
+  confirmedBy    String?
+  confirmedAt    DateTime?
+  executedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   AiConversation @relation(fields: [conversationId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, status, createdAt])
+  @@index([businessId, conversationId])
+}
+
+model Document {
+  id         String   @id @default(cuid())
+  businessId String
+  jobId      String?
+  name       String
+  mimeType   String
+  storageKey String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  job        Job?     @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+
+  @@unique([businessId, storageKey])
+  @@index([businessId, jobId])
+}
+
+model Integration {
+  id          String   @id @default(cuid())
+  businessId  String
+  provider    String
+  externalId  String?
+  credentials Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, provider])
+  @@index([businessId, isActive])
+}

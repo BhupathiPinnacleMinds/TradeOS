@@ -1,0 +1,26 @@
+{
+  "name": "tradieos",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev:api": "pnpm --filter @tradieos/api start:dev",
+    "dev:mobile": "pnpm --filter @tradieos/mobile start",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "pnpm --filter @tradieos/api test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @tradieos/api prisma:generate",
+    "db:migrate": "pnpm --filter @tradieos/api prisma:migrate",
+    "db:studio": "pnpm --filter @tradieos/api prisma:studio"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}
