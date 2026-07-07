@@ -18,6 +18,7 @@
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @tradieos/api prisma:generate",
     "db:migrate": "pnpm --filter @tradieos/api prisma:migrate",
+    "db:seed": "pnpm --filter @tradieos/api prisma:seed",
     "db:studio": "pnpm --filter @tradieos/api prisma:studio"
   },
   "devDependencies": {
