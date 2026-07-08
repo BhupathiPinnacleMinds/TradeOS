@@ -1,0 +1,128 @@
+# Deployment
+
+## Overview
+
+TradieOS is currently developed locally with Docker, PostgreSQL, NestJS, and Expo. Future deployment should support a hosted API/database and Expo app distribution.
+
+## Local development
+
+Requirements:
+
+- Node.js 22+
+- pnpm 11+
+- Docker Desktop or local PostgreSQL
+
+Typical setup:
+
+```bash
+pnpm install
+docker compose up -d postgres
+pnpm db:generate
+pnpm db:migrate
+pnpm db:seed
+pnpm dev:api
+pnpm dev:mobile
+```
+
+Windows helper scripts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Users\bhupa\WorkSpace\TradeOS\scripts\start-api-dev.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\bhupa\WorkSpace\TradeOS\scripts\start-mobile-lan-fast.ps1
+```
+
+## Docker
+
+Current Docker usage:
+
+- PostgreSQL local development container.
+
+Future Docker usage:
+
+- API container.
+- Worker container.
+- Migration job.
+
+## Railway
+
+Railway is a possible future API/PostgreSQL deployment target.
+
+Requirements:
+
+- API service
+- PostgreSQL service
+- environment variables
+- migration command
+- health check
+
+## Render
+
+Render is a possible future API deployment target.
+
+Requirements:
+
+- web service
+- PostgreSQL database
+- build command
+- start command
+- health check
+
+## Supabase
+
+Supabase may be used for managed PostgreSQL, auth extensions, storage, or realtime features. If used, it must not weaken the existing business isolation model.
+
+## Expo
+
+Expo supports:
+
+- Expo Go for development
+- EAS Build for native builds
+- EAS Submit for app store submission
+
+Future production mobile builds should use EAS.
+
+## Future CI/CD
+
+CI should run:
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm test:e2e
+```
+
+Deployment should include:
+
+- database migration
+- API deploy
+- smoke test
+- mobile build if applicable
+
+## Environment variables
+
+API:
+
+- NODE_ENV
+- PORT
+- DATABASE_URL
+- JWT_SECRET
+- JWT_EXPIRES_IN
+- CORS_ORIGINS
+
+Mobile:
+
+- EXPO_PUBLIC_API_URL
+
+## Production requirements before launch
+
+- Strong JWT secret.
+- HTTPS API.
+- Production database backups.
+- Error monitoring.
+- Audit logs for sensitive actions.
+- Integration credential encryption.
+- Production CORS allowlist.
+- Disable development-only demo-token endpoint.
