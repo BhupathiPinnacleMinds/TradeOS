@@ -114,6 +114,14 @@ model Business {
   id              String           @id @default(cuid())
   name            String
   abn             String?
+  tradeType       String?
+  gstRegistered   Boolean          @default(false)
+  phone           String?
+  email           String?
+  address         String?
+  suburb          String?
+  state           String?
+  postcode        String?
   timezone        String           @default("Australia/Sydney")
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -136,6 +144,7 @@ model User {
   id              String           @id @default(cuid())
   businessId      String
   email           String
+  passwordHash    String           @default("")
   firstName       String
   lastName        String
   role            Role             @default(STAFF)

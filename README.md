@@ -63,13 +63,12 @@ The API defaults to `http://localhost:3000/api`. Check it with:
 
 ```bash
 curl http://localhost:3000/api/health
-curl http://localhost:3000/api/auth/demo-token
 ```
 
 The local seed creates:
 
 - 1 demo business: `Demo Tradie Co`
-- 1 owner: `owner@demo.tradieos.au`
+- 1 owner: `owner@demo-tradieos.com`
 - 2 staff users
 - 5 customers
 - 5 jobs
@@ -78,10 +77,17 @@ The local seed creates:
 - 5 notifications
 - 3 Tori AI messages
 
-The mobile dashboard reads `GET /api/dashboard/summary` from PostgreSQL. In
-development, it first calls the local-only `GET /api/auth/demo-token` endpoint
-to obtain a JWT for the seeded owner user. The dashboard endpoint itself stays
-authenticated and derives `businessId` from that JWT.
+Demo login:
+
+```text
+email: owner@demo-tradieos.com
+password: password123
+```
+
+The mobile app logs in through `POST /api/auth/login`, stores the JWT with
+Expo SecureStore on device, and sends that token with dashboard requests. The
+dashboard reads `GET /api/dashboard/summary` from PostgreSQL and derives
+`businessId` from the logged-in user's JWT.
 
 For Expo Go on a physical phone, `localhost` means the phone itself, not your
 computer. Set `apps/mobile/.env` like this before starting Expo:

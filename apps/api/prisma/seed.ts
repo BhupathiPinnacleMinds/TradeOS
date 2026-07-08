@@ -1,10 +1,13 @@
 import 'dotenv/config';
+import { randomBytes, scrypt as scryptCallback } from 'crypto';
 import { Client } from 'pg';
+import { promisify } from 'util';
 
 const businessId = 'demo-business-tradieos';
 const ownerId = 'demo-owner-user';
 const staffIds = ['demo-staff-user-1', 'demo-staff-user-2'];
 const databaseUrl = process.env.DATABASE_URL;
+const scrypt = promisify(scryptCallback);
 
 if (!databaseUrl) {
   throw new Error('DATABASE_URL is required to seed TradieOS demo data');
@@ -22,25 +25,48 @@ async function query(sql: string, values: unknown[] = []) {
   await client.query(sql, values);
 }
 
+async function hashPassword(password: string) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = (await scrypt(password, salt, 64)) as Buffer;
+  return `scrypt:${salt}:${hash.toString('hex')}`;
+}
+
 async function main() {
   await client.connect();
   await query('BEGIN');
 
   try {
+    const demoPasswordHash = await hashPassword('password123');
+
     await query('DELETE FROM "Business" WHERE id = $1', [businessId]);
 
     await query(
-      'INSERT INTO "Business" (id, name, abn, timezone, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, NOW(), NOW())',
-      [businessId, 'Demo Tradie Co', '12 345 678 901', 'Australia/Sydney'],
+      `INSERT INTO "Business" (
+        id, name, abn, "tradeType", "gstRegistered", phone, email, address, suburb, state, postcode, timezone, "createdAt", "updatedAt"
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
+      [
+        businessId,
+        'Demo Tradie Co',
+        '12 345 678 901',
+        'Electrical',
+        true,
+        '02 8000 1234',
+        'office@demo-tradieos.com',
+        '10 George Street',
+        'Parramatta',
+        'NSW',
+        '2150',
+        'Australia/Sydney',
+      ],
     );
 
     await query(
-      `INSERT INTO "User" (id, "businessId", email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt")
+      `INSERT INTO "User" (id, "businessId", email, "passwordHash", "firstName", "lastName", role, "isActive", "createdAt", "updatedAt")
        VALUES
-       ($1, $4, 'owner@demo.tradieos.au', 'Sam', 'Owner', 'OWNER', true, NOW(), NOW()),
-       ($2, $4, 'alex@demo.tradieos.au', 'Alex', 'Staff', 'STAFF', true, NOW(), NOW()),
-       ($3, $4, 'mia@demo.tradieos.au', 'Mia', 'Staff', 'STAFF', true, NOW(), NOW())`,
-      [ownerId, staffIds[0], staffIds[1], businessId],
+       ($1, $5, 'owner@demo-tradieos.com', $4, 'Sam', 'Owner', 'OWNER', true, NOW(), NOW()),
+       ($2, $5, 'alex@demo-tradieos.com', $4, 'Alex', 'Staff', 'STAFF', true, NOW(), NOW()),
+       ($3, $5, 'mia@demo-tradieos.com', $4, 'Mia', 'Staff', 'STAFF', true, NOW(), NOW())`,
+      [ownerId, staffIds[0], staffIds[1], demoPasswordHash, businessId],
     );
 
     const customers = [
@@ -344,7 +370,7 @@ async function main() {
 
   console.log('Seeded TradieOS demo data');
   console.log(`Business: ${businessId}`);
-  console.log('Owner login identity: owner@demo.tradieos.au');
+  console.log('Demo login: owner@demo-tradieos.com / password123');
 }
 
 main()

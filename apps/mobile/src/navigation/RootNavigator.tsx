@@ -1,12 +1,16 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { ActivityIndicator, Text, View } from 'react-native';
+import { useAuth } from '../auth/AuthContext';
 import { CustomersScreen } from '../screens/CustomersScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
 import { JobsScreen } from '../screens/JobsScreen';
+import { LoginScreen } from '../screens/LoginScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
+import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ToriChatScreen } from '../screens/ToriChatScreen';
 import { colours } from '../theme';
@@ -36,6 +40,26 @@ function MainTabs() {
 }
 
 export function RootNavigator() {
+  const { isLoading, token } = useAuth();
+
+  if (isLoading) {
+    return (
+      <View
+        style={{
+          alignItems: 'center',
+          backgroundColor: colours.background,
+          flex: 1,
+          justifyContent: 'center',
+        }}
+      >
+        <ActivityIndicator color={colours.primary} />
+        <Text style={{ color: colours.muted, marginTop: 12 }}>
+          Loading TradieOS...
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <Stack.Navigator
       screenOptions={{
@@ -43,15 +67,32 @@ export function RootNavigator() {
         headerStyle: { backgroundColor: colours.background },
       }}
     >
-      <Stack.Screen
-        name="Main"
-        component={MainTabs}
-        options={{ headerShown: false }}
-      />
-      <Stack.Screen name="Quotes" component={QuotesScreen} />
-      <Stack.Screen name="Invoices" component={InvoicesScreen} />
-      <Stack.Screen name="Notifications" component={NotificationsScreen} />
-      <Stack.Screen name="Settings" component={SettingsScreen} />
+      {token ? (
+        <>
+          <Stack.Screen
+            name="Main"
+            component={MainTabs}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen name="Quotes" component={QuotesScreen} />
+          <Stack.Screen name="Invoices" component={InvoicesScreen} />
+          <Stack.Screen name="Notifications" component={NotificationsScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+        </>
+      ) : (
+        <>
+          <Stack.Screen
+            name="Login"
+            component={LoginScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="Register"
+            component={RegisterScreen}
+            options={{ title: 'Create business workspace' }}
+          />
+        </>
+      )}
     </Stack.Navigator>
   );
 }

@@ -1,16 +1,40 @@
-import { Controller, ForbiddenException, Get } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Post,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
+import type { AuthenticatedUser } from '@tradieos/shared';
 import { Public } from './decorators/public.decorator';
-import { PrismaService } from '../prisma/prisma.service';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly config: ConfigService,
-    private readonly jwt: JwtService,
-    private readonly prisma: PrismaService,
+    private readonly auth: AuthService,
   ) {}
+
+  @Public()
+  @Post('register')
+  register(@Body() dto: RegisterDto) {
+    return this.auth.register(dto);
+  }
+
+  @Public()
+  @Post('login')
+  login(@Body() dto: LoginDto) {
+    return this.auth.login(dto);
+  }
+
+  @Get('me')
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return this.auth.me(user);
+  }
 
   @Public()
   @Get('demo-token')
@@ -21,39 +45,6 @@ export class AuthController {
       );
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: {
-        email: 'owner@demo.tradieos.au',
-        isActive: true,
-      },
-      select: {
-        id: true,
-        businessId: true,
-        email: true,
-        role: true,
-      },
-    });
-
-    if (!user) {
-      throw new ForbiddenException(
-        'Run `pnpm db:seed` before requesting a demo token',
-      );
-    }
-
-    const accessToken = await this.jwt.signAsync(
-      {
-        sub: user.id,
-        businessId: user.businessId,
-      },
-      {
-        expiresIn: 12 * 60 * 60,
-        secret: this.config.getOrThrow<string>('JWT_SECRET'),
-      },
-    );
-
-    return {
-      accessToken,
-      user,
-    };
+    return this.auth.demoToken();
   }
 }

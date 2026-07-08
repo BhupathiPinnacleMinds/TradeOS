@@ -9,16 +9,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiRequest } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import { colours } from '../theme';
-
-declare const process: {
-  env?: {
-    EXPO_PUBLIC_API_URL?: string;
-    EXPO_PUBLIC_DEMO_AUTH_TOKEN?: string;
-  };
-};
-
-const apiUrl = process.env?.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api';
 
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat('en-AU', {
@@ -28,37 +21,8 @@ function formatCurrency(cents: number) {
   }).format(cents / 100);
 }
 
-async function getDemoToken() {
-  if (process.env?.EXPO_PUBLIC_DEMO_AUTH_TOKEN) {
-    return process.env.EXPO_PUBLIC_DEMO_AUTH_TOKEN;
-  }
-
-  const response = await fetch(`${apiUrl}/auth/demo-token`);
-
-  if (!response.ok) {
-    throw new Error(`Demo auth failed with ${response.status}`);
-  }
-
-  const body = (await response.json()) as { accessToken: string };
-  return body.accessToken;
-}
-
-async function fetchDashboardSummary() {
-  const token = await getDemoToken();
-  const response = await fetch(`${apiUrl}/dashboard/summary`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Dashboard failed with ${response.status}`);
-  }
-
-  return (await response.json()) as DashboardSummaryResponse;
-}
-
 export function DashboardScreen() {
+  const { token, user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,7 +32,15 @@ export function DashboardScreen() {
     setError(null);
 
     try {
-      setSummary(await fetchDashboardSummary());
+      if (!token) {
+        throw new Error('You are not logged in');
+      }
+
+      setSummary(
+        await apiRequest<DashboardSummaryResponse>('/dashboard/summary', {
+          token,
+        }),
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -82,12 +54,14 @@ export function DashboardScreen() {
 
   useEffect(() => {
     void loadSummary();
-  }, []);
+  }, [token]);
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.greeting}>Good morning</Text>
+        <Text style={styles.greeting}>
+          Good morning{user?.firstName ? `, ${user.firstName}` : ''}
+        </Text>
         <Text style={styles.title}>
           {summary?.business.name ?? 'Today at a glance'}
         </Text>
@@ -95,7 +69,9 @@ export function DashboardScreen() {
         {isLoading ? (
           <View style={styles.stateCard}>
             <ActivityIndicator color={colours.tori} />
-            <Text style={styles.stateText}>Loading real demo data...</Text>
+            <Text style={styles.stateText}>
+              Loading your business dashboard...
+            </Text>
           </View>
         ) : null}
 
@@ -104,8 +80,7 @@ export function DashboardScreen() {
             <Text style={styles.errorTitle}>Dashboard API unavailable</Text>
             <Text style={styles.errorBody}>{error}</Text>
             <Text style={styles.errorBody}>
-              Check the API is running and EXPO_PUBLIC_API_URL points to your
-              computer.
+              Check the API is running and your phone/browser can reach it.
             </Text>
             <Pressable
               style={styles.retryButton}
