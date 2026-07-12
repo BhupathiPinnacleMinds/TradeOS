@@ -22,6 +22,7 @@ const destinations: Array<{
   { label: 'Quotes', route: 'Quotes' },
   { label: 'Invoices', route: 'Invoices' },
   { label: 'Notifications', route: 'Notifications' },
+  { label: 'Team', route: 'Team' },
   { label: 'Settings', route: 'Settings' },
 ];
 

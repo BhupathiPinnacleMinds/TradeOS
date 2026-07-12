@@ -6,6 +6,7 @@ export type RootStackParamList = {
   Invoices: undefined;
   Notifications: undefined;
   Settings: undefined;
+  Team: undefined;
 };
 
 export type MainTabsParamList = {

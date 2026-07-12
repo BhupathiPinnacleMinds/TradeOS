@@ -11,7 +11,19 @@ datasource db {
 enum Role {
   OWNER
   ADMIN
+  OFFICE_MANAGER
+  SCHEDULER
+  TECHNICIAN
+  ACCOUNTANT
+  SALES
+  READ_ONLY
   STAFF
+}
+
+enum MemberStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
 }
 
 enum CustomerStatus {
@@ -126,6 +138,7 @@ model Business {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   users           User[]
+  members         BusinessMember[]
   customers       Customer[]
   jobs            Job[]
   quotes          Quote[]
@@ -138,6 +151,7 @@ model Business {
   aiActions       AiAction[]
   documents       Document[]
   integrations    Integration[]
+  auditLogs       AuditLog[]
 }
 
 model User {
@@ -152,12 +166,55 @@ model User {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  memberships     BusinessMember[]
+  invitedMembers  BusinessMember[] @relation("MemberInviter")
+  auditLogs       AuditLog[]       @relation("AuditActor")
   notifications   Notification[]
   aiConversations AiConversation[]
 
   @@unique([businessId, email])
   @@unique([id, businessId])
   @@index([businessId, role])
+}
+
+model BusinessMember {
+  id           String       @id @default(cuid())
+  businessId   String
+  userId       String?
+  role         Role
+  status       MemberStatus @default(INVITED)
+  invitedEmail String
+  inviteToken  String?      @unique
+  invitedBy    String?
+  invitedAt    DateTime?
+  joinedAt     DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  inviter      User?        @relation("MemberInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, userId])
+  @@unique([businessId, invitedEmail])
+  @@index([businessId, role])
+  @@index([businessId, status])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  businessId  String
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, action, createdAt])
+  @@index([businessId, entityType, entityId])
 }
 
 model Customer {

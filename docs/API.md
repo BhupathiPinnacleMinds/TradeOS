@@ -81,6 +81,28 @@ GET /api/dashboard/summary
 
 Requires JWT. Reads live database records scoped to the logged-in user’s business.
 
+### Team members
+
+```http
+GET /api/members
+GET /api/members/:id
+POST /api/members/invite
+PATCH /api/members/:id/role
+PATCH /api/members/:id/status
+DELETE /api/members/:id
+```
+
+Requires JWT. All member records are scoped to the authenticated user's `businessId`.
+
+Rules:
+
+- Owners can invite, suspend, reactivate, remove, change roles, and view member activity.
+- Admins can manage team members except owners and cannot create owners.
+- Members cannot change their own role, status, or remove themselves.
+- The API must not allow removing or suspending the last active owner.
+- Invite endpoints generate an invite token and invite URL but do not send email yet.
+- Email delivery is behind an `EmailProvider` interface for a future SendGrid integration.
+
 ## API standards
 
 ### REST
@@ -97,6 +119,7 @@ Use REST endpoints grouped by domain:
 /api/ai
 /api/notifications
 /api/dashboard
+/api/members
 ```
 
 ### Versioning
@@ -171,6 +194,7 @@ Authorization should check:
 
 - user is active
 - user belongs to business
+- user has an active `BusinessMember` record
 - role has permission
 - data belongs to business
 

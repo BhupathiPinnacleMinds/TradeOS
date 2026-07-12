@@ -38,6 +38,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException();
     }
 
+    const activeMembership = await this.prisma.businessMember.findFirst({
+      where: {
+        businessId: payload.businessId,
+        userId: payload.sub,
+        status: 'ACTIVE',
+      },
+      select: { id: true },
+    });
+
+    if (!activeMembership) {
+      throw new UnauthorizedException();
+    }
+
     return user;
   }
 }

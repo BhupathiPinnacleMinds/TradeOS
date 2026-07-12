@@ -12,6 +12,7 @@ import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { TeamScreen } from '../screens/TeamScreen';
 import { ToriChatScreen } from '../screens/ToriChatScreen';
 import { colours } from '../theme';
 import type { MainTabsParamList, RootStackParamList } from './types';
@@ -78,6 +79,7 @@ export function RootNavigator() {
           <Stack.Screen name="Invoices" component={InvoicesScreen} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Team" component={TeamScreen} />
         </>
       ) : (
         <>

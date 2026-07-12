@@ -10,6 +10,7 @@ Current Prisma models include:
 
 - Business
 - User
+- BusinessMember
 - Customer
 - Job
 - Quote
@@ -24,8 +25,9 @@ Current Prisma models include:
 - AiAction
 - Document
 - Integration
+- AuditLog
 
-Future documentation names may use `BusinessMember`, `QuoteItem`, `InvoiceItem`, and `MessageDraft`; in the current implementation, user membership is represented by `User`, quote/invoice items are represented by line item models, and message drafts are represented through `Message.status`.
+Future documentation names may use `QuoteItem`, `InvoiceItem`, and `MessageDraft`; in the current implementation, quote/invoice items are represented by line item models, and message drafts are represented through `Message.status`.
 
 ## Entity definitions
 
@@ -53,6 +55,7 @@ Important fields:
 Relationships:
 
 - users
+- members
 - customers
 - jobs
 - quotes
@@ -87,30 +90,39 @@ Current roles:
 
 - OWNER
 - ADMIN
-- STAFF
-
-Future role model:
-
-- OWNER
-- ADMIN
 - OFFICE_MANAGER
 - SCHEDULER
 - TECHNICIAN
 - ACCOUNTANT
 - SALES
 - READ_ONLY
+- STAFF legacy compatibility role
 
 ### BusinessMember
 
-Future conceptual entity for richer membership. Current implementation uses `User.businessId` and `User.role`.
+Represents a user or invitation inside a business workspace. `User.businessId` and `User.role` are retained for the current single-workspace auth flow, while `BusinessMember` stores invite state, member status, last login, and future membership metadata.
 
-Future responsibilities:
+Important fields:
 
-- invite status
-- multi-business memberships
-- granular permissions
-- member profile
-- audit trail
+- id
+- businessId
+- userId
+- role
+- status
+- invitedEmail
+- inviteToken
+- invitedBy
+- invitedAt
+- joinedAt
+- lastLoginAt
+- createdAt
+- updatedAt
+
+Statuses:
+
+- INVITED
+- ACTIVE
+- SUSPENDED
 
 ### Customer
 
@@ -338,9 +350,25 @@ Important fields:
 - credentials
 - isActive
 
+### AuditLog
+
+Represents tenant-scoped audit history for sensitive business actions. Team management writes audit logs now; future modules should reuse this table for high-risk actions.
+
+Important fields:
+
+- id
+- businessId
+- actorUserId
+- action
+- entityType
+- entityId
+- metadata
+- createdAt
+
 ## Relationships
 
-- Business has many users, customers, jobs, quotes, invoices, payments, messages, notifications, AI conversations, documents, and integrations.
+- Business has many users, members, customers, jobs, quotes, invoices, payments, messages, notifications, AI conversations, documents, integrations, and audit logs.
+- BusinessMember belongs to a business and may belong to a user.
 - Customer has many jobs, quotes, invoices, and messages.
 - Job belongs to customer and may have quotes, invoices, messages, and documents.
 - Quote belongs to customer and may belong to a job.
@@ -348,6 +376,7 @@ Important fields:
 - Payment belongs to invoice.
 - Notification belongs to user and business.
 - AI conversation belongs to user and business.
+- Audit log belongs to business and may belong to an actor user.
 
 ## Indexes
 
@@ -362,6 +391,8 @@ Current examples:
 - invoice status/due date by business
 - notification user/status by business
 - AI conversation user/update time by business
+- business member role/status by business
+- audit log action/entity by business
 
 ## Security
 

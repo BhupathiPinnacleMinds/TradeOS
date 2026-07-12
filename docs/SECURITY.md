@@ -11,7 +11,9 @@ TradieOS is a multi-tenant SaaS app. Security must protect customer data, busine
 - Mobile token storage using Expo SecureStore.
 - Business workspace scoping through `businessId`.
 - Prisma relations and query filters for tenant isolation.
-- Role field on users.
+- Role field on users plus active `BusinessMember` validation.
+- Team membership status checks for JWT-authenticated requests.
+- Audit logs for team-management actions and owner login.
 - CORS configured for local development origins.
 
 ## JWT
@@ -25,6 +27,7 @@ JWT rules:
 
 - Validate on every protected route.
 - Reject inactive users.
+- Reject users without an active business membership.
 - Derive business scope from JWT.
 - Do not accept tenant scope from request body.
 
@@ -57,24 +60,19 @@ Current roles:
 
 - OWNER
 - ADMIN
-- STAFF
-
-Future roles:
-
-- OWNER
-- ADMIN
 - OFFICE_MANAGER
 - SCHEDULER
 - TECHNICIAN
 - ACCOUNTANT
 - SALES
 - READ_ONLY
+- STAFF legacy compatibility role
 
 Role checks must be enforced in API guards and services.
 
 ## Audit logs
 
-Future audit logs should record:
+Audit logs record:
 
 - user ID
 - business ID
@@ -82,8 +80,18 @@ Future audit logs should record:
 - entity type
 - entity ID
 - timestamp
-- before/after for sensitive changes
-- AI action confirmation metadata
+- metadata for sensitive changes
+
+Current logged actions:
+
+- MEMBER_INVITED
+- ROLE_CHANGED
+- MEMBER_SUSPENDED
+- MEMBER_REACTIVATED
+- MEMBER_REMOVED
+- OWNER_LOGIN
+
+Future audit logs should also record AI action confirmation metadata.
 
 Audit logs are required before high-risk features such as sending invoices, payment changes, or integration sync.
 

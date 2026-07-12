@@ -64,9 +64,27 @@ async function main() {
       `INSERT INTO "User" (id, "businessId", email, "passwordHash", "firstName", "lastName", role, "isActive", "createdAt", "updatedAt")
        VALUES
        ($1, $5, 'owner@demo-tradieos.com', $4, 'Sam', 'Owner', 'OWNER', true, NOW(), NOW()),
-       ($2, $5, 'alex@demo-tradieos.com', $4, 'Alex', 'Staff', 'STAFF', true, NOW(), NOW()),
-       ($3, $5, 'mia@demo-tradieos.com', $4, 'Mia', 'Staff', 'STAFF', true, NOW(), NOW())`,
+       ($2, $5, 'alex@demo-tradieos.com', $4, 'Alex', 'Office', 'OFFICE_MANAGER', true, NOW(), NOW()),
+       ($3, $5, 'mia@demo-tradieos.com', $4, 'Mia', 'Technician', 'TECHNICIAN', true, NOW(), NOW())`,
       [ownerId, staffIds[0], staffIds[1], demoPasswordHash, businessId],
+    );
+
+    await query(
+      `INSERT INTO "BusinessMember" (
+        id, "businessId", "userId", role, status, "invitedEmail", "inviteToken", "invitedBy", "invitedAt", "joinedAt", "lastLoginAt", "createdAt", "updatedAt"
+       ) VALUES
+       ('demo-member-owner', $1, $2, 'OWNER', 'ACTIVE', 'owner@demo-tradieos.com', NULL, NULL, NOW(), NOW(), NOW(), NOW(), NOW()),
+       ('demo-member-office', $1, $3, 'OFFICE_MANAGER', 'ACTIVE', 'alex@demo-tradieos.com', NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-tech', $1, $4, 'TECHNICIAN', 'ACTIVE', 'mia@demo-tradieos.com', NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-invited', $1, NULL, 'SCHEDULER', 'INVITED', 'scheduler@demo-tradieos.com', 'demo-invite-token-scheduler', $2, NOW(), NULL, NULL, NOW(), NOW())`,
+      [businessId, ownerId, staffIds[0], staffIds[1]],
+    );
+
+    await query(
+      `INSERT INTO "AuditLog" (id, "businessId", "actorUserId", action, "entityType", "entityId", metadata, "createdAt")
+       VALUES
+       ('demo-audit-member-invited', $1, $2, 'MEMBER_INVITED', 'BusinessMember', 'demo-member-invited', '{"email":"scheduler@demo-tradieos.com","role":"SCHEDULER"}', NOW())`,
+      [businessId, ownerId],
     );
 
     const customers = [

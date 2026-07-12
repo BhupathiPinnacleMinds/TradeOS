@@ -8,20 +8,15 @@ Current implementation supports:
 
 - OWNER
 - ADMIN
-- STAFF
-
-Target role model:
-
-- OWNER
-- ADMIN
 - OFFICE_MANAGER
 - SCHEDULER
 - TECHNICIAN
 - ACCOUNTANT
 - SALES
 - READ_ONLY
+- STAFF as a legacy compatibility role
 
-Future work should migrate from `STAFF` to more granular roles.
+New invitations should use the granular roles instead of `STAFF`.
 
 ## Role responsibilities
 
@@ -158,7 +153,7 @@ Cannot:
 
 ## Permission model
 
-Future permissions should be action-based:
+Current implementation uses role checks for team management. Future permissions should become action-based:
 
 ```text
 customers.read

@@ -209,7 +209,7 @@ Supported role model:
 - SALES
 - READ_ONLY
 
-Current implementation supports a smaller set (`OWNER`, `ADMIN`, `STAFF`). Future work should migrate toward the full role model documented in [Roles and Permissions](./ROLES_AND_PERMISSIONS.md).
+Current implementation supports the full role model documented in [Roles and Permissions](./ROLES_AND_PERMISSIONS.md). `STAFF` remains only as a legacy compatibility role; new invitations should use granular roles.
 
 ## Acceptance criteria
 

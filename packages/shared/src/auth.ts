@@ -1,4 +1,14 @@
-export const BUSINESS_ROLES = ['OWNER', 'ADMIN', 'STAFF'] as const;
+export const BUSINESS_ROLES = [
+  'OWNER',
+  'ADMIN',
+  'OFFICE_MANAGER',
+  'SCHEDULER',
+  'TECHNICIAN',
+  'ACCOUNTANT',
+  'SALES',
+  'READ_ONLY',
+  'STAFF',
+] as const;
 
 export type BusinessRole = (typeof BUSINESS_ROLES)[number];
 

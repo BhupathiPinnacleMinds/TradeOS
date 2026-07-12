@@ -7,7 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
-import type { AuthenticatedUser } from '@tradieos/shared';
+import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { LoginDto, RegisterDto } from './dto/auth.dto';
 
@@ -50,7 +50,7 @@ export class AuthService {
         },
       });
 
-      return tx.user.create({
+      const owner = await tx.user.create({
         data: {
           businessId: business.id,
           email,
@@ -61,6 +61,19 @@ export class AuthService {
         },
         select: this.userSelect(),
       });
+
+      await tx.businessMember.create({
+        data: {
+          businessId: business.id,
+          userId: owner.id,
+          role: 'OWNER',
+          status: 'ACTIVE',
+          invitedEmail: email,
+          joinedAt: new Date(),
+        },
+      });
+
+      return owner;
     });
 
     return this.authResponse(user);
@@ -85,6 +98,31 @@ export class AuthService {
     if (!isValid) {
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    await this.prisma.$transaction([
+      this.prisma.businessMember.updateMany({
+        where: {
+          businessId: user.businessId,
+          userId: user.id,
+          status: 'ACTIVE',
+        },
+        data: { lastLoginAt: new Date() },
+      }),
+      ...(user.role === 'OWNER'
+        ? [
+            this.prisma.auditLog.create({
+              data: {
+                businessId: user.businessId,
+                actorUserId: user.id,
+                action: 'OWNER_LOGIN',
+                entityType: 'User',
+                entityId: user.id,
+                metadata: { email: user.email },
+              },
+            }),
+          ]
+        : []),
+    ]);
 
     return this.authResponse({
       id: user.id,
@@ -205,7 +243,7 @@ type UserAuthPayload = {
   email: string;
   firstName: string;
   lastName: string;
-  role: 'OWNER' | 'ADMIN' | 'STAFF';
+  role: BusinessRole;
   isActive: boolean;
   business: {
     id: string;
