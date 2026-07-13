@@ -87,6 +87,10 @@ Requires JWT. Reads live database records scoped to the logged-in user’s busin
 GET /api/members
 GET /api/members/:id
 POST /api/members/invite
+GET /api/members/invitations/:token
+POST /api/members/invitations/:token/accept
+POST /api/members/:id/resend-invite
+POST /api/members/:id/cancel-invite
 PATCH /api/members/:id/role
 PATCH /api/members/:id/status
 DELETE /api/members/:id
@@ -100,8 +104,29 @@ Rules:
 - Admins can manage team members except owners and cannot create owners.
 - Members cannot change their own role, status, or remove themselves.
 - The API must not allow removing or suspending the last active owner.
-- Invite endpoints generate an invite token and invite URL but do not send email yet.
-- Email delivery is behind an `EmailProvider` interface for a future SendGrid integration.
+- `GET /api/members` excludes cancelled invitations by default. Cancelled invite rows remain available in database/audit history but do not appear in normal Team lists or filters.
+- Invite requests require email, first name, last name, and a granular role.
+- Invite email addresses are trimmed and lowercased before duplicate checks.
+- Invite endpoints generate a long random invite token, store only the hash, and dispatch the invitation through the configured `EmailProvider`.
+- Development responses may include the invite URL for local testing. Production responses must not expose raw invite tokens or invite URLs.
+- Invite tokens are stored as hashes only, expire after 7 days by default, and are single-use.
+- Cancelling an invite sets `inviteCancelledAt`, clears the token hash, marks invite delivery state as cancelled, and writes an audit log without deleting the row.
+- Re-inviting an email whose previous invite was cancelled reuses the cancelled membership row with a fresh token rather than creating a duplicate audit record.
+- Invitation acceptance creates or links a user to the existing business member record and never creates a new business workspace.
+- Cancelled, expired, accepted, or mismatched-email invitations cannot be accepted.
+- Email delivery is behind an `EmailProvider` interface. The default local provider logs a safe development invite, and the Resend provider is used when `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `EMAIL_FROM_ADDRESS` are configured.
+
+Team endpoints return structured domain errors:
+
+```json
+{
+  "code": "INVITE_ALREADY_PENDING",
+  "message": "An invitation is already pending for this email.",
+  "details": {}
+}
+```
+
+Current team error codes include `INVITE_ALREADY_PENDING`, `MEMBER_ALREADY_ACTIVE`, `MEMBER_SUSPENDED`, `LAST_OWNER_PROTECTED`, `CANNOT_CHANGE_OWN_ROLE`, `INSUFFICIENT_PERMISSION`, `INVITE_EXPIRED`, `INVITE_CANCELLED`, and `TOO_MANY_REQUESTS`.
 
 ## API standards
 

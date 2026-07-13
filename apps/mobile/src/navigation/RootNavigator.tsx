@@ -2,6 +2,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
+import { AcceptInvitationScreen } from '../screens/AcceptInvitationScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
@@ -13,12 +14,23 @@ import { QuotesScreen } from '../screens/QuotesScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TeamScreen } from '../screens/TeamScreen';
+import { TeamMemberProfileScreen } from '../screens/TeamMemberProfileScreen';
 import { ToriChatScreen } from '../screens/ToriChatScreen';
 import { colours } from '../theme';
 import type { MainTabsParamList, RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<MainTabsParamList>();
+
+function getInviteTokenFromLocation() {
+  const pathname =
+    typeof globalThis.location === 'undefined'
+      ? ''
+      : globalThis.location.pathname;
+  const match = pathname.match(/^\/invite\/([^/]+)$/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
 
 function MainTabs() {
   return (
@@ -42,6 +54,7 @@ function MainTabs() {
 
 export function RootNavigator() {
   const { isLoading, token } = useAuth();
+  const inviteToken = getInviteTokenFromLocation();
 
   if (isLoading) {
     return (
@@ -63,6 +76,7 @@ export function RootNavigator() {
 
   return (
     <Stack.Navigator
+      initialRouteName={!token && inviteToken ? 'AcceptInvitation' : undefined}
       screenOptions={{
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colours.background },
@@ -80,6 +94,11 @@ export function RootNavigator() {
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Team" component={TeamScreen} />
+          <Stack.Screen
+            name="TeamMemberProfile"
+            component={TeamMemberProfileScreen}
+            options={{ title: 'Team profile' }}
+          />
         </>
       ) : (
         <>
@@ -88,6 +107,14 @@ export function RootNavigator() {
             component={LoginScreen}
             options={{ headerShown: false }}
           />
+          {inviteToken ? (
+            <Stack.Screen
+              name="AcceptInvitation"
+              component={AcceptInvitationScreen}
+              initialParams={{ token: inviteToken }}
+              options={{ title: 'Accept invitation' }}
+            />
+          ) : null}
           <Stack.Screen
             name="Register"
             component={RegisterScreen}

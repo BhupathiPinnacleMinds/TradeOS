@@ -184,7 +184,14 @@ model BusinessMember {
   role         Role
   status       MemberStatus @default(INVITED)
   invitedEmail String
-  inviteToken  String?      @unique
+  invitedFirstName String?
+  invitedLastName  String?
+  inviteTokenHash String?   @unique
+  inviteExpiresAt DateTime?
+  inviteAcceptedAt DateTime?
+  inviteCancelledAt DateTime?
+  inviteEmailDeliveryStatus String? @default("PENDING")
+  inviteEmailDeliveryError  String?
   invitedBy    String?
   invitedAt    DateTime?
   joinedAt     DateTime?

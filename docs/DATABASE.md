@@ -110,7 +110,12 @@ Important fields:
 - role
 - status
 - invitedEmail
-- inviteToken
+- invitedFirstName
+- invitedLastName
+- inviteTokenHash
+- inviteExpiresAt
+- inviteAcceptedAt
+- inviteCancelledAt
 - invitedBy
 - invitedAt
 - joinedAt
@@ -123,6 +128,8 @@ Statuses:
 - INVITED
 - ACTIVE
 - SUSPENDED
+
+Invitation tokens are never stored in raw form. The API stores only a SHA-256 hash, gives the raw token to the inviter once for the invite URL in development, expires invites after 7 days by default, and clears the hash after successful acceptance or cancellation. Pending invitations store first and last name on `BusinessMember`; no `User` account is created until the invite is accepted. Cancelled invitations remain in this table for audit continuity but are excluded from normal Team list queries.
 
 ### Customer
 

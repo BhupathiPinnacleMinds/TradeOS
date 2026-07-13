@@ -71,19 +71,25 @@ async function main() {
 
     await query(
       `INSERT INTO "BusinessMember" (
-        id, "businessId", "userId", role, status, "invitedEmail", "inviteToken", "invitedBy", "invitedAt", "joinedAt", "lastLoginAt", "createdAt", "updatedAt"
+        id, "businessId", "userId", role, status, "invitedEmail", "invitedFirstName", "invitedLastName", "inviteTokenHash", "inviteExpiresAt", "inviteAcceptedAt", "inviteCancelledAt", "inviteEmailDeliveryStatus", "inviteEmailDeliveryError", "invitedBy", "invitedAt", "joinedAt", "lastLoginAt", "createdAt", "updatedAt"
        ) VALUES
-       ('demo-member-owner', $1, $2, 'OWNER', 'ACTIVE', 'owner@demo-tradieos.com', NULL, NULL, NOW(), NOW(), NOW(), NOW(), NOW()),
-       ('demo-member-office', $1, $3, 'OFFICE_MANAGER', 'ACTIVE', 'alex@demo-tradieos.com', NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
-       ('demo-member-tech', $1, $4, 'TECHNICIAN', 'ACTIVE', 'mia@demo-tradieos.com', NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
-       ('demo-member-invited', $1, NULL, 'SCHEDULER', 'INVITED', 'scheduler@demo-tradieos.com', 'demo-invite-token-scheduler', $2, NOW(), NULL, NULL, NOW(), NOW())`,
-      [businessId, ownerId, staffIds[0], staffIds[1]],
+       ('demo-member-owner', $1, $2, 'OWNER', 'ACTIVE', 'owner@demo-tradieos.com', 'Sam', 'Owner', NULL, NULL, NOW(), NULL, NULL, NULL, NULL, NULL, NOW(), NOW(), NOW(), NOW()),
+       ('demo-member-office', $1, $3, 'OFFICE_MANAGER', 'ACTIVE', 'alex@demo-tradieos.com', 'Alex', 'Office', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-tech', $1, $4, 'TECHNICIAN', 'ACTIVE', 'mia@demo-tradieos.com', 'Mia', 'Technician', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-invited', $1, NULL, 'SCHEDULER', 'INVITED', 'scheduler@demo-tradieos.com', 'Sasha', 'Scheduler', $5, NOW() + INTERVAL '7 days', NULL, NULL, 'SENT', NULL, $2, NOW(), NULL, NULL, NOW(), NOW())`,
+      [
+        businessId,
+        ownerId,
+        staffIds[0],
+        staffIds[1],
+        'f1f1f64d0a7dfd8126660ce8d7d9cdc36e724162021d3e6506e3bea8bae1976c',
+      ],
     );
 
     await query(
       `INSERT INTO "AuditLog" (id, "businessId", "actorUserId", action, "entityType", "entityId", metadata, "createdAt")
        VALUES
-       ('demo-audit-member-invited', $1, $2, 'MEMBER_INVITED', 'BusinessMember', 'demo-member-invited', '{"email":"scheduler@demo-tradieos.com","role":"SCHEDULER"}', NOW())`,
+       ('demo-audit-member-invited', $1, $2, 'INVITE_CREATED', 'BusinessMember', 'demo-member-invited', '{"email":"scheduler@demo-tradieos.com","role":"SCHEDULER"}', NOW())`,
       [businessId, ownerId],
     );
 

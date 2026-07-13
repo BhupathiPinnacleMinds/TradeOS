@@ -10,10 +10,19 @@ export interface TeamMember {
   userId: string | null;
   name: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
   role: BusinessRole;
   status: MemberStatus;
   invitedEmail: string;
+  invitedFirstName: string | null;
+  invitedLastName: string | null;
   inviteUrl: string | null;
+  inviteExpiresAt: string | null;
+  inviteAcceptedAt: string | null;
+  inviteCancelledAt: string | null;
+  inviteEmailDeliveryStatus: string | null;
+  inviteEmailDeliveryError: string | null;
   invitedBy: string | null;
   invitedAt: string | null;
   joinedAt: string | null;
@@ -24,12 +33,37 @@ export interface TeamMember {
 
 export interface InviteMemberRequest {
   email: string;
-  firstName?: string;
-  lastName?: string;
+  firstName: string;
+  lastName: string;
   role: BusinessRole;
 }
 
 export interface InviteMemberResponse {
+  member: TeamMember;
+  inviteToken: string;
+  inviteUrl: string;
+}
+
+export type InvitationState =
+  'VALID' | 'INVALID' | 'EXPIRED' | 'ACCEPTED' | 'CANCELLED';
+
+export interface InvitationPreviewResponse {
+  state: InvitationState;
+  businessName?: string;
+  invitedEmail?: string;
+  role?: BusinessRole;
+  expiresAt?: string;
+}
+
+export interface AcceptInvitationRequest {
+  email: string;
+  firstName: string;
+  lastName: string;
+  password: string;
+  confirmPassword: string;
+}
+
+export interface ResendInvitationResponse {
   member: TeamMember;
   inviteToken: string;
   inviteUrl: string;
@@ -52,4 +86,17 @@ export interface AuditLogEntry {
   entityId: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string;
+}
+
+export interface TeamMemberDetailResponse {
+  member: TeamMember;
+  activity: AuditLogEntry[];
+  assignedJobsCount: number;
+  businessName: string;
+}
+
+export interface ApiErrorResponse {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
 }

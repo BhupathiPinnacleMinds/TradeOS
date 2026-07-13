@@ -37,6 +37,7 @@ Current screens:
 
 - Login
 - Register
+- Accept Invitation
 - Dashboard
 - Tori Chat
 - Customers
@@ -46,6 +47,8 @@ Current screens:
 - Notifications
 - Settings
 - More
+- Team
+- Team Member Profile
 
 ## Backend
 
@@ -113,6 +116,34 @@ Authentication flow:
 4. Mobile stores token.
 5. API calls include `Authorization: Bearer <token>`.
 6. API derives `userId` and `businessId` from JWT.
+
+Invitation acceptance flow:
+
+1. An owner/admin invites a team member from the existing business workspace.
+2. The API creates a long random invite token, stores only its hash, and sends the invitation through the configured `EmailProvider`.
+3. The invited user opens `/invite/:token`.
+4. The app previews the invite state and shows only the existing business name, invited email, and assigned role.
+5. The user sets their name and password without creating a new business.
+6. The API transaction creates or links the user, activates the existing `BusinessMember`, invalidates the token, logs audit events, and returns a JWT.
+7. The app stores the JWT and opens the invited user's workspace dashboard.
+
+Team invitation email architecture:
+
+- `EmailProvider` is the API boundary for invitation, resend, and welcome emails.
+- Local and unconfigured environments use `ConsoleEmailProvider` so invitation creation still succeeds during development.
+- Production can use `ResendEmailProvider` by setting `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `EMAIL_FROM_ADDRESS`.
+- Raw invite URLs are exposed to the mobile UI only outside `NODE_ENV=production`; production delivery happens through email provider payloads and audit metadata.
+
+Team management UI flow:
+
+- Invite creation validates email, first name, last name, and selected role before calling the API.
+- Duplicate invite/member responses use structured API error codes so the UI can show pending invite, active member, or suspended member guidance.
+- Duplicate invite checks run in the mobile form before submit and again in the API after trimming/lowercasing the email address.
+- Member actions use anchored overlay menus, global toast feedback, loading indicators, and confirmation modals so cards do not resize or shift while managing roles, status, deletion, or invite cancellation.
+- Team data uses one screen-level members state plus a central refresh path. Successful mutations update local state immediately, then await a `GET /api/members` refresh before clearing the blocking loading overlay.
+- Cancelled invites are removed from local state immediately and are excluded by the API from normal Team list responses.
+- The latest development invite URL is stored against the related member id, is shown only outside production, updates on resend, and clears when the invite is cancelled or no longer pending.
+- Team profile reads `GET /api/members/:id` and displays tenant-scoped member details plus recent audit activity.
 
 ## AI layer
 

@@ -9,11 +9,17 @@ import {
   useState,
 } from 'react';
 import { Platform } from 'react-native';
-import { loginRequest, meRequest, registerRequest } from '../api/client';
+import {
+  acceptInvitationRequest,
+  loginRequest,
+  meRequest,
+  registerRequest,
+} from '../api/client';
 
 const TOKEN_KEY = 'tradieos.jwt';
 
 type RegisterInput = Parameters<typeof registerRequest>[0];
+type AcceptInvitationInput = Parameters<typeof acceptInvitationRequest>[1];
 
 interface AuthContextValue {
   isLoading: boolean;
@@ -21,6 +27,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   login(input: { email: string; password: string }): Promise<void>;
   register(input: RegisterInput): Promise<void>;
+  acceptInvitation(token: string, input: AcceptInvitationInput): Promise<void>;
   logout(): Promise<void>;
 }
 
@@ -90,6 +97,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       },
       async register(input) {
         const response = await registerRequest(input);
+        await setStoredToken(response.accessToken);
+        setToken(response.accessToken);
+        setUser(response.user);
+      },
+      async acceptInvitation(inviteToken, input) {
+        const response = await acceptInvitationRequest(inviteToken, input);
         await setStoredToken(response.accessToken);
         setToken(response.accessToken);
         setUser(response.user);

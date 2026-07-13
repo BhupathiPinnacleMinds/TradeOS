@@ -111,10 +111,22 @@ API:
 - JWT_SECRET
 - JWT_EXPIRES_IN
 - CORS_ORIGINS
+- APP_PUBLIC_URL
+- EMAIL_PROVIDER
+- EMAIL_FROM_NAME
+- EMAIL_FROM_ADDRESS
+- RESEND_API_KEY
 
 Mobile:
 
 - EXPO_PUBLIC_API_URL
+
+Invitation email defaults:
+
+- Local development should use `EMAIL_PROVIDER=console`. This prints invite delivery metadata and, outside production, the local invite URL.
+- Production should use `EMAIL_PROVIDER=resend` with `RESEND_API_KEY` and `EMAIL_FROM_ADDRESS`.
+- If Resend is selected but not fully configured, the API falls back to the console provider so local invitation creation does not fail during setup.
+- Set `APP_PUBLIC_URL` to the web/mobile URL used in invitation links, for example `http://localhost:8081` locally.
 
 ## Production requirements before launch
 

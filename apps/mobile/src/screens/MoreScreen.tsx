@@ -17,7 +17,7 @@ type Props = CompositeScreenProps<
 
 const destinations: Array<{
   label: string;
-  route: Exclude<keyof RootStackParamList, 'Main'>;
+  route: 'Quotes' | 'Invoices' | 'Notifications' | 'Team' | 'Settings';
 }> = [
   { label: 'Quotes', route: 'Quotes' },
   { label: 'Invoices', route: 'Invoices' },

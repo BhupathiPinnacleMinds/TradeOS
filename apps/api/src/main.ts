@@ -64,7 +64,10 @@ async function bootstrap() {
   );
   app.enableShutdownHooks();
 
-  await app.listen(config.get<number>('PORT', 3000));
+  await app.listen(
+    config.get<number>('PORT', 3000),
+    config.get<string>('HOST', '0.0.0.0'),
+  );
 }
 
 bootstrap().catch((error: unknown) => {

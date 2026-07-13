@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import {
+  AcceptInvitationDto,
   InviteMemberDto,
   UpdateMemberRoleDto,
   UpdateMemberStatusDto,
@@ -24,6 +26,21 @@ export class MembersController {
   @Get()
   findAll(@CurrentUser() currentUser: AuthenticatedUser) {
     return this.members.findAll(currentUser);
+  }
+
+  @Public()
+  @Get('invitations/:token')
+  previewInvitation(@Param('token') token: string) {
+    return this.members.previewInvitation(token);
+  }
+
+  @Public()
+  @Post('invitations/:token/accept')
+  acceptInvitation(
+    @Param('token') token: string,
+    @Body() dto: AcceptInvitationDto,
+  ) {
+    return this.members.acceptInvitation(token, dto);
   }
 
   @Get(':id')
@@ -58,6 +75,22 @@ export class MembersController {
     @Body() dto: UpdateMemberStatusDto,
   ) {
     return this.members.updateStatus(currentUser, id, dto);
+  }
+
+  @Post(':id/resend-invite')
+  resendInvite(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.members.resendInvite(currentUser, id);
+  }
+
+  @Post(':id/cancel-invite')
+  cancelInvite(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.members.cancelInvite(currentUser, id);
   }
 
   @Delete(':id')

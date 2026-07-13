@@ -1,7 +1,10 @@
 import type {
   AuthResponse,
   BusinessRole,
+  InvitationPreviewResponse,
   InviteMemberResponse,
+  ResendInvitationResponse,
+  TeamMemberDetailResponse,
   TeamMember,
 } from '@tradieos/shared';
 
@@ -14,36 +17,72 @@ declare const process: {
 export const apiUrl =
   process.env?.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api';
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly code: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit & { token?: string | null } = {},
 ): Promise<T> {
   const { token, headers, ...requestOptions } = options;
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...requestOptions,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl}${path}`, {
+      ...requestOptions,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+    });
+  } catch (error) {
+    throw new ApiRequestError(
+      error instanceof Error && error.message
+        ? error.message
+        : 'Network request failed',
+      null,
+      'NETWORK_ERROR',
+    );
+  }
 
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
+    let code = statusCodeToErrorCode(response.status);
+    let details: Record<string, unknown> = {};
 
     try {
-      const body = (await response.json()) as { message?: string | string[] };
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string | string[];
+        details?: Record<string, unknown>;
+      };
+      if (body.code) {
+        code = body.code;
+      }
       if (Array.isArray(body.message)) {
         message = body.message.join('\n');
       } else if (body.message) {
         message = body.message;
       }
+      if (body.details) {
+        details = body.details;
+      }
     } catch {
       // Keep the default status message.
     }
 
-    throw new Error(message);
+    throw new ApiRequestError(message, response.status, code, details);
   }
 
   if (response.status === 204) {
@@ -51,6 +90,17 @@ export async function apiRequest<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function statusCodeToErrorCode(status: number) {
+  if (status === 400) return 'VALIDATION_ERROR';
+  if (status === 401) return 'SESSION_EXPIRED';
+  if (status === 403) return 'INSUFFICIENT_PERMISSION';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 409) return 'CONFLICT';
+  if (status === 429) return 'TOO_MANY_REQUESTS';
+  if (status >= 500) return 'SERVICE_UNAVAILABLE';
+  return 'REQUEST_FAILED';
 }
 
 export function loginRequest(input: { email: string; password: string }) {
@@ -90,17 +140,60 @@ export function membersRequest(token: string) {
   return apiRequest<TeamMember[]>('/members', { token });
 }
 
+export function memberDetailRequest(token: string, memberId: string) {
+  return apiRequest<TeamMemberDetailResponse>(`/members/${memberId}`, {
+    token,
+  });
+}
+
 export function inviteMemberRequest(
   token: string,
   input: {
     email: string;
-    firstName?: string;
-    lastName?: string;
+    firstName: string;
+    lastName: string;
     role: BusinessRole;
   },
 ) {
   return apiRequest<InviteMemberResponse>('/members/invite', {
     body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function invitationPreviewRequest(token: string) {
+  return apiRequest<InvitationPreviewResponse>(`/members/invitations/${token}`);
+}
+
+export function acceptInvitationRequest(
+  token: string,
+  input: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    password: string;
+    confirmPassword: string;
+  },
+) {
+  return apiRequest<AuthResponse>(`/members/invitations/${token}/accept`, {
+    body: JSON.stringify(input),
+    method: 'POST',
+  });
+}
+
+export function resendInvitationRequest(token: string, memberId: string) {
+  return apiRequest<ResendInvitationResponse>(
+    `/members/${memberId}/resend-invite`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function cancelInvitationRequest(token: string, memberId: string) {
+  return apiRequest<TeamMember>(`/members/${memberId}/cancel-invite`, {
     method: 'POST',
     token,
   });

@@ -14,6 +14,9 @@ TradieOS is a multi-tenant SaaS app. Security must protect customer data, busine
 - Role field on users plus active `BusinessMember` validation.
 - Team membership status checks for JWT-authenticated requests.
 - Audit logs for team-management actions and owner login.
+- Hash-only, expiring, single-use team invitation tokens.
+- Rate-limited team invitation preview and acceptance endpoints.
+- Structured team-management errors that avoid leaking cross-business records.
 - CORS configured for local development origins.
 
 ## JWT
@@ -84,12 +87,25 @@ Audit logs record:
 
 Current logged actions:
 
-- MEMBER_INVITED
+- INVITE_CREATED
+- INVITE_VIEWED
+- INVITE_RESENT
+- INVITE_CANCELLED
+- INVITE_ACCEPTED
+- MEMBER_ACTIVATED
 - ROLE_CHANGED
 - MEMBER_SUSPENDED
 - MEMBER_REACTIVATED
 - MEMBER_REMOVED
 - OWNER_LOGIN
+
+## Team invitation security
+
+Team invitation acceptance is a public flow, so it must not expose tenant data beyond the invited business name, invited email, assigned role, expiry, and invitation state for a valid token. The raw token is shown only in the invite URL, stored only as a hash, expires after 7 days by default, and is invalidated after successful acceptance.
+
+Acceptance must be transactional: create or link the user, activate the existing `BusinessMember`, clear the invite token hash, set `joinedAt` and `inviteAcceptedAt`, and write audit logs together. Invited users must not create a new business, enter ABN/GST details, or choose a workspace during this flow.
+
+Normal team invites must not default to owner access. Only an existing owner can invite or assign another owner. Admins cannot invite, change, suspend, delete, or otherwise manage owner members.
 
 Future audit logs should also record AI action confirmation metadata.
 
