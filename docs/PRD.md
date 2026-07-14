@@ -56,7 +56,9 @@ The current implementation includes:
 - Mobile token storage using Expo SecureStore.
 - Demo seed data.
 - Dashboard summary from database.
-- Basic navigation and placeholder screens for modules.
+- Team Management and invitation acceptance.
+- Customer Management with mobile list, add/edit, details, archive/restore, duplicate warning and service-location support.
+- Basic navigation and placeholder screens for remaining modules.
 
 ## Target customers
 
@@ -120,6 +122,8 @@ The dashboard must show live data scoped to the logged-in user’s business:
 ### Customers
 
 Customers represent households, individuals, businesses, or recurring clients. Customers must always be scoped to a business.
+
+Implemented customer management supports Australian customer profiles, contact preference, customer type, archive/restore, duplicate warnings and multiple service locations. Future jobs, quotes, invoices, documents and Tori history should link back to these customer records rather than creating parallel customer data.
 
 ### Jobs
 

@@ -128,6 +128,51 @@ Team endpoints return structured domain errors:
 
 Current team error codes include `INVITE_ALREADY_PENDING`, `MEMBER_ALREADY_ACTIVE`, `MEMBER_SUSPENDED`, `LAST_OWNER_PROTECTED`, `CANNOT_CHANGE_OWN_ROLE`, `INSUFFICIENT_PERMISSION`, `INVITE_EXPIRED`, `INVITE_CANCELLED`, and `TOO_MANY_REQUESTS`.
 
+### Customers
+
+```http
+GET /api/customers
+GET /api/customers/:id
+POST /api/customers
+PATCH /api/customers/:id
+POST /api/customers/:id/archive
+POST /api/customers/:id/restore
+GET /api/customers/:id/sites
+POST /api/customers/:id/sites
+PATCH /api/customers/:id/sites/:siteId
+POST /api/customers/:id/sites/:siteId/archive
+```
+
+Requires JWT. Customer and customer-site records are always scoped to the authenticated user's `businessId`; clients must never supply `businessId`.
+
+`GET /api/customers` supports:
+
+- `page`
+- `pageSize`
+- `search`
+- `customerType`
+- `state`
+- `suburb`
+- `archived`
+- `tag`
+- `sortBy`
+- `sortOrder`
+
+Responses return `records`, `total`, `page`, `pageSize`, and `totalPages`.
+
+Customer rules:
+
+- Active customers are returned by default; archived customers require `archived=true`.
+- Archive/restore is soft-delete only and preserves history for future jobs, quotes and invoices.
+- At least one of phone or email is required.
+- First name or company name is required.
+- Australian states and 4-digit postcodes are validated.
+- Email and phone are normalised for tenant-local duplicate detection.
+- Possible duplicates return `POSSIBLE_DUPLICATE_CUSTOMER` with safe match metadata. Creation/update can continue only when the client explicitly sends `allowDuplicate=true`.
+- Audit logs are written for create, update, archive, restore, customer-site create/update/archive, and duplicate-warning override.
+
+Customer error codes include `CUSTOMER_NOT_FOUND`, `INVALID_CUSTOMER_DATA`, `POSSIBLE_DUPLICATE_CUSTOMER`, `CUSTOMER_ALREADY_ARCHIVED`, `CUSTOMER_NOT_ARCHIVED`, and `INSUFFICIENT_PERMISSION`.
+
 ## API standards
 
 ### REST

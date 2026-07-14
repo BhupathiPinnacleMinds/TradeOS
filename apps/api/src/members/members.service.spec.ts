@@ -199,6 +199,10 @@ function authUser(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('MembersService', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
   function expectDomainError(error: unknown, code: string) {
     expect(error).toBeInstanceOf(HttpException);
     const response = (error as HttpException).getResponse() as { code: string };

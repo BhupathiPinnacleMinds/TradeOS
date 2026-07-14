@@ -31,6 +31,22 @@ enum CustomerStatus {
   ARCHIVED
 }
 
+enum ContactPreference {
+  PHONE
+  SMS
+  EMAIL
+  ANY
+}
+
+enum CustomerType {
+  RESIDENTIAL
+  COMMERCIAL
+  REAL_ESTATE
+  STRATA
+  BUILDER
+  OTHER
+}
+
 enum JobStatus {
   LEAD
   QUOTED
@@ -140,6 +156,7 @@ model Business {
   users           User[]
   members         BusinessMember[]
   customers       Customer[]
+  customerSites   CustomerSite[]
   jobs            Job[]
   quotes          Quote[]
   invoices        Invoice[]
@@ -168,6 +185,8 @@ model User {
   business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
   memberships     BusinessMember[]
   invitedMembers  BusinessMember[] @relation("MemberInviter")
+  createdCustomers Customer[]       @relation("CustomerCreator")
+  updatedCustomers Customer[]       @relation("CustomerUpdater")
   auditLogs       AuditLog[]       @relation("AuditActor")
   notifications   Notification[]
   aiConversations AiConversation[]
@@ -225,27 +244,74 @@ model AuditLog {
 }
 
 model Customer {
-  id         String         @id @default(cuid())
-  businessId String
-  firstName  String
-  lastName   String?
-  company    String?
-  email      String?
-  phone      String?
-  address    String?
-  notes      String?
-  status     CustomerStatus @default(ACTIVE)
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  jobs       Job[]
-  quotes     Quote[]
-  invoices   Invoice[]
-  messages   Message[]
+  id                String            @id @default(cuid())
+  businessId        String
+  firstName         String?
+  lastName          String?
+  displayName       String
+  companyName       String?
+  email             String?
+  emailNormalised   String?
+  phone             String?
+  phoneNormalised   String?
+  alternatePhone    String?
+  addressLine1      String?
+  addressLine2      String?
+  suburb            String?
+  state             String?
+  postcode          String?
+  contactPreference ContactPreference @default(ANY)
+  customerType      CustomerType      @default(RESIDENTIAL)
+  notes             String?
+  tags              String[]          @default([])
+  isArchived        Boolean           @default(false)
+  archivedAt        DateTime?
+  createdBy         String?
+  updatedBy         String?
+  status            CustomerStatus    @default(ACTIVE)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  creator           User?             @relation("CustomerCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater           User?             @relation("CustomerUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  sites             CustomerSite[]
+  jobs              Job[]
+  quotes            Quote[]
+  invoices          Invoice[]
+  messages          Message[]
 
   @@unique([id, businessId])
-  @@index([businessId, status])
+  @@index([businessId, isArchived])
+  @@index([businessId, customerType])
+  @@index([businessId, state, suburb])
+  @@index([businessId, emailNormalised])
+  @@index([businessId, phoneNormalised])
   @@index([businessId, lastName, firstName])
+}
+
+model CustomerSite {
+  id                 String   @id @default(cuid())
+  businessId         String
+  customerId         String
+  label              String
+  addressLine1       String
+  addressLine2       String?
+  suburb             String
+  state              String
+  postcode           String
+  accessInstructions String?
+  siteContactName    String?
+  siteContactPhone   String?
+  isPrimary          Boolean  @default(false)
+  isArchived         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer           Customer @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([id, businessId])
+  @@index([businessId, customerId, isArchived])
+  @@index([businessId, state, suburb])
 }
 
 model Job {

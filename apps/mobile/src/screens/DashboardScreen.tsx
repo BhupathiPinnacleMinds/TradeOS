@@ -1,5 +1,6 @@
 import type { DashboardSummaryResponse } from '@tradieos/shared';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -27,34 +28,51 @@ export function DashboardScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  async function loadSummary() {
-    setIsLoading(true);
-    setError(null);
+  const loadSummary = useCallback(async (shouldApply: () => boolean = () => true) => {
+    if (shouldApply()) {
+      setIsLoading(true);
+      setError(null);
+    }
 
     try {
       if (!token) {
         throw new Error('You are not logged in');
       }
 
-      setSummary(
-        await apiRequest<DashboardSummaryResponse>('/dashboard/summary', {
+      const nextSummary = await apiRequest<DashboardSummaryResponse>(
+        '/dashboard/summary',
+        {
           token,
-        }),
+        },
       );
+      if (shouldApply()) {
+        setSummary(nextSummary);
+      }
     } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'Unable to load dashboard summary',
-      );
+      if (shouldApply()) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Unable to load dashboard summary',
+        );
+      }
     } finally {
-      setIsLoading(false);
+      if (shouldApply()) {
+        setIsLoading(false);
+      }
     }
-  }
-
-  useEffect(() => {
-    void loadSummary();
   }, [token]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      void loadSummary(() => isActive);
+
+      return () => {
+        isActive = false;
+      };
+    }, [loadSummary]),
+  );
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
@@ -215,7 +233,7 @@ const styles = StyleSheet.create({
   },
   retryText: { color: '#FFFFFF', fontWeight: '800' },
   toriCard: {
-    backgroundColor: '#EFEDFF',
+    backgroundColor: '#F3E8FF',
     borderRadius: 20,
     marginTop: 16,
     padding: 20,

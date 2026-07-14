@@ -3,6 +3,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { AcceptInvitationScreen } from '../screens/AcceptInvitationScreen';
+import { CustomerDetailsScreen } from '../screens/CustomerDetailsScreen';
+import { CustomerFormScreen } from '../screens/CustomerFormScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
@@ -93,6 +95,11 @@ export function RootNavigator() {
           <Stack.Screen name="Invoices" component={InvoicesScreen} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen
+            name="CustomerDetails"
+            component={CustomerDetailsScreen}
+          />
+          <Stack.Screen name="CustomerForm" component={CustomerFormScreen} />
           <Stack.Screen name="Team" component={TeamScreen} />
           <Stack.Screen
             name="TeamMemberProfile"

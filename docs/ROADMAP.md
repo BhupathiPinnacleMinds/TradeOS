@@ -40,6 +40,8 @@ Current completed items:
 - Secure token storage on mobile.
 - Demo business seed.
 - Business-scoped dashboard summary.
+- Team Management and invitation acceptance.
+- Customer Management with CustomerSite service locations, archive/restore, duplicate warnings and mobile CRUD screens.
 
 ## Phase 2: Tori AI and operating workflows
 

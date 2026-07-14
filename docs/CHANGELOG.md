@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-14
+
+### Added
+
+- Complete Customer Management module with tenant-scoped customer CRUD, archive/restore, pagination, search, filters, sorting and structured duplicate warnings.
+- CustomerSite support for multiple service locations per customer with primary-site handling and archive support.
+- Mobile Customer List, Add/Edit Customer and Customer Details flows with validation, duplicate warning override, top toast feedback, centred save loaders, future-ready history sections and service-location management.
+- Customer audit logging for create, update, archive, restore, customer-site create/update/archive and duplicate-warning override.
+- Realistic Australian customer seed data with residential, commercial, real estate/property manager, builder, multi-site and archived examples.
+
+### Changed
+
+- Dashboard customer count now excludes archived customers.
+- Customer model now stores display name, customer type, contact preference, Australian address fields, tags, archive metadata and normalised email/phone values for tenant-local duplicate detection.
+
 ## 2026-07-12
 
 ### Added

@@ -41,6 +41,8 @@ Current screens:
 - Dashboard
 - Tori Chat
 - Customers
+- Customer Details
+- Customer Form
 - Jobs
 - Quotes
 - Invoices
@@ -144,6 +146,16 @@ Team management UI flow:
 - Cancelled invites are removed from local state immediately and are excluded by the API from normal Team list responses.
 - The latest development invite URL is stored against the related member id, is shown only outside production, updates on resend, and clears when the invite is cancelled or no longer pending.
 - Team profile reads `GET /api/members/:id` and displays tenant-scoped member details plus recent audit activity.
+
+Customer management architecture:
+
+- `Customer` is the customer profile record for people, households, companies, real estate contacts, builders and other recurring clients.
+- `CustomerSite` stores one or more service locations for a customer and is compound-scoped through `customerId + businessId`.
+- Customer APIs always derive `businessId` from the authenticated request context and return 404 for records outside the tenant.
+- Customer archive/restore is soft-delete only; archived customers are hidden from active lists by default.
+- Duplicate detection is tenant-local and uses `emailNormalised` and `phoneNormalised`. The API returns a structured `POSSIBLE_DUPLICATE_CUSTOMER` warning instead of silently blocking every duplicate.
+- Customer UI follows the Team module state approach: update local state where safe, await API refresh, preserve filters/search, show top safe-area toasts, and use centred loading overlays for blocking saves.
+- The customer details screen includes future-ready empty sections for jobs, quotes, invoices, documents and activity without fabricating data.
 
 ## AI layer
 

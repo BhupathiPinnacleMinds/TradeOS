@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   },
   avatar: {
     alignItems: 'center',
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     height: 76,
     justifyContent: 'center',
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
   email: { color: colours.muted, marginTop: 4 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
   badge: {
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     color: colours.primary,
     fontWeight: '800',
@@ -254,14 +254,14 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '800' },
   bodyText: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   infoRow: {
-    borderBottomColor: '#EEF2EE',
+    borderBottomColor: '#E2E8F0',
     borderBottomWidth: 1,
     paddingVertical: 12,
   },
   infoLabel: { color: colours.muted, fontSize: 12, fontWeight: '800' },
   infoValue: { color: colours.ink, fontSize: 16, marginTop: 4 },
   activityItem: {
-    borderBottomColor: '#EEF2EE',
+    borderBottomColor: '#E2E8F0',
     borderBottomWidth: 1,
     paddingVertical: 12,
   },

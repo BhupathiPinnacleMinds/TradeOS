@@ -74,6 +74,7 @@ Responsible for calendar and dispatch.
 Can:
 
 - view customers
+- create and update customers
 - create and update jobs
 - schedule jobs
 - manage job notifications
@@ -81,6 +82,7 @@ Can:
 
 Should not:
 
+- archive or restore customers
 - edit financial totals
 - mark invoices paid
 
@@ -107,6 +109,7 @@ Financial operator.
 
 Can:
 
+- view customer identity and billing contact details
 - view invoices
 - view payments
 - update payment status
@@ -153,7 +156,7 @@ Cannot:
 
 ## Permission model
 
-Current implementation uses role checks for team management. Future permissions should become action-based:
+Current implementation uses role checks for team and customer management. Future permissions should become action-based:
 
 ```text
 customers.read
@@ -173,6 +176,13 @@ reports.read
 settings.write
 integrations.write
 ```
+
+Implemented customer permissions:
+
+- `OWNER`, `ADMIN`, `OFFICE_MANAGER`: create, view, update, archive and restore customers and customer sites.
+- `SCHEDULER`, `SALES`: create, view and update customers and customer sites, but cannot archive/restore.
+- `ACCOUNTANT`, `READ_ONLY`: view customers only.
+- `TECHNICIAN`: broad customer-list access is blocked until assigned-job scoping exists.
 
 ## Tenant rule
 

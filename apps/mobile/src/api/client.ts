@@ -1,6 +1,11 @@
 import type {
   AuthResponse,
   BusinessRole,
+  CustomerDetailResponse,
+  CustomerListResponse,
+  CustomerPayload,
+  CustomerSite,
+  CustomerSitePayload,
   InvitationPreviewResponse,
   InviteMemberResponse,
   ResendInvitationResponse,
@@ -228,4 +233,114 @@ export function deleteMemberRequest(token: string, memberId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+function customerQuery(
+  params: Record<string, string | number | boolean | undefined>,
+) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
+export function customersRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<CustomerListResponse>(
+    `/customers${customerQuery(params)}`,
+    {
+      token,
+    },
+  );
+}
+
+export function customerDetailRequest(token: string, customerId: string) {
+  return apiRequest<CustomerDetailResponse>(`/customers/${customerId}`, {
+    token,
+  });
+}
+
+export function createCustomerRequest(token: string, input: CustomerPayload) {
+  return apiRequest<CustomerDetailResponse>('/customers', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateCustomerRequest(
+  token: string,
+  customerId: string,
+  input: CustomerPayload,
+) {
+  return apiRequest<CustomerDetailResponse>(`/customers/${customerId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function archiveCustomerRequest(token: string, customerId: string) {
+  return apiRequest<CustomerDetailResponse>(
+    `/customers/${customerId}/archive`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function restoreCustomerRequest(token: string, customerId: string) {
+  return apiRequest<CustomerDetailResponse>(
+    `/customers/${customerId}/restore`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function createCustomerSiteRequest(
+  token: string,
+  customerId: string,
+  input: CustomerSitePayload,
+) {
+  return apiRequest<CustomerSite>(`/customers/${customerId}/sites`, {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateCustomerSiteRequest(
+  token: string,
+  customerId: string,
+  siteId: string,
+  input: CustomerSitePayload,
+) {
+  return apiRequest<CustomerSite>(`/customers/${customerId}/sites/${siteId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function archiveCustomerSiteRequest(
+  token: string,
+  customerId: string,
+  siteId: string,
+) {
+  return apiRequest<CustomerSite>(
+    `/customers/${customerId}/sites/${siteId}/archive`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }

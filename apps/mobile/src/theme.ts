@@ -1,14 +1,14 @@
 import type { Theme } from '@react-navigation/native';
 
 export const colours = {
-  background: '#F4F7F4',
-  border: '#DDE5DD',
+  background: '#F8FAFC',
+  border: '#E2E8F0',
   card: '#FFFFFF',
-  ink: '#17201A',
-  muted: '#68746B',
-  primary: '#176B45',
-  tori: '#5B4BC4',
-  warning: '#9A5A12',
+  ink: '#0F172A',
+  muted: '#64748B',
+  primary: '#4F46E5',
+  tori: '#7C3AED',
+  warning: '#D97706',
 } as const;
 
 export const navigationTheme: Theme = {

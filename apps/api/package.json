@@ -84,6 +84,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@tradieos/shared$": "<rootDir>/../../../packages/shared/src/index.ts"
+    }
   }
 }

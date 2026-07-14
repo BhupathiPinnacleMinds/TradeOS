@@ -1450,7 +1450,7 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '800' },
   helperText: { color: colours.muted, lineHeight: 20 },
   input: {
-    backgroundColor: '#F8FAF8',
+    backgroundColor: '#F8FAFC',
     borderColor: colours.border,
     borderRadius: 14,
     borderWidth: 1,
@@ -1477,7 +1477,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   rolePickerActive: {
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderColor: colours.primary,
   },
   rolePickerText: { color: colours.muted, fontSize: 12, fontWeight: '800' },
@@ -1491,7 +1491,7 @@ const styles = StyleSheet.create({
   inviteButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
   pressed: { opacity: 0.55 },
   inviteUrlBox: {
-    backgroundColor: '#F8FAF8',
+    backgroundColor: '#F8FAFC',
     borderRadius: 14,
     padding: 12,
   },
@@ -1504,7 +1504,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   smallLinkButton: {
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1543,7 +1543,7 @@ const styles = StyleSheet.create({
   memberHeader: { alignItems: 'center', flexDirection: 'row', gap: 12 },
   avatar: {
     alignItems: 'center',
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     height: 48,
     justifyContent: 'center',
@@ -1564,7 +1564,7 @@ const styles = StyleSheet.create({
   meta: { color: colours.muted, marginTop: 8 },
   menuButton: {
     alignItems: 'center',
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     height: 42,
     justifyContent: 'center',
@@ -1656,14 +1656,14 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   roleOptionActive: {
-    backgroundColor: '#E8F3EC',
+    backgroundColor: '#EEF2FF',
     borderColor: colours.primary,
   },
   roleOptionTitle: { color: colours.ink, fontSize: 16, fontWeight: '800' },
   roleOptionBody: { color: colours.muted, lineHeight: 20, marginTop: 4 },
   memberProgress: {
     alignItems: 'center',
-    backgroundColor: '#F8FAF8',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     flexDirection: 'row',
     gap: 8,

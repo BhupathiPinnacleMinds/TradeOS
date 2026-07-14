@@ -43,7 +43,7 @@ export class DashboardService {
         where: { id: businessId },
         select: { id: true, name: true, timezone: true },
       }),
-      this.prisma.customer.count({ where: { businessId } }),
+      this.prisma.customer.count({ where: { businessId, isArchived: false } }),
       this.prisma.job.count({
         where: {
           businessId,
@@ -81,7 +81,7 @@ export class DashboardService {
           startsAt: true,
           address: true,
           customer: {
-            select: { firstName: true, lastName: true, company: true },
+            select: { firstName: true, lastName: true, companyName: true },
           },
         },
       }),
@@ -133,7 +133,7 @@ export class DashboardService {
         status: job.status,
         startsAt: job.startsAt?.toISOString() ?? null,
         customerName:
-          job.customer.company ??
+          job.customer.companyName ??
           [job.customer.firstName, job.customer.lastName]
             .filter(Boolean)
             .join(' '),

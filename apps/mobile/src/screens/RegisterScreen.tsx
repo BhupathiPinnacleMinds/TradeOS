@@ -215,7 +215,7 @@ function Field({
     <View>
       <Text style={styles.label}>{label}</Text>
       <TextInput
-        placeholderTextColor="#94A39A"
+        placeholderTextColor="#94A3B8"
         style={styles.input}
         {...props}
       />
@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '800' },
   label: { color: colours.ink, fontSize: 14, fontWeight: '700', marginTop: 14 },
   input: {
-    backgroundColor: '#F8FAF8',
+    backgroundColor: '#F8FAFC',
     borderColor: colours.border,
     borderRadius: 14,
     borderWidth: 1,

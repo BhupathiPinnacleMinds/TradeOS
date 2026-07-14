@@ -133,7 +133,7 @@ Invitation tokens are never stored in raw form. The API stores only a SHA-256 ha
 
 ### Customer
 
-Represents a customer or client.
+Represents a business-scoped customer or client. Customers are archived rather than hard deleted so future jobs, quotes, invoices, payments, messages, documents, notifications and Tori history can continue to reference them.
 
 Important fields:
 
@@ -141,19 +141,76 @@ Important fields:
 - businessId
 - firstName
 - lastName
-- company
+- displayName
+- companyName
 - email
+- emailNormalised
 - phone
-- address
+- phoneNormalised
+- alternatePhone
+- addressLine1
+- addressLine2
+- suburb
+- state
+- postcode
+- contactPreference
+- customerType
 - notes
+- tags
+- isArchived
+- archivedAt
+- createdBy
+- updatedBy
 - status
+- createdAt
+- updatedAt
 
 Relationships:
 
+- sites
 - jobs
 - quotes
 - invoices
 - messages
+
+Validation and storage:
+
+- `businessId` is always from the authenticated context, never client input.
+- `firstName` or `companyName` is required.
+- `email` or `phone` is required.
+- Australian states are limited to `VIC`, `NSW`, `QLD`, `SA`, `WA`, `TAS`, `ACT`, `NT`.
+- Postcode must be four digits when supplied.
+- `emailNormalised` and `phoneNormalised` are used for duplicate detection only and are not displayed in the UI.
+
+### CustomerSite
+
+Represents a service location for a customer. This supports landlords, property managers, builders, commercial customers and other multi-site tradie workflows.
+
+Important fields:
+
+- id
+- businessId
+- customerId
+- label
+- addressLine1
+- addressLine2
+- suburb
+- state
+- postcode
+- accessInstructions
+- siteContactName
+- siteContactPhone
+- isPrimary
+- isArchived
+- createdAt
+- updatedAt
+
+Rules:
+
+- Each site is scoped by `businessId`.
+- Each site references a customer with the same `businessId`.
+- Only one active site should be primary per customer; setting a site as primary clears the previous primary site.
+- Sites are archived rather than hard deleted.
 
 ### Job
 

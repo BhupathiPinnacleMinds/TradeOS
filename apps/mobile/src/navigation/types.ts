@@ -9,6 +9,8 @@ export type RootStackParamList = {
   Settings: undefined;
   Team: undefined;
   TeamMemberProfile: { memberId: string };
+  CustomerDetails: { customerId: string };
+  CustomerForm: { customerId?: string };
 };
 
 export type MainTabsParamList = {

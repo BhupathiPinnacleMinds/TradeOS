@@ -70,8 +70,8 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colours.background },
   container: { gap: 10, padding: 20 },
   businessCard: {
-    backgroundColor: '#E8F3EC',
-    borderColor: '#CFE5D7',
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
     borderRadius: 18,
     borderWidth: 1,
     padding: 18,
