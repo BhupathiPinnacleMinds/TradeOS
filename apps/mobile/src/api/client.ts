@@ -6,6 +6,10 @@ import type {
   CustomerPayload,
   CustomerSite,
   CustomerSitePayload,
+  JobDetailResponse,
+  JobListResponse,
+  JobPayload,
+  JobStatus,
   InvitationPreviewResponse,
   InviteMemberResponse,
   ResendInvitationResponse,
@@ -248,6 +252,12 @@ function customerQuery(
   return query ? `?${query}` : '';
 }
 
+function queryString(
+  params: Record<string, string | number | boolean | undefined>,
+) {
+  return customerQuery(params);
+}
+
 export function customersRequest(
   token: string,
   params: Record<string, string | number | boolean | undefined> = {},
@@ -343,4 +353,68 @@ export function archiveCustomerSiteRequest(
       token,
     },
   );
+}
+
+export function jobsRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<JobListResponse>(`/jobs${queryString(params)}`, {
+    token,
+  });
+}
+
+export function todayJobsRequest(token: string) {
+  return apiRequest<JobListResponse>('/jobs/today', { token });
+}
+
+export function jobDetailRequest(token: string, jobId: string) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}`, { token });
+}
+
+export function createJobRequest(token: string, input: JobPayload) {
+  return apiRequest<JobDetailResponse>('/jobs', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateJobRequest(
+  token: string,
+  jobId: string,
+  input: JobPayload,
+) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function updateJobStatusRequest(
+  token: string,
+  jobId: string,
+  status: JobStatus,
+  internalNotes?: string,
+) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}/status`, {
+    body: JSON.stringify({ internalNotes, status }),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function archiveJobRequest(token: string, jobId: string) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}/archive`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function restoreJobRequest(token: string, jobId: string) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}/restore`, {
+    method: 'POST',
+    token,
+  });
 }

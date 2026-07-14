@@ -184,6 +184,13 @@ Implemented customer permissions:
 - `ACCOUNTANT`, `READ_ONLY`: view customers only.
 - `TECHNICIAN`: broad customer-list access is blocked until assigned-job scoping exists.
 
+Implemented job permissions:
+
+- `OWNER`, `ADMIN`, `OFFICE_MANAGER`: create, view, update, assign, archive, restore and update job status.
+- `SCHEDULER`: create, view, update, assign, reschedule and update job status, but cannot archive/restore jobs.
+- `TECHNICIAN`: view assigned jobs and update assigned job status/notes.
+- `ACCOUNTANT`, `SALES`, `READ_ONLY`: view jobs only.
+
 ## Tenant rule
 
 Roles never grant cross-business access.

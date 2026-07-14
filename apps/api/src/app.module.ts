@@ -20,7 +20,11 @@ import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ cache: true, isGlobal: true }),
+    ConfigModule.forRoot({
+      cache: true,
+      envFilePath: ['apps/api/.env', '.env'],
+      isGlobal: true,
+    }),
     PrismaModule,
     AuthModule,
     HealthModule,

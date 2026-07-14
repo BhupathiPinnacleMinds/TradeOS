@@ -42,6 +42,7 @@ Current completed items:
 - Business-scoped dashboard summary.
 - Team Management and invitation acceptance.
 - Customer Management with CustomerSite service locations, archive/restore, duplicate warnings and mobile CRUD screens.
+- Job Management with per-business job numbers, assignment, scheduling, status transitions, dashboard metrics and customer-linked history.
 
 ## Phase 2: Tori AI and operating workflows
 

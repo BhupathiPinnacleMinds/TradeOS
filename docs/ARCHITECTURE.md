@@ -44,6 +44,8 @@ Current screens:
 - Customer Details
 - Customer Form
 - Jobs
+- Job Details
+- Job Form
 - Quotes
 - Invoices
 - Notifications
@@ -156,6 +158,16 @@ Customer management architecture:
 - Duplicate detection is tenant-local and uses `emailNormalised` and `phoneNormalised`. The API returns a structured `POSSIBLE_DUPLICATE_CUSTOMER` warning instead of silently blocking every duplicate.
 - Customer UI follows the Team module state approach: update local state where safe, await API refresh, preserve filters/search, show top safe-area toasts, and use centred loading overlays for blocking saves.
 - The customer details screen includes future-ready empty sections for jobs, quotes, invoices, documents and activity without fabricating data.
+
+Job management architecture:
+
+- `Job` is the central service-work record that future quotes, invoices, photos, documents, calendar events, reports and Tori summaries will connect to.
+- Jobs are tenant-scoped by `businessId` and linked to customers through compound customer/business relations.
+- Job numbers are API-generated from a per-business `JobSequence` record.
+- Job archive/restore is soft-delete only; archived jobs are excluded from active lists and dashboard counts by default.
+- Job status transitions store operational timestamps where appropriate, such as `actualStart`, `actualEnd`, and `completedAt`.
+- Job audit logs record creation, assignment, updates, starts, completion, cancellation and hold events.
+- Mobile jobs follow the customer/team UX pattern with pull-to-refresh, filters, large quick actions, future-ready sections, and tenant-scoped API refreshes.
 
 ## AI layer
 

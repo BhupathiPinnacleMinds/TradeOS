@@ -3,10 +3,11 @@ import type { DashboardSummaryResponse } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const OPEN_JOB_STATUSES = [
-  'LEAD',
-  'QUOTED',
+  'NEW',
   'SCHEDULED',
+  'ON_THE_WAY',
   'IN_PROGRESS',
+  'ON_HOLD',
 ] as const;
 const OPEN_QUOTE_STATUSES = ['DRAFT', 'SENT', 'VIEWED'] as const;
 const UNPAID_INVOICE_STATUSES = [
@@ -30,6 +31,9 @@ export class DashboardService {
       business,
       customers,
       jobsToday,
+      upcomingJobs,
+      completedToday,
+      overdueJobs,
       openJobs,
       openQuotes,
       unpaidInvoices,
@@ -47,11 +51,40 @@ export class DashboardService {
       this.prisma.job.count({
         where: {
           businessId,
-          startsAt: { gte: startOfToday, lt: startOfTomorrow },
+          scheduledStart: { gte: startOfToday, lt: startOfTomorrow },
+          isArchived: false,
         },
       }),
       this.prisma.job.count({
-        where: { businessId, status: { in: [...OPEN_JOB_STATUSES] } },
+        where: {
+          businessId,
+          scheduledStart: { gte: startOfTomorrow },
+          status: { notIn: ['COMPLETED', 'CANCELLED'] },
+          isArchived: false,
+        },
+      }),
+      this.prisma.job.count({
+        where: {
+          businessId,
+          completedAt: { gte: startOfToday, lt: startOfTomorrow },
+          status: 'COMPLETED',
+          isArchived: false,
+        },
+      }),
+      this.prisma.job.count({
+        where: {
+          businessId,
+          scheduledEnd: { lt: new Date() },
+          status: { notIn: ['COMPLETED', 'CANCELLED'] },
+          isArchived: false,
+        },
+      }),
+      this.prisma.job.count({
+        where: {
+          businessId,
+          status: { in: [...OPEN_JOB_STATUSES] },
+          isArchived: false,
+        },
       }),
       this.prisma.quote.count({
         where: { businessId, status: { in: [...OPEN_QUOTE_STATUSES] } },
@@ -70,18 +103,21 @@ export class DashboardService {
       this.prisma.job.findMany({
         where: {
           businessId,
-          startsAt: { gte: startOfToday, lt: startOfTomorrow },
+          scheduledStart: { gte: startOfToday, lt: startOfTomorrow },
+          isArchived: false,
         },
-        orderBy: { startsAt: 'asc' },
+        orderBy: { scheduledStart: 'asc' },
         take: 5,
         select: {
           id: true,
           title: true,
           status: true,
-          startsAt: true,
-          address: true,
+          scheduledStart: true,
+          addressLine1: true,
+          suburb: true,
+          state: true,
           customer: {
-            select: { firstName: true, lastName: true, companyName: true },
+            select: { displayName: true, companyName: true },
           },
         },
       }),
@@ -118,6 +154,9 @@ export class DashboardService {
       counts: {
         customers,
         jobsToday,
+        upcomingJobs,
+        completedToday,
+        overdueJobs,
         openJobs,
         openQuotes,
         unpaidInvoices,
@@ -131,13 +170,11 @@ export class DashboardService {
         id: job.id,
         title: job.title,
         status: job.status,
-        startsAt: job.startsAt?.toISOString() ?? null,
-        customerName:
-          job.customer.companyName ??
-          [job.customer.firstName, job.customer.lastName]
-            .filter(Boolean)
-            .join(' '),
-        address: job.address,
+        startsAt: job.scheduledStart.toISOString(),
+        customerName: job.customer.companyName ?? job.customer.displayName,
+        address: [job.addressLine1, job.suburb, job.state]
+          .filter(Boolean)
+          .join(', '),
       })),
       notifications: notifications.map((notification) => ({
         ...notification,
@@ -153,6 +190,9 @@ export class DashboardService {
 
   private buildToriPriority(input: {
     jobsToday: number;
+    upcomingJobs?: number;
+    completedToday?: number;
+    overdueJobs?: number;
     unpaidInvoices: number;
     unreadNotifications: number;
   }) {

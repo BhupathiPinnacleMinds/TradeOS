@@ -1,5 +1,6 @@
 import type { BusinessRole } from './auth';
 import type { AuditLogEntry } from './members';
+import type { Job } from './jobs';
 
 export const AUSTRALIAN_STATES = [
   'VIC',
@@ -98,6 +99,7 @@ export interface CustomerDetailResponse {
   customer: Customer;
   summary: CustomerSummary;
   activity: AuditLogEntry[];
+  jobs: Job[];
 }
 
 export interface CustomerDuplicateMatch {

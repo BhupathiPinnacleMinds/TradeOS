@@ -43,6 +43,9 @@ type MockPrisma = {
     update: jest.Mock;
     updateMany: jest.Mock;
   };
+  job: {
+    findMany: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
@@ -96,6 +99,9 @@ function createService() {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(),
       updateMany: jest.fn(),
+    },
+    job: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     $transaction: jest.fn(
       (input: Array<Promise<unknown>> | ((tx: MockPrisma) => unknown)) => {

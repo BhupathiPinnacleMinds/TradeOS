@@ -48,13 +48,13 @@ Avoid:
 
 Current palette:
 
-- Background: soft green-grey
+- Background: clean slate off-white
 - Card: white
-- Primary: trade green
-- Ink: dark green/black
-- Muted: grey-green
-- Tori: purple
-- Warning: amber/brown
+- Primary: modern indigo
+- Ink: deep slate
+- Muted: slate grey
+- Tori: violet
+- Warning: amber
 - Error: red
 
 ### Typography

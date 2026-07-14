@@ -28,40 +28,43 @@ export function DashboardScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadSummary = useCallback(async (shouldApply: () => boolean = () => true) => {
-    if (shouldApply()) {
-      setIsLoading(true);
-      setError(null);
-    }
-
-    try {
-      if (!token) {
-        throw new Error('You are not logged in');
+  const loadSummary = useCallback(
+    async (shouldApply: () => boolean = () => true) => {
+      if (shouldApply()) {
+        setIsLoading(true);
+        setError(null);
       }
 
-      const nextSummary = await apiRequest<DashboardSummaryResponse>(
-        '/dashboard/summary',
-        {
-          token,
-        },
-      );
-      if (shouldApply()) {
-        setSummary(nextSummary);
-      }
-    } catch (loadError) {
-      if (shouldApply()) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : 'Unable to load dashboard summary',
+      try {
+        if (!token) {
+          throw new Error('You are not logged in');
+        }
+
+        const nextSummary = await apiRequest<DashboardSummaryResponse>(
+          '/dashboard/summary',
+          {
+            token,
+          },
         );
+        if (shouldApply()) {
+          setSummary(nextSummary);
+        }
+      } catch (loadError) {
+        if (shouldApply()) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Unable to load dashboard summary',
+          );
+        }
+      } finally {
+        if (shouldApply()) {
+          setIsLoading(false);
+        }
       }
-    } finally {
-      if (shouldApply()) {
-        setIsLoading(false);
-      }
-    }
-  }, [token]);
+    },
+    [token],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -121,6 +124,34 @@ export function DashboardScreen() {
                 : '-'}
             </Text>
             <Text style={styles.label}>Outstanding</Text>
+          </View>
+        </View>
+
+        <View style={styles.grid}>
+          <View style={styles.card}>
+            <Text style={styles.value}>
+              {summary?.counts.upcomingJobs ?? '-'}
+            </Text>
+            <Text style={styles.label}>Upcoming jobs</Text>
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.value}>
+              {summary?.counts.completedToday ?? '-'}
+            </Text>
+            <Text style={styles.label}>Completed today</Text>
+          </View>
+        </View>
+
+        <View style={styles.grid}>
+          <View style={[styles.card, styles.warningCard]}>
+            <Text style={styles.value}>
+              {summary?.counts.overdueJobs ?? '-'}
+            </Text>
+            <Text style={styles.label}>Overdue jobs</Text>
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.value}>{summary?.counts.openJobs ?? '-'}</Text>
+            <Text style={styles.label}>Open jobs</Text>
           </View>
         </View>
 
@@ -200,6 +231,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 18,
   },
+  warningCard: { borderColor: '#FDBA74' },
   value: { color: colours.ink, fontSize: 28, fontWeight: '800' },
   label: { color: colours.muted, marginTop: 6 },
   stateCard: {

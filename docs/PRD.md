@@ -58,6 +58,7 @@ The current implementation includes:
 - Dashboard summary from database.
 - Team Management and invitation acceptance.
 - Customer Management with mobile list, add/edit, details, archive/restore, duplicate warning and service-location support.
+- Job Management with mobile list, add/edit, details, assignment, status transitions, archive/restore, dashboard metrics and customer-linked jobs.
 - Basic navigation and placeholder screens for remaining modules.
 
 ## Target customers
@@ -113,6 +114,9 @@ The dashboard must show live data scoped to the logged-in user’s business:
 
 - business name
 - jobs today
+- upcoming jobs
+- jobs completed today
+- overdue jobs
 - outstanding invoices
 - customer count
 - unread notifications
@@ -128,6 +132,8 @@ Implemented customer management supports Australian customer profiles, contact p
 ### Jobs
 
 Jobs represent service work, visits, leads, scheduled jobs, completed work, or cancelled jobs.
+
+Implemented job management supports customer-linked work records, per-business job numbers, assignment, priority, schedule, address, status transitions, archive/restore and audit history. Future quotes, invoices, photos, documents, calendar events, notifications, reports and Tori summaries should link to the Job record rather than duplicating job data.
 
 ### Quotes
 

@@ -4,6 +4,11 @@
 
 ### Added
 
+- Complete Job Management module with tenant-scoped job CRUD, archive/restore, status updates, assignment, pagination, filters and per-business job numbers.
+- Mobile Jobs list, Job Details and New/Edit Job flows with quick actions, contact buttons, pull-to-refresh and future-ready quotes/invoices/photos/documents sections.
+- Job audit logging for create, update, assign, start, complete, cancel, hold, archive and restore actions.
+- Customer Details now shows real linked jobs.
+- Dashboard job metrics for today’s jobs, upcoming jobs, completed today, overdue jobs and open jobs.
 - Complete Customer Management module with tenant-scoped customer CRUD, archive/restore, pagination, search, filters, sorting and structured duplicate warnings.
 - CustomerSite support for multiple service locations per customer with primary-site handling and archive support.
 - Mobile Customer List, Add/Edit Customer and Customer Details flows with validation, duplicate warning override, top toast feedback, centred save loaders, future-ready history sections and service-location management.
@@ -12,6 +17,7 @@
 
 ### Changed
 
+- Jobs now use `scheduledStart`, `scheduledEnd`, assignment, priority and detailed Australian address fields instead of the original placeholder schedule/address fields.
 - Dashboard customer count now excludes archived customers.
 - Customer model now stores display name, customer type, contact preference, Australian address fields, tags, archive metadata and normalised email/phone values for tenant-local duplicate detection.
 

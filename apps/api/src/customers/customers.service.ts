@@ -136,6 +136,29 @@ export class CustomersService {
       orderBy: { createdAt: 'desc' },
       take: 25,
     });
+    const jobs = await this.prisma.job.findMany({
+      where: {
+        businessId: currentUser.businessId,
+        customerId: customer.id,
+        isArchived: false,
+      },
+      orderBy: { scheduledStart: 'desc' },
+      take: 10,
+      include: {
+        assignedTo: {
+          select: { email: true, firstName: true, id: true, lastName: true },
+        },
+        customer: {
+          select: {
+            companyName: true,
+            displayName: true,
+            email: true,
+            id: true,
+            phone: true,
+          },
+        },
+      },
+    });
 
     return {
       activity: activity.map((entry) => ({
@@ -144,6 +167,18 @@ export class CustomersService {
         metadata: (entry.metadata as Record<string, unknown> | null) ?? null,
       })),
       customer: this.toCustomer(customer),
+      jobs: jobs.map((job) => ({
+        ...job,
+        archivedAt: job.archivedAt?.toISOString() ?? null,
+        completedAt: job.completedAt?.toISOString() ?? null,
+        actualEnd: job.actualEnd?.toISOString() ?? null,
+        actualStart: job.actualStart?.toISOString() ?? null,
+        createdAt: job.createdAt.toISOString(),
+        scheduledEnd: job.scheduledEnd?.toISOString() ?? null,
+        scheduledStart: job.scheduledStart.toISOString(),
+        state: job.state as never,
+        updatedAt: job.updatedAt.toISOString(),
+      })),
       summary: this.summary(customer),
     };
   }

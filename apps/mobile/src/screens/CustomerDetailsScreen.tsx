@@ -1,4 +1,4 @@
-import type { Customer, CustomerSitePayload } from '@tradieos/shared';
+import type { Customer, CustomerSitePayload, Job } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
@@ -47,6 +47,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const [activity, setActivity] = useState<
     Array<{ action: string; createdAt: string }>
   >([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -78,6 +79,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
       const response = await customerDetailRequest(token, customerId);
       setCustomer(response.customer);
       setActivity(response.activity);
+      setJobs(response.jobs);
       navigation.setOptions({ title: response.customer.displayName });
     } catch {
       showToast({ message: "We couldn't load this customer.", tone: 'error' });
@@ -317,9 +319,45 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
         </Card>
 
         <Card title="Future history">
-          <Text style={styles.muted}>
-            No jobs recorded for this customer yet.
-          </Text>
+          {jobs.length === 0 ? (
+            <Text style={styles.muted}>
+              No jobs recorded for this customer yet.
+            </Text>
+          ) : null}
+          {jobs.map((job) => (
+            <Pressable
+              accessibilityRole="button"
+              key={job.id}
+              onPress={() =>
+                navigation.navigate('JobDetails', { jobId: job.id })
+              }
+              style={styles.jobLink}
+            >
+              <Text style={styles.siteTitle}>
+                {job.jobNumber} · {job.title}
+              </Text>
+              <Text style={styles.meta}>
+                {label(job.status)} ·{' '}
+                {new Intl.DateTimeFormat('en-AU', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                }).format(new Date(job.scheduledStart))}
+              </Text>
+            </Pressable>
+          ))}
+          {canEdit ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                navigation.navigate('JobForm', { customerId: customer.id })
+              }
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryText}>Create job for customer</Text>
+            </Pressable>
+          ) : null}
           <Text style={styles.muted}>No quotes created yet.</Text>
           <Text style={styles.muted}>No invoices recorded yet.</Text>
           <Text style={styles.muted}>No documents uploaded yet.</Text>
@@ -584,6 +622,12 @@ const styles = StyleSheet.create({
   },
   linkButton: { marginTop: 8 },
   linkText: { color: '#9F1239', fontWeight: '900' },
+  jobLink: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    marginTop: 10,
+    padding: 12,
+  },
   loadingCard: {
     alignItems: 'center',
     backgroundColor: colours.card,

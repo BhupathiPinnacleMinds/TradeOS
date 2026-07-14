@@ -13,6 +13,9 @@ export interface DashboardSummaryResponse {
   counts: {
     customers: number;
     jobsToday: number;
+    upcomingJobs: number;
+    completedToday: number;
+    overdueJobs: number;
     openJobs: number;
     openQuotes: number;
     unpaidInvoices: number;

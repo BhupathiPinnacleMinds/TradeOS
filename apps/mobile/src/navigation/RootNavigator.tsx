@@ -8,6 +8,8 @@ import { CustomerFormScreen } from '../screens/CustomerFormScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
+import { JobDetailsScreen } from '../screens/JobDetailsScreen';
+import { JobFormScreen } from '../screens/JobFormScreen';
 import { JobsScreen } from '../screens/JobsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { MoreScreen } from '../screens/MoreScreen';
@@ -100,6 +102,8 @@ export function RootNavigator() {
             component={CustomerDetailsScreen}
           />
           <Stack.Screen name="CustomerForm" component={CustomerFormScreen} />
+          <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
+          <Stack.Screen name="JobForm" component={JobFormScreen} />
           <Stack.Screen name="Team" component={TeamScreen} />
           <Stack.Screen
             name="TeamMemberProfile"

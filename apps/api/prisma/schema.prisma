@@ -48,12 +48,20 @@ enum CustomerType {
 }
 
 enum JobStatus {
-  LEAD
-  QUOTED
+  NEW
   SCHEDULED
+  ON_THE_WAY
   IN_PROGRESS
+  ON_HOLD
   COMPLETED
   CANCELLED
+}
+
+enum JobPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
 }
 
 enum QuoteStatus {
@@ -158,6 +166,7 @@ model Business {
   customers       Customer[]
   customerSites   CustomerSite[]
   jobs            Job[]
+  jobSequence     JobSequence?
   quotes          Quote[]
   invoices        Invoice[]
   payments        Payment[]
@@ -187,6 +196,9 @@ model User {
   invitedMembers  BusinessMember[] @relation("MemberInviter")
   createdCustomers Customer[]       @relation("CustomerCreator")
   updatedCustomers Customer[]       @relation("CustomerUpdater")
+  assignedJobs     Job[]            @relation("JobAssignee")
+  createdJobs      Job[]            @relation("JobCreator")
+  updatedJobs      Job[]            @relation("JobUpdater")
   auditLogs       AuditLog[]       @relation("AuditActor")
   notifications   Notification[]
   aiConversations AiConversation[]
@@ -315,27 +327,64 @@ model CustomerSite {
 }
 
 model Job {
-  id          String    @id @default(cuid())
-  businessId  String
-  customerId  String
-  title       String
-  description String?
-  status      JobStatus @default(LEAD)
-  startsAt    DateTime?
-  endsAt      DateTime?
-  address     String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer    Customer  @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  quotes      Quote[]
-  invoices    Invoice[]
-  messages    Message[]
-  documents   Document[]
+  id                       String      @id @default(cuid())
+  businessId               String
+  customerId               String
+  assignedToUserId         String?
+  jobNumber                String
+  title                    String
+  description              String?
+  tradeType                String?
+  status                   JobStatus   @default(NEW)
+  priority                 JobPriority @default(NORMAL)
+  scheduledStart           DateTime
+  scheduledEnd             DateTime?
+  estimatedDurationMinutes Int?
+  actualStart              DateTime?
+  actualEnd                DateTime?
+  completedAt              DateTime?
+  addressLine1             String
+  addressLine2             String?
+  suburb                   String
+  state                    String
+  postcode                 String
+  accessInstructions       String?
+  customerNotes            String?
+  internalNotes            String?
+  requiresQuote            Boolean     @default(false)
+  requiresInvoice          Boolean     @default(false)
+  invoiceCreated           Boolean     @default(false)
+  quoteCreated             Boolean     @default(false)
+  isArchived               Boolean     @default(false)
+  archivedAt               DateTime?
+  createdBy                String?
+  updatedBy                String?
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+  business                 Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer                 Customer    @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  assignedTo               User?       @relation("JobAssignee", fields: [assignedToUserId, businessId], references: [id, businessId], onDelete: SetNull)
+  creator                  User?       @relation("JobCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater                  User?       @relation("JobUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  quotes                   Quote[]
+  invoices                 Invoice[]
+  messages                 Message[]
+  documents                Document[]
 
+  @@unique([businessId, jobNumber])
   @@unique([id, businessId])
-  @@index([businessId, status, startsAt])
+  @@index([businessId, status, scheduledStart])
+  @@index([businessId, priority, scheduledStart])
+  @@index([businessId, assignedToUserId, scheduledStart])
   @@index([businessId, customerId])
+  @@index([businessId, isArchived])
+}
+
+model JobSequence {
+  businessId String   @id
+  nextNumber Int      @default(1)
+  updatedAt   DateTime @updatedAt
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model Quote {

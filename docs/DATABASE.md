@@ -432,8 +432,10 @@ Important fields:
 ## Relationships
 
 - Business has many users, members, customers, jobs, quotes, invoices, payments, messages, notifications, AI conversations, documents, integrations, and audit logs.
+- Business has one `JobSequence` row used to generate per-business job numbers.
 - BusinessMember belongs to a business and may belong to a user.
 - Customer has many jobs, quotes, invoices, and messages.
+- Job belongs to a business and customer, may be assigned to a user, and can have future quotes, invoices, messages and documents.
 - Job belongs to customer and may have quotes, invoices, messages, and documents.
 - Quote belongs to customer and may belong to a job.
 - Invoice belongs to customer and may belong to a job.

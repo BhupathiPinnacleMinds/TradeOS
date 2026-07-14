@@ -11,6 +11,8 @@ export type RootStackParamList = {
   TeamMemberProfile: { memberId: string };
   CustomerDetails: { customerId: string };
   CustomerForm: { customerId?: string };
+  JobDetails: { jobId: string };
+  JobForm: { jobId?: string; customerId?: string };
 };
 
 export type MainTabsParamList = {
