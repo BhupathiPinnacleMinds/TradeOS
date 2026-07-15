@@ -1,5 +1,15 @@
 import type {
   AuthResponse,
+  AppointmentDetailResponse,
+  AppointmentAvailabilityRequest,
+  AppointmentAvailabilityResponse,
+  AppointmentListResponse,
+  AppointmentPayload,
+  AppointmentRecommendationRequest,
+  AppointmentRecommendationResponse,
+  AppointmentReassignmentOptionsResponse,
+  AppointmentReassignmentPayload,
+  AppointmentStatus,
   BusinessRole,
   CustomerDetailResponse,
   CustomerListResponse,
@@ -417,4 +427,114 @@ export function restoreJobRequest(token: string, jobId: string) {
     method: 'POST',
     token,
   });
+}
+
+export function appointmentsRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<AppointmentListResponse>(
+    `/appointments${queryString(params)}`,
+    { token },
+  );
+}
+
+export function appointmentDetailRequest(token: string, appointmentId: string) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}`,
+    { token },
+  );
+}
+
+export function createAppointmentRequest(
+  token: string,
+  input: AppointmentPayload,
+) {
+  return apiRequest<AppointmentDetailResponse>('/appointments', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateAppointmentRequest(
+  token: string,
+  appointmentId: string,
+  input: AppointmentPayload,
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}`,
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export function appointmentReassignmentOptionsRequest(
+  token: string,
+  appointmentId: string,
+) {
+  return apiRequest<AppointmentReassignmentOptionsResponse>(
+    `/appointments/${appointmentId}/reassignment-options`,
+    { token },
+  );
+}
+
+export function reassignAppointmentRequest(
+  token: string,
+  appointmentId: string,
+  input: AppointmentReassignmentPayload,
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}/reassign`,
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export function recommendAppointmentRequest(
+  token: string,
+  input: AppointmentRecommendationRequest,
+) {
+  return apiRequest<AppointmentRecommendationResponse>(
+    '/appointments/recommend',
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function appointmentAvailabilityRequest(
+  token: string,
+  input: AppointmentAvailabilityRequest,
+) {
+  return apiRequest<AppointmentAvailabilityResponse>(
+    '/appointments/availability',
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function transitionAppointmentRequest(
+  token: string,
+  appointmentId: string,
+  action: 'start' | 'arrive' | 'complete' | 'cancel',
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}/${action}`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }

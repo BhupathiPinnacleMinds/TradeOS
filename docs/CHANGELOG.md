@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-15
+
+### Added
+
+- Appointment & Smart Scheduling foundation.
+- Multi-tenant `Appointment` and `AppointmentSequence` database models.
+- Appointment API endpoints for listing, details, create, update, start, arrive, complete, cancel and technician recommendation.
+- Non-AI scheduling recommendation service using working hours and existing appointment conflicts.
+- Calendar tab with day, week, month and agenda appointment views.
+- Appointment Details screen with customer/job context, maps/call/SMS shortcuts, status actions and basic reschedule action.
+- Appointment availability API and conflict detection for overlapping technicians and default business working hours.
+- Owner conflict override support for intentional scheduling exceptions.
+- Shared appointment status colours and `RESCHEDULED` appointment status.
+- Quick customer creation during job creation.
+- Job details appointments section and combined job/appointment timeline.
+- Dashboard appointment summaries for today’s appointments, next appointment, late appointments and upcoming appointments today.
+- Calendar UX polish with dismissible jump-to-date modal, expandable filter summary with chevrons, status-aware appointment quick actions and blocking mutation feedback.
+- Shared appointment quick-action rules so Calendar cards and Appointment Details use the same status, permission, phone and address logic.
+- Appointment visit-location snapshots with customer-site, customer-default and manual one-off address sources.
+- Appointment form Location and Review sections with searchable customer selection, manual Australian address validation and optional save-as-service-site behaviour.
+- Appointment reassignment API with assignment-only updates, technician workload/recommendation options, conflict checks, owner/admin override support, audit timeline entries and development notification stubs.
+- Mobile Reassign Appointment screen with appointment summary, recommended technician, availability indicators, conflict warning, confirmation prompt and success toast.
+
+### Changed
+
+- Dashboard summary now includes appointment-based scheduling metrics while keeping existing job counts.
+- Bottom navigation now uses Dashboard, Calendar, Jobs, Tori and More.
+- Customers moved under More.
+- Dashboard keeps appointment detail lists in Calendar and shows only scheduling summaries.
+- Job details now treats appointments as the future-ready scheduling layer.
+- Completed, cancelled and no-show appointments no longer show invalid workflow actions such as Start or Complete.
+- Calendar Previous and Next navigation now moves by the active view period: day, week, month or a documented seven-day agenda range.
+- Same-record rescheduling keeps the active appointment in `SCHEDULED` or `CONFIRMED` and records `APPOINTMENT_RESCHEDULED` in audit metadata instead of leaving active visits in `RESCHEDULED`.
+- Calendar, Appointment Details and Job Details now expose Reassign Technician entry points and refresh appointment data after returning from reassignment.
+
 ## 2026-07-14
 
 ### Added

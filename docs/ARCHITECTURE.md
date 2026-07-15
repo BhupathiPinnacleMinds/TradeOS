@@ -39,6 +39,9 @@ Current screens:
 - Register
 - Accept Invitation
 - Dashboard
+- Calendar
+- Appointment Details
+- Appointment Reassign
 - Tori Chat
 - Customers
 - Customer Details
@@ -79,6 +82,7 @@ Current modules:
 - members
 - customers
 - jobs
+- appointments
 - quotes
 - invoices
 - payments
@@ -168,6 +172,21 @@ Job management architecture:
 - Job status transitions store operational timestamps where appropriate, such as `actualStart`, `actualEnd`, and `completedAt`.
 - Job audit logs record creation, assignment, updates, starts, completion, cancellation and hold events.
 - Mobile jobs follow the customer/team UX pattern with pull-to-refresh, filters, large quick actions, future-ready sections, and tenant-scoped API refreshes.
+
+Appointment and scheduling architecture:
+
+- `Job` represents the work request and business context.
+- `Appointment` represents when the work happens and who performs it.
+- One job can have many appointments for inspections, installations, maintenance, return visits and emergency visits.
+- Calendar, Tori scheduling, notifications and future travel planning should use appointments instead of job schedule fields.
+- Appointment recommendation is deliberately non-AI for now. It checks working hours, active technicians and existing appointment conflicts, then returns a recommendation with a human-readable reason.
+- Calendar is a mobile tab over appointment APIs. It supports day, week, month and agenda ranges, technician/status/search filters, jump-to-date, swipe date movement and appointment detail drill-in.
+- Appointment availability checks are exposed as API architecture for Tori prompts such as “show today’s appointments”, “who is available tomorrow?”, “move John’s appointment”, and “schedule this job”. Tori must still draft or recommend changes before user confirmation.
+- Appointment reassignment is a dedicated command path, not a full appointment edit. It updates only `assignedUserId`, keeps the appointment's job, customer, time, notes and location snapshot intact, checks technician availability for the existing time window, writes `APPOINTMENT_REASSIGNED` audit/timeline metadata and calls notification-service stubs for future push/SMS/email delivery.
+- Reassignment options use the existing scheduling recommendation service plus workload/availability data so future Tori scheduling commands can reuse the same API without redesign.
+- Appointment notification events are represented as audit/loggable domain actions for created, updated, reassigned, rescheduled, cancelled and completed appointments. Push/SMS/email delivery remains future work.
+- Appointment status changes create audit log entries that are shown in the job timeline.
+- Existing job schedule fields remain for compatibility while appointments become the future scheduling source.
 
 ## AI layer
 

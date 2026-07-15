@@ -116,6 +116,20 @@ When Tori makes an assumption, it should say so.
 
 Tori should use Australian English and understand Australian trade business context, including GST, ABN, suburbs, states, and local customer communication norms.
 
+## Scheduling architecture
+
+Tori may use appointment APIs in future to answer scheduling questions such as:
+
+- Show today’s appointments.
+- Move John’s appointment.
+- Who is available tomorrow?
+- Schedule this job.
+
+The current implementation prepares tenant-scoped appointment, availability and
+calendar APIs only. Tori must still present drafts or recommendations and wait
+for explicit user confirmation before creating, moving, cancelling, notifying or
+messaging anyone about an appointment.
+
 ## Future AI architecture
 
 Recommended structure:

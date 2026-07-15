@@ -64,6 +64,32 @@ enum JobPriority {
   URGENT
 }
 
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  ON_THE_WAY
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum AppointmentType {
+  INSPECTION
+  INSTALLATION
+  MAINTENANCE
+  RETURN_VISIT
+  EMERGENCY_VISIT
+}
+
+enum AppointmentLocationSource {
+  CUSTOMER_SITE
+  CUSTOMER_DEFAULT
+  MANUAL
+}
+
 enum QuoteStatus {
   DRAFT
   SENT
@@ -167,6 +193,8 @@ model Business {
   customerSites   CustomerSite[]
   jobs            Job[]
   jobSequence     JobSequence?
+  appointments    Appointment[]
+  appointmentSequence AppointmentSequence?
   quotes          Quote[]
   invoices        Invoice[]
   payments        Payment[]
@@ -197,8 +225,11 @@ model User {
   createdCustomers Customer[]       @relation("CustomerCreator")
   updatedCustomers Customer[]       @relation("CustomerUpdater")
   assignedJobs     Job[]            @relation("JobAssignee")
+  assignedAppointments Appointment[] @relation("AppointmentAssignee")
   createdJobs      Job[]            @relation("JobCreator")
   updatedJobs      Job[]            @relation("JobUpdater")
+  createdAppointments Appointment[] @relation("AppointmentCreator")
+  updatedAppointments Appointment[] @relation("AppointmentUpdater")
   auditLogs       AuditLog[]       @relation("AuditActor")
   notifications   Notification[]
   aiConversations AiConversation[]
@@ -320,6 +351,7 @@ model CustomerSite {
   updatedAt          DateTime @updatedAt
   business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer           Customer @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
+  appointments       Appointment[]
 
   @@unique([id, businessId])
   @@index([businessId, customerId, isArchived])
@@ -370,6 +402,7 @@ model Job {
   invoices                 Invoice[]
   messages                 Message[]
   documents                Document[]
+  appointments             Appointment[]
 
   @@unique([businessId, jobNumber])
   @@unique([id, businessId])
@@ -385,6 +418,56 @@ model JobSequence {
   nextNumber Int      @default(1)
   updatedAt   DateTime @updatedAt
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id                       String            @id @default(cuid())
+  businessId               String
+  jobId                    String
+  customerSiteId           String?
+  assignedUserId           String?
+  appointmentNumber        String
+  appointmentType          AppointmentType   @default(INSPECTION)
+  locationSource           AppointmentLocationSource @default(CUSTOMER_DEFAULT)
+  status                   AppointmentStatus @default(SCHEDULED)
+  scheduledStart           DateTime
+  scheduledEnd             DateTime
+  actualStart              DateTime?
+  actualEnd                DateTime?
+  estimatedDurationMinutes Int?
+  travelDurationMinutes    Int?
+  travelDistanceKm         Decimal?          @db.Decimal(8, 2)
+  addressLine1             String
+  addressLine2             String?
+  suburb                   String
+  state                    String
+  postcode                 String
+  accessInstructions       String?
+  notes                    String?
+  createdBy                String?
+  updatedBy                String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  business                 Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  job                      Job               @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Cascade)
+  customerSite             CustomerSite?     @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: NoAction)
+  assignedUser             User?             @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: SetNull)
+  creator                  User?             @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater                  User?             @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, appointmentNumber])
+  @@unique([id, businessId])
+  @@index([businessId, jobId])
+  @@index([businessId, customerSiteId])
+  @@index([businessId, assignedUserId, scheduledStart])
+  @@index([businessId, status, scheduledStart])
+}
+
+model AppointmentSequence {
+  businessId String   @id
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model Quote {

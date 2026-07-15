@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AiModule } from './ai/ai.module';
+import { AppointmentsModule } from './appointments/appointments.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessesModule } from './businesses/businesses.module';
 import { CustomersModule } from './customers/customers.module';
@@ -32,6 +33,7 @@ import { ReportsModule } from './reports/reports.module';
     MembersModule,
     CustomersModule,
     JobsModule,
+    AppointmentsModule,
     QuotesModule,
     InvoicesModule,
     PaymentsModule,

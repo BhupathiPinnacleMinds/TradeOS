@@ -4,8 +4,11 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
+  ValidateNested,
   Matches,
   Max,
   MaxLength,
@@ -103,9 +106,47 @@ export class ListJobsQueryDto {
   sortOrder?: SortOrder;
 }
 
-export class UpsertJobDto {
+export class QuickCustomerDto {
   @IsString()
-  customerId!: string;
+  @IsNotEmpty()
+  @MaxLength(160)
+  name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  phone!: string;
+
+  @IsString()
+  @MaxLength(160)
+  addressLine1!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  addressLine2?: string;
+
+  @IsString()
+  @MaxLength(80)
+  suburb!: string;
+
+  @IsIn(AUSTRALIAN_STATES)
+  state!: AustralianState;
+
+  @Matches(/^\d{4}$/)
+  postcode!: string;
+}
+
+export class UpsertJobDto {
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => QuickCustomerDto)
+  quickCustomer?: QuickCustomerDto;
 
   @IsOptional()
   @IsString()

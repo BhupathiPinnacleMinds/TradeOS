@@ -28,6 +28,7 @@ const accountant: AuthenticatedUser = {
 };
 
 type MockPrisma = {
+  appointment: { findMany: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
   customer: { findFirst: jest.Mock };
   job: {
@@ -131,6 +132,7 @@ function payload(overrides: Partial<Record<string, unknown>> = {}) {
 
 function createService() {
   const prisma: MockPrisma = {
+    appointment: { findMany: jest.fn().mockResolvedValue([]) },
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),

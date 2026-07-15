@@ -13,6 +13,9 @@ Current Prisma models include:
 - BusinessMember
 - Customer
 - Job
+- JobSequence
+- Appointment
+- AppointmentSequence
 - Quote
 - QuoteLineItem
 - Invoice
@@ -214,28 +217,91 @@ Rules:
 
 ### Job
 
-Represents work or potential work.
+Represents work or potential work. Jobs describe the work request; appointments
+describe when visits happen and who performs them.
 
 Important fields:
 
 - id
 - businessId
 - customerId
+- assignedToUserId
+- jobNumber
 - title
 - description
 - status
-- startsAt
-- endsAt
-- address
+- priority
+- scheduledStart
+- scheduledEnd
+- addressLine1
+- suburb
+- state
+- postcode
 
 Statuses:
 
-- LEAD
-- QUOTED
+- NEW
 - SCHEDULED
+- ON_THE_WAY
+- IN_PROGRESS
+- ON_HOLD
+- COMPLETED
+- CANCELLED
+
+### Appointment
+
+Represents one scheduled visit for a job. A job can have many appointments,
+such as inspection, installation, maintenance, return visit or emergency visit.
+
+Important fields:
+
+- id
+- businessId
+- jobId
+- customerSiteId
+- assignedUserId
+- appointmentNumber
+- appointmentType
+- locationSource
+- status
+- scheduledStart
+- scheduledEnd
+- actualStart
+- actualEnd
+- estimatedDurationMinutes
+- travelDurationMinutes
+- travelDistanceKm
+- addressLine1
+- addressLine2
+- suburb
+- state
+- postcode
+- accessInstructions
+- notes
+- createdBy
+- updatedBy
+
+Statuses:
+
+- SCHEDULED
+- CONFIRMED
+- ON_THE_WAY
+- ARRIVED
 - IN_PROGRESS
 - COMPLETED
 - CANCELLED
+- NO_SHOW
+- RESCHEDULED
+
+Scheduling rules:
+
+- Appointments are the canonical future calendar record.
+- Appointment rows remain tenant-scoped with `businessId`.
+- Appointment rows store a visit-location snapshot copied from a customer service site, the customer default address, or a manual one-off address.
+- Manual one-off appointment addresses do not create a permanent customer service site unless the user explicitly chooses to save the address as a site.
+- The current reschedule model keeps one active appointment row and records `APPOINTMENT_RESCHEDULED` in audit/timeline metadata. Active appointments remain `SCHEDULED` or `CONFIRMED` after date/time changes.
+- Calendar conflict detection compares assigned technician, scheduled start/end, closed statuses and business working hours.
+- Business working hours, technician working hours, lunch breaks and public holidays are future extension points; the current implementation enforces default business hours in the appointment service.
 
 ### Quote
 
@@ -431,12 +497,13 @@ Important fields:
 
 ## Relationships
 
-- Business has many users, members, customers, jobs, quotes, invoices, payments, messages, notifications, AI conversations, documents, integrations, and audit logs.
+- Business has many users, members, customers, jobs, appointments, quotes, invoices, payments, messages, notifications, AI conversations, documents, integrations, and audit logs.
 - Business has one `JobSequence` row used to generate per-business job numbers.
+- Business has one `AppointmentSequence` row used to generate per-business appointment numbers.
 - BusinessMember belongs to a business and may belong to a user.
 - Customer has many jobs, quotes, invoices, and messages.
-- Job belongs to a business and customer, may be assigned to a user, and can have future quotes, invoices, messages and documents.
-- Job belongs to customer and may have quotes, invoices, messages, and documents.
+- Job belongs to a business and customer, may be assigned to a user, and can have appointments, quotes, invoices, messages and documents.
+- Appointment belongs to a business and job, and may be assigned to a user.
 - Quote belongs to customer and may belong to a job.
 - Invoice belongs to customer and may belong to a job.
 - Payment belongs to invoice.

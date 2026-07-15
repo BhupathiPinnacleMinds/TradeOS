@@ -14,6 +14,11 @@ describe('DashboardService', () => {
   it('returns job dashboard counts from tenant-scoped queries', async () => {
     const prisma = {
       aiMessage: { count: jest.fn() },
+      appointment: {
+        count: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn(),
+      },
       business: { findUnique: jest.fn() },
       customer: { count: jest.fn() },
       invoice: { count: jest.fn(), findMany: jest.fn() },
@@ -36,16 +41,30 @@ describe('DashboardService', () => {
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(3)
       .mockResolvedValueOnce(6);
+    prisma.appointment.count
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(4)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(2);
     prisma.quote.count.mockResolvedValue(2);
     prisma.invoice.count.mockResolvedValue(2);
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.notification.count.mockResolvedValue(4);
     prisma.aiMessage.count.mockResolvedValue(3);
     prisma.job.findMany.mockResolvedValue([]);
+    prisma.appointment.findMany.mockResolvedValue([]);
+    prisma.appointment.findFirst.mockResolvedValue(null);
     prisma.notification.findMany.mockResolvedValue([]);
 
     const service = new DashboardService(prisma as never);
-    const result = await service.summary('business-1');
+    const result = await service.summary({
+      businessId: 'business-1',
+      email: 'owner@example.com',
+      id: 'owner-1',
+      role: 'OWNER',
+    });
 
     expect(result.counts).toMatchObject({
       jobsToday: 2,
@@ -53,6 +72,12 @@ describe('DashboardService', () => {
       completedToday: 1,
       overdueJobs: 3,
       openJobs: 6,
+      todaysAppointments: 2,
+      upcomingAppointments: 4,
+      completedAppointmentsToday: 1,
+      myAppointments: 3,
+      lateAppointments: 1,
+      upcomingTodayAppointments: 2,
     });
     const jobCountCalls = prisma.job.count.mock.calls as unknown as Array<
       [JobCountCall]

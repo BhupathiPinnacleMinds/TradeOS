@@ -83,6 +83,11 @@ export function JobFormScreen({ navigation, route }: Props) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [useQuickCustomer, setUseQuickCustomer] = useState(false);
+  const [createdJobPrompt, setCreatedJobPrompt] = useState<{
+    customerId: string;
+    jobId: string;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -188,7 +193,18 @@ export function JobFormScreen({ navigation, route }: Props) {
 
   function validate(input: JobPayload) {
     const next: Record<string, string> = {};
-    if (!input.customerId) next.customerId = 'Choose a customer.';
+    if (!input.customerId && !input.quickCustomer) {
+      next.customerId = 'Choose a customer or create a quick customer.';
+    }
+    if (input.quickCustomer) {
+      if (!input.quickCustomer.name.trim())
+        next.quickCustomerName = 'Enter a customer name.';
+      if (!input.quickCustomer.phone.trim())
+        next.quickCustomerPhone = 'Enter a phone number.';
+      if (!input.quickCustomer.addressLine1.trim()) {
+        next.quickCustomerAddress = 'Enter a customer address.';
+      }
+    }
     if (!input.title.trim()) next.title = 'Enter a job title.';
     if (!input.scheduledStart) next.scheduledStart = 'Enter a scheduled start.';
     if (!input.addressLine1.trim()) next.addressLine1 = 'Enter an address.';
@@ -210,6 +226,18 @@ export function JobFormScreen({ navigation, route }: Props) {
     const payload: JobPayload = {
       ...form,
       assignedToUserId: form.assignedToUserId || null,
+      customerId: useQuickCustomer ? undefined : form.customerId,
+      quickCustomer:
+        useQuickCustomer && form.quickCustomer
+          ? {
+              ...form.quickCustomer,
+              addressLine1: form.addressLine1,
+              addressLine2: form.addressLine2,
+              postcode: form.postcode,
+              state: form.state,
+              suburb: form.suburb,
+            }
+          : undefined,
       scheduledStart: new Date(form.scheduledStart).toISOString(),
       scheduledEnd: form.scheduledEnd
         ? new Date(form.scheduledEnd).toISOString()
@@ -231,7 +259,14 @@ export function JobFormScreen({ navigation, route }: Props) {
         message: jobId ? 'Job updated.' : `${response.job.jobNumber} created.`,
         tone: 'success',
       });
-      navigation.replace('JobDetails', { jobId: response.job.id });
+      if (jobId) {
+        navigation.replace('JobDetails', { jobId: response.job.id });
+      } else {
+        setCreatedJobPrompt({
+          customerId: response.job.customerId,
+          jobId: response.job.id,
+        });
+      }
     } catch (error) {
       showToast({
         message:
@@ -261,33 +296,110 @@ export function JobFormScreen({ navigation, route }: Props) {
       </Text>
 
       <Section title="Customer">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.pickerRow}>
-            {customers.map((customer) => (
-              <Chip
-                active={form.customerId === customer.id}
-                key={customer.id}
-                label={customer.displayName}
-                onPress={() => {
-                  update('customerId', customer.id);
-                  update('addressLine1', customer.addressLine1 ?? '');
-                  update('addressLine2', customer.addressLine2 ?? '');
-                  update('suburb', customer.suburb ?? '');
-                  update('state', customer.state ?? 'NSW');
-                  update('postcode', customer.postcode ?? '');
-                }}
-              />
-            ))}
-          </View>
-        </ScrollView>
-        {errors.customerId ? (
-          <Text style={styles.error}>{errors.customerId}</Text>
+        {!jobId ? (
+          <Toggle
+            active={useQuickCustomer}
+            label="Create quick customer"
+            onPress={() => {
+              setUseQuickCustomer((current) => !current);
+              setForm((current) => ({
+                ...current,
+                customerId: useQuickCustomer ? current.customerId : undefined,
+                quickCustomer: useQuickCustomer
+                  ? undefined
+                  : {
+                      addressLine1: current.addressLine1,
+                      addressLine2: current.addressLine2,
+                      name: '',
+                      phone: '',
+                      postcode: current.postcode,
+                      state: current.state,
+                      suburb: current.suburb,
+                    },
+              }));
+            }}
+          />
         ) : null}
-        {selectedCustomer ? (
-          <Text style={styles.muted}>
-            Selected: {selectedCustomer.displayName}
-          </Text>
-        ) : null}
+        {!useQuickCustomer ? (
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.pickerRow}>
+                {customers.map((customer) => (
+                  <Chip
+                    active={form.customerId === customer.id}
+                    key={customer.id}
+                    label={customer.displayName}
+                    onPress={() => {
+                      update('customerId', customer.id);
+                      update('addressLine1', customer.addressLine1 ?? '');
+                      update('addressLine2', customer.addressLine2 ?? '');
+                      update('suburb', customer.suburb ?? '');
+                      update('state', customer.state ?? 'NSW');
+                      update('postcode', customer.postcode ?? '');
+                    }}
+                  />
+                ))}
+              </View>
+            </ScrollView>
+            {errors.customerId ? (
+              <Text style={styles.error}>{errors.customerId}</Text>
+            ) : null}
+            {selectedCustomer ? (
+              <Text style={styles.muted}>
+                Selected: {selectedCustomer.displayName}
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Field
+              error={errors.quickCustomerName}
+              label="Customer name"
+              onChangeText={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  quickCustomer: {
+                    ...(current.quickCustomer ?? {
+                      addressLine1: '',
+                      name: '',
+                      phone: '',
+                      postcode: '',
+                      state: 'NSW',
+                      suburb: '',
+                    }),
+                    name: value,
+                  },
+                }))
+              }
+              value={form.quickCustomer?.name ?? ''}
+            />
+            <Field
+              error={errors.quickCustomerPhone}
+              keyboardType="phone-pad"
+              label="Phone"
+              onChangeText={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  quickCustomer: {
+                    ...(current.quickCustomer ?? {
+                      addressLine1: '',
+                      name: '',
+                      phone: '',
+                      postcode: '',
+                      state: 'NSW',
+                      suburb: '',
+                    }),
+                    phone: value,
+                  },
+                }))
+              }
+              value={form.quickCustomer?.phone ?? ''}
+            />
+            <Text style={styles.muted}>
+              The address below will be saved to the new customer and job.
+            </Text>
+          </>
+        )}
       </Section>
 
       <Section title="Basics">
@@ -439,6 +551,38 @@ export function JobFormScreen({ navigation, route }: Props) {
           {isSaving ? 'Saving job...' : 'Save job'}
         </Text>
       </Pressable>
+
+      {createdJobPrompt ? (
+        <View style={styles.promptCard}>
+          <Text style={styles.promptTitle}>Job created successfully.</Text>
+          <Text style={styles.muted}>Schedule an appointment now?</Text>
+          <View style={styles.promptActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                navigation.replace('AppointmentForm', {
+                  customerId: createdJobPrompt.customerId,
+                  jobId: createdJobPrompt.jobId,
+                })
+              }
+              style={styles.promptPrimary}
+            >
+              <Text style={styles.promptPrimaryText}>Schedule Now</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                navigation.replace('JobDetails', {
+                  jobId: createdJobPrompt.jobId,
+                })
+              }
+              style={styles.promptSecondary}
+            >
+              <Text style={styles.promptSecondaryText}>Later</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -467,7 +611,7 @@ function Field({
   value,
 }: {
   error?: string;
-  keyboardType?: 'default' | 'number-pad';
+  keyboardType?: 'default' | 'number-pad' | 'phone-pad';
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
@@ -614,6 +758,37 @@ const styles = StyleSheet.create({
   },
   muted: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   pickerRow: { flexDirection: 'row', gap: 8, paddingVertical: 4 },
+  promptActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  promptCard: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 16,
+  },
+  promptPrimary: {
+    backgroundColor: colours.primary,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  promptPrimaryText: { color: '#FFFFFF', fontWeight: '900' },
+  promptSecondary: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#C7D2FE',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  promptSecondaryText: { color: colours.primary, fontWeight: '900' },
+  promptTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
   saveButton: {
     alignItems: 'center',
     backgroundColor: colours.primary,

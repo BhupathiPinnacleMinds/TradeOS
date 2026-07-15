@@ -43,6 +43,8 @@ Current completed items:
 - Team Management and invitation acceptance.
 - Customer Management with CustomerSite service locations, archive/restore, duplicate warnings and mobile CRUD screens.
 - Job Management with per-business job numbers, assignment, scheduling, status transitions, dashboard metrics and customer-linked history.
+- Appointment & Smart Scheduling foundation with multi-visit appointments, technician recommendations, appointment dashboard metrics and job timeline.
+- Calendar & Appointment Management with day/week/month/agenda views, appointment details, technician filters, conflict detection and availability APIs for future Tori scheduling.
 
 ## Phase 2: Tori AI and operating workflows
 

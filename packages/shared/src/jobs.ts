@@ -1,6 +1,7 @@
 import type { AuditLogEntry } from './members';
 import type { AustralianState } from './customers';
 import type { BusinessRole } from './auth';
+import type { Appointment } from './appointments';
 
 export const JOB_STATUSES = [
   'NEW',
@@ -100,10 +101,28 @@ export interface JobListResponse {
 export interface JobDetailResponse {
   job: Job;
   activity: AuditLogEntry[];
+  appointments: Appointment[];
+  timeline: Array<{
+    id: string;
+    action: string;
+    entityType: string;
+    entityId: string | null;
+    createdAt: string;
+    metadata: Record<string, unknown> | null;
+  }>;
 }
 
 export interface JobPayload {
-  customerId: string;
+  customerId?: string;
+  quickCustomer?: {
+    name: string;
+    phone: string;
+    addressLine1: string;
+    addressLine2?: string;
+    suburb: string;
+    state: AustralianState;
+    postcode: string;
+  };
   assignedToUserId?: string | null;
   title: string;
   description?: string;

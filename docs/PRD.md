@@ -59,6 +59,7 @@ The current implementation includes:
 - Team Management and invitation acceptance.
 - Customer Management with mobile list, add/edit, details, archive/restore, duplicate warning and service-location support.
 - Job Management with mobile list, add/edit, details, assignment, status transitions, archive/restore, dashboard metrics and customer-linked jobs.
+- Calendar & Appointment Management with day, week, month and agenda views, appointment details, technician filters, conflict detection, availability APIs and assignment-only appointment reassignment.
 - Basic navigation and placeholder screens for remaining modules.
 
 ## Target customers
@@ -228,3 +229,15 @@ Current implementation supports the full role model documented in [Roles and Per
 - Every new tenant-owned entity must include business isolation.
 - Every customer-facing AI action must require user confirmation before sending.
 - Every implementation must keep mobile usability central.
+
+## Appointment and smart scheduling requirements
+
+- Jobs represent the work request.
+- Appointments represent when work happens and who performs it.
+- One job may have multiple appointments.
+- Calendar, Tori scheduling, notifications and travel planning must use appointments as the future scheduling source.
+- Smart assignment must start without AI by recommending available technicians based on working hours and existing appointment conflicts.
+- Quick job creation may create a minimal customer and job together when the customer does not already exist.
+- Appointment actions must be tenant-scoped, permission-aware and audit logged.
+- Calendar UI must show detailed appointment schedules; Dashboard should show scheduling summaries only.
+- Appointment reassignment must never create a duplicate appointment or change the job, customer, time, notes or visit-location snapshot. It changes only the technician assignment, checks conflicts, records old/new technicians in audit history and refreshes Calendar, Dashboard, Job Details and Appointment Details views through normal API reloads.

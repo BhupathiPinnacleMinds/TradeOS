@@ -17,6 +17,12 @@ export interface DashboardSummaryResponse {
     completedToday: number;
     overdueJobs: number;
     openJobs: number;
+    todaysAppointments: number;
+    upcomingAppointments: number;
+    completedAppointmentsToday: number;
+    myAppointments: number;
+    lateAppointments: number;
+    upcomingTodayAppointments: number;
     openQuotes: number;
     unpaidInvoices: number;
     unreadNotifications: number;
@@ -33,6 +39,24 @@ export interface DashboardSummaryResponse {
     customerName: string;
     address: string | null;
   }>;
+  todayAppointments: Array<{
+    id: string;
+    appointmentNumber: string;
+    jobId: string;
+    jobTitle: string;
+    status: string;
+    startsAt: string;
+    technicianName: string | null;
+    customerName: string;
+    address: string | null;
+  }>;
+  nextAppointment: {
+    id: string;
+    jobTitle: string;
+    customerName: string;
+    startsAt: string;
+    technicianName: string | null;
+  } | null;
   notifications: Array<{
     id: string;
     title: string;

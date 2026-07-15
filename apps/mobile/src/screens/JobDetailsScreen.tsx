@@ -1,6 +1,7 @@
-import type { Job, JobStatus } from '@tradieos/shared';
+import type { Appointment, Job, JobStatus } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -14,6 +15,7 @@ import {
   archiveJobRequest,
   jobDetailRequest,
   restoreJobRequest,
+  transitionAppointmentRequest,
   updateJobStatusRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -43,8 +45,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const { token, user } = useAuth();
   const { showToast } = useToast();
   const [job, setJob] = useState<Job | null>(null);
-  const [activity, setActivity] = useState<
-    Array<{ action: string; createdAt: string }>
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [timeline, setTimeline] = useState<
+    Array<{ action: string; createdAt: string; entityType: string }>
   >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
@@ -69,7 +72,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     try {
       const response = await jobDetailRequest(token, jobId);
       setJob(response.job);
-      setActivity(response.activity);
+      setAppointments(response.appointments);
+      setTimeline(response.timeline);
       navigation.setOptions({ title: response.job.jobNumber });
     } catch {
       showToast({ message: "We couldn't load this job.", tone: 'error' });
@@ -78,9 +82,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     }
   }
 
-  useEffect(() => {
-    void loadJob();
-  }, [jobId, token]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadJob();
+    }, [jobId, token]),
+  );
 
   async function changeStatus(status: JobStatus) {
     if (!token || !job || isBusy) return;
@@ -88,7 +94,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     try {
       const response = await updateJobStatusRequest(token, job.id, status);
       setJob(response.job);
-      setActivity(response.activity);
+      setAppointments(response.appointments);
+      setTimeline(response.timeline);
       showToast({
         message: `Job marked ${label(status).toLowerCase()}.`,
         tone: 'success',
@@ -114,7 +121,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         ? await restoreJobRequest(token, job.id)
         : await archiveJobRequest(token, job.id);
       setJob(response.job);
-      setActivity(response.activity);
+      setAppointments(response.appointments);
+      setTimeline(response.timeline);
       showToast({
         message: job.isArchived ? 'Job restored.' : 'Job archived.',
         tone: 'success',
@@ -125,6 +133,29 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           error instanceof Error
             ? error.message
             : "We couldn't update this job.",
+        tone: 'error',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function transitionAppointment(
+    appointmentId: string,
+    action: 'start' | 'arrive' | 'complete' | 'cancel',
+  ) {
+    if (!token || isBusy) return;
+    setIsBusy(true);
+    try {
+      await transitionAppointmentRequest(token, appointmentId, action);
+      await loadJob();
+      showToast({ message: `Appointment ${action} updated.`, tone: 'success' });
+    } catch (error) {
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "We couldn't update this appointment.",
         tone: 'error',
       });
     } finally {
@@ -194,6 +225,17 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             onPress={() => navigation.navigate('JobForm', { jobId: job.id })}
           />
         ) : null}
+        {canEdit ? (
+          <QuickAction
+            label="Schedule Appointment"
+            onPress={() =>
+              navigation.navigate('AppointmentForm', {
+                customerId: job.customerId,
+                jobId: job.id,
+              })
+            }
+          />
+        ) : null}
       </View>
 
       {canUpdateStatus ? (
@@ -257,21 +299,71 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
-      <Card title="Schedule">
-        <Text style={styles.meta}>
-          Start: {formatDateTime(job.scheduledStart)}
-        </Text>
-        <Text style={styles.meta}>End: {formatDateTime(job.scheduledEnd)}</Text>
-        <Text style={styles.meta}>
-          Estimated duration: {job.estimatedDurationMinutes ?? 'Not recorded'}{' '}
-          minutes
-        </Text>
-        <Text style={styles.meta}>
-          Assigned staff:{' '}
-          {job.assignedTo
-            ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
-            : 'Unassigned'}
-        </Text>
+      <Card title="Appointments">
+        {appointments.length === 0 ? (
+          <Text style={styles.meta}>No appointments booked yet.</Text>
+        ) : null}
+        {appointments.map((appointment) => (
+          <View key={appointment.id} style={styles.appointmentCard}>
+            <Text style={styles.appointmentTitle}>
+              {appointment.appointmentNumber} ·{' '}
+              {label(appointment.appointmentType)}
+            </Text>
+            <Text style={styles.meta}>
+              {formatDateTime(appointment.scheduledStart)} –{' '}
+              {formatDateTime(appointment.scheduledEnd)}
+            </Text>
+            <Text style={styles.meta}>Status: {label(appointment.status)}</Text>
+            <Text style={styles.meta}>
+              Technician:{' '}
+              {appointment.assignedUser
+                ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+                : 'Unassigned'}
+            </Text>
+            <Text style={styles.meta}>
+              Notes: {appointment.notes ?? 'No appointment notes.'}
+            </Text>
+            {canUpdateStatus ? (
+              <View style={styles.actions}>
+                {canEdit ? (
+                  <ActionButton
+                    label="Reassign"
+                    onPress={() =>
+                      navigation.navigate('AppointmentReassign', {
+                        appointmentId: appointment.id,
+                      })
+                    }
+                  />
+                ) : null}
+                <ActionButton
+                  label="Start"
+                  onPress={() =>
+                    void transitionAppointment(appointment.id, 'start')
+                  }
+                />
+                <ActionButton
+                  label="Arrive"
+                  onPress={() =>
+                    void transitionAppointment(appointment.id, 'arrive')
+                  }
+                />
+                <ActionButton
+                  label="Complete"
+                  onPress={() =>
+                    void transitionAppointment(appointment.id, 'complete')
+                  }
+                />
+                <ActionButton
+                  danger
+                  label="Cancel"
+                  onPress={() =>
+                    void transitionAppointment(appointment.id, 'cancel')
+                  }
+                />
+              </View>
+            ) : null}
+          </View>
+        ))}
       </Card>
 
       <Card title="Future sections">
@@ -285,12 +377,15 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.meta}>Documents: Coming later.</Text>
       </Card>
 
-      <Card title="Activity">
-        {activity.length === 0 ? (
-          <Text style={styles.meta}>No job activity yet.</Text>
+      <Card title="Timeline">
+        {timeline.length === 0 ? (
+          <Text style={styles.meta}>No job timeline yet.</Text>
         ) : null}
-        {activity.map((entry) => (
-          <Text key={`${entry.action}-${entry.createdAt}`} style={styles.meta}>
+        {timeline.map((entry) => (
+          <Text
+            key={`${entry.entityType}-${entry.action}-${entry.createdAt}`}
+            style={styles.meta}
+          >
             {formatDateTime(entry.createdAt)} · {label(entry.action)}
           </Text>
         ))}
@@ -388,6 +483,14 @@ const styles = StyleSheet.create({
   actionDangerText: { color: '#BE123C' },
   actionText: { color: colours.primary, fontWeight: '900' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  appointmentCard: {
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
+  },
+  appointmentTitle: { color: colours.ink, fontWeight: '900' },
   archived: { color: '#9F1239', fontWeight: '900', marginTop: 8 },
   busy: { alignItems: 'center', gap: 8, marginTop: 16 },
   card: {

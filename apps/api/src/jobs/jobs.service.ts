@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type {
+  Appointment,
   AuthenticatedUser,
   Job,
   JobDetailResponse,
@@ -76,6 +77,10 @@ type JobWithRelations = {
   } | null;
 };
 
+type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
+  include: ReturnType<JobsService['appointmentInclude']>;
+}>;
+
 @Injectable()
 export class JobsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -148,21 +153,57 @@ export class JobsService {
   ): Promise<JobDetailResponse> {
     this.assertCanView(currentUser);
     const job = await this.getJobForUser(currentUser, id);
-    const activity = await this.prisma.auditLog.findMany({
+    const appointments = await this.prisma.appointment.findMany({
       where: {
         businessId: currentUser.businessId,
-        entityType: 'Job',
-        entityId: job.id,
+        jobId: job.id,
       },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
+      include: this.appointmentInclude(),
+      orderBy: { scheduledStart: 'asc' },
     });
+    const appointmentIds = appointments.map((appointment) => appointment.id);
+    const [activity, appointmentActivity] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          entityType: 'Job',
+          entityId: job.id,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      appointmentIds.length
+        ? this.prisma.auditLog.findMany({
+            where: {
+              businessId: currentUser.businessId,
+              entityType: 'Appointment',
+              entityId: { in: appointmentIds },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          })
+        : Promise.resolve([]),
+    ]);
+    const timeline = [...activity, ...appointmentActivity].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
 
     return {
-      job: this.toJob(job),
       activity: activity.map((entry) => ({
         ...entry,
         createdAt: entry.createdAt.toISOString(),
+        metadata: (entry.metadata as Record<string, unknown> | null) ?? null,
+      })),
+      appointments: appointments.map((appointment) =>
+        this.toAppointment(appointment),
+      ),
+      job: this.toJob(job),
+      timeline: timeline.map((entry) => ({
+        action: entry.action,
+        createdAt: entry.createdAt.toISOString(),
+        entityId: entry.entityId,
+        entityType: entry.entityType,
+        id: entry.id,
         metadata: (entry.metadata as Record<string, unknown> | null) ?? null,
       })),
     };
@@ -173,11 +214,23 @@ export class JobsService {
     dto: UpsertJobDto,
   ): Promise<JobDetailResponse> {
     this.assertRole(currentUser, JOB_WRITE_ROLES);
-    await this.assertCustomer(currentUser.businessId, dto.customerId);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedToUserId);
-    const data = this.normalise(dto);
+    if (!dto.customerId && !dto.quickCustomer) {
+      throw this.domainError(
+        'INVALID_JOB_DATA',
+        'Select an existing customer or create a quick customer.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (dto.customerId) {
+      await this.assertCustomer(currentUser.businessId, dto.customerId);
+    }
 
     const job = await this.prisma.$transaction(async (tx) => {
+      const customerId =
+        dto.customerId ??
+        (await this.createQuickCustomer(tx, currentUser, dto.quickCustomer!));
+      const data = this.normalise(dto, customerId);
       const jobNumber = await this.nextJobNumber(
         tx as PrismaService,
         currentUser.businessId,
@@ -233,10 +286,17 @@ export class JobsService {
     dto: UpsertJobDto,
   ): Promise<JobDetailResponse> {
     this.assertRole(currentUser, JOB_WRITE_ROLES);
+    if (!dto.customerId) {
+      throw this.domainError(
+        'INVALID_JOB_DATA',
+        'Job updates must reference an existing customer.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     const existing = await this.getJob(currentUser.businessId, id);
     await this.assertCustomer(currentUser.businessId, dto.customerId);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedToUserId);
-    const data = this.normalise(dto);
+    const data = this.normalise(dto, dto.customerId);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.job.update({
@@ -458,7 +518,7 @@ export class JobsService {
     return [{ [sortBy]: sortOrder }, { createdAt: 'desc' }];
   }
 
-  private normalise(dto: UpsertJobDto) {
+  private normalise(dto: UpsertJobDto, customerId: string) {
     const scheduledStart = new Date(dto.scheduledStart);
     const scheduledEnd = dto.scheduledEnd ? new Date(dto.scheduledEnd) : null;
     if (scheduledEnd && scheduledEnd <= scheduledStart) {
@@ -470,7 +530,7 @@ export class JobsService {
     }
 
     return {
-      customerId: dto.customerId,
+      customerId,
       assignedToUserId: dto.assignedToUserId || null,
       title: dto.title.trim(),
       description: this.clean(dto.description),
@@ -557,6 +617,42 @@ export class JobsService {
     }
   }
 
+  private async createQuickCustomer(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    quickCustomer: NonNullable<UpsertJobDto['quickCustomer']>,
+  ) {
+    const customer = await tx.customer.create({
+      data: {
+        addressLine1: quickCustomer.addressLine1.trim(),
+        addressLine2: this.clean(quickCustomer.addressLine2),
+        businessId: currentUser.businessId,
+        contactPreference: 'PHONE',
+        createdBy: currentUser.id,
+        customerType: 'RESIDENTIAL',
+        displayName: quickCustomer.name.trim(),
+        firstName: quickCustomer.name.trim(),
+        phone: quickCustomer.phone.trim(),
+        phoneNormalised: quickCustomer.phone.replace(/\D/g, ''),
+        postcode: quickCustomer.postcode.trim(),
+        state: quickCustomer.state,
+        suburb: quickCustomer.suburb.trim(),
+      },
+      select: { id: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'CUSTOMER_QUICK_CREATED',
+        actorUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        entityId: customer.id,
+        entityType: 'Customer',
+        metadata: { source: 'JOB_QUICK_FLOW' },
+      },
+    });
+    return customer.id;
+  }
+
   private async assertAssignedUser(
     businessId: string,
     assignedToUserId?: string | null,
@@ -640,6 +736,36 @@ export class JobsService {
     } satisfies Prisma.JobInclude;
   }
 
+  private appointmentInclude() {
+    return {
+      assignedUser: {
+        select: { email: true, firstName: true, id: true, lastName: true },
+      },
+      job: {
+        select: {
+          addressLine1: true,
+          addressLine2: true,
+          customer: {
+            select: {
+              companyName: true,
+              displayName: true,
+              email: true,
+              id: true,
+              phone: true,
+            },
+          },
+          id: true,
+          jobNumber: true,
+          postcode: true,
+          priority: true,
+          state: true,
+          suburb: true,
+          title: true,
+        },
+      },
+    } satisfies Prisma.AppointmentInclude;
+  }
+
   private toJob(job: JobWithRelations): Job {
     return {
       id: job.id,
@@ -678,6 +804,45 @@ export class JobsService {
       updatedAt: job.updatedAt.toISOString(),
       customer: job.customer,
       assignedTo: job.assignedTo,
+    };
+  }
+
+  private toAppointment(appointment: AppointmentWithRelations): Appointment {
+    return {
+      actualEnd: appointment.actualEnd?.toISOString() ?? null,
+      actualStart: appointment.actualStart?.toISOString() ?? null,
+      accessInstructions: appointment.accessInstructions,
+      addressLine1: appointment.addressLine1,
+      addressLine2: appointment.addressLine2,
+      appointmentNumber: appointment.appointmentNumber,
+      appointmentType: appointment.appointmentType,
+      assignedUser: appointment.assignedUser,
+      assignedUserId: appointment.assignedUserId,
+      businessId: appointment.businessId,
+      createdAt: appointment.createdAt.toISOString(),
+      createdBy: appointment.createdBy,
+      customerSiteId: appointment.customerSiteId,
+      estimatedDurationMinutes: appointment.estimatedDurationMinutes,
+      id: appointment.id,
+      job: {
+        ...appointment.job,
+        state: appointment.job.state as Appointment['job']['state'],
+      },
+      jobId: appointment.jobId,
+      locationSource: appointment.locationSource,
+      notes: appointment.notes,
+      postcode: appointment.postcode,
+      scheduledEnd: appointment.scheduledEnd.toISOString(),
+      scheduledStart: appointment.scheduledStart.toISOString(),
+      state: appointment.state as Appointment['state'],
+      status: appointment.status,
+      suburb: appointment.suburb,
+      travelDistanceKm: appointment.travelDistanceKm
+        ? Number(appointment.travelDistanceKm.toString())
+        : null,
+      travelDurationMinutes: appointment.travelDurationMinutes,
+      updatedAt: appointment.updatedAt.toISOString(),
+      updatedBy: appointment.updatedBy,
     };
   }
 

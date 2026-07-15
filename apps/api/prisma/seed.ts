@@ -486,6 +486,135 @@ async function main() {
       [businessId],
     );
 
+    const appointments = [
+      [
+        'demo-appointment-1',
+        'demo-job-1',
+        staffIds[1],
+        'APT-2026-000001',
+        'INSTALLATION',
+        'CONFIRMED',
+        hoursFromStartOfToday(9),
+        hoursFromStartOfToday(11),
+        null,
+        null,
+        120,
+        18,
+        '12.4',
+        'Install two double GPOs and confirm circuit load.',
+        ownerId,
+      ],
+      [
+        'demo-appointment-2',
+        'demo-job-2',
+        staffIds[1],
+        'APT-2026-000002',
+        'INSPECTION',
+        'IN_PROGRESS',
+        hoursFromStartOfToday(13),
+        hoursFromStartOfToday(15),
+        hoursFromStartOfToday(13),
+        null,
+        120,
+        25,
+        '18.8',
+        'Urgent leak inspection near vanity.',
+        ownerId,
+      ],
+      [
+        'demo-appointment-3',
+        'demo-job-3',
+        staffIds[0],
+        'APT-2026-000003',
+        'INSPECTION',
+        'SCHEDULED',
+        hoursFromStartOfToday(16),
+        hoursFromStartOfToday(17),
+        null,
+        null,
+        60,
+        15,
+        '8.2',
+        'Quote visit for switchboard upgrade.',
+        ownerId,
+      ],
+      [
+        'demo-appointment-4',
+        'demo-job-4',
+        null,
+        'APT-2026-000004',
+        'INSTALLATION',
+        'SCHEDULED',
+        hoursFromStartOfToday(34),
+        hoursFromStartOfToday(36),
+        null,
+        null,
+        120,
+        null,
+        null,
+        'Assign technician after fan model is confirmed.',
+        ownerId,
+      ],
+      [
+        'demo-appointment-5',
+        'demo-job-5',
+        staffIds[1],
+        'APT-2026-000005',
+        'MAINTENANCE',
+        'COMPLETED',
+        hoursFromStartOfToday(-16),
+        hoursFromStartOfToday(-14),
+        hoursFromStartOfToday(-16),
+        hoursFromStartOfToday(-14),
+        120,
+        20,
+        '11.1',
+        'Completed lighting maintenance before cafe opened.',
+        ownerId,
+      ],
+      [
+        'demo-appointment-6',
+        'demo-job-1',
+        staffIds[1],
+        'APT-2026-000006',
+        'RETURN_VISIT',
+        'SCHEDULED',
+        hoursFromStartOfToday(58),
+        hoursFromStartOfToday(59),
+        null,
+        null,
+        60,
+        null,
+        null,
+        'Optional return visit if extra switchboard work is approved.',
+        ownerId,
+      ],
+    ];
+
+    for (const appointment of appointments) {
+      await query(
+        `INSERT INTO "Appointment" (
+          id, "businessId", "jobId", "assignedUserId", "appointmentNumber", "appointmentType", status,
+          "scheduledStart", "scheduledEnd", "actualStart", "actualEnd", "estimatedDurationMinutes",
+          "travelDurationMinutes", "travelDistanceKm", "locationSource", "addressLine1", "addressLine2",
+          suburb, state, postcode, "accessInstructions", notes, "createdBy", "createdAt", "updatedAt"
+         )
+         SELECT $1, $2, $3, $4, $5, $6::"AppointmentType", $7::"AppointmentStatus", $8, $9, $10, $11,
+           $12, $13, $14, 'CUSTOMER_DEFAULT'::"AppointmentLocationSource", job."addressLine1",
+           job."addressLine2", job.suburb, job.state, job.postcode, job."accessInstructions", $15, $16, NOW(), NOW()
+         FROM "Job" job
+         WHERE job.id = $3 AND job."businessId" = $2`,
+        [appointment[0], businessId, ...appointment.slice(1)],
+      );
+    }
+
+    await query(
+      `INSERT INTO "AppointmentSequence" ("businessId", "nextNumber", "updatedAt")
+       VALUES ($1, 7, NOW())
+       ON CONFLICT ("businessId") DO UPDATE SET "nextNumber" = EXCLUDED."nextNumber", "updatedAt" = NOW()`,
+      [businessId],
+    );
+
     const quotes = [
       [
         'demo-quote-1',

@@ -22,6 +22,15 @@ function formatCurrency(cents: number) {
   }).format(cents / 100);
 }
 
+function formatAppointmentTime(value: string) {
+  return new Intl.DateTimeFormat('en-AU', {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+  }).format(new Date(value));
+}
+
 export function DashboardScreen() {
   const { token, user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
@@ -42,9 +51,7 @@ export function DashboardScreen() {
 
         const nextSummary = await apiRequest<DashboardSummaryResponse>(
           '/dashboard/summary',
-          {
-            token,
-          },
+          { token },
         );
         if (shouldApply()) {
           setSummary(nextSummary);
@@ -104,8 +111,9 @@ export function DashboardScreen() {
               Check the API is running and your phone/browser can reach it.
             </Text>
             <Pressable
-              style={styles.retryButton}
+              accessibilityRole="button"
               onPress={() => void loadSummary()}
+              style={styles.retryButton}
             >
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>
@@ -113,59 +121,85 @@ export function DashboardScreen() {
         ) : null}
 
         <View style={styles.grid}>
-          <View style={styles.card}>
-            <Text style={styles.value}>{summary?.counts.jobsToday ?? '-'}</Text>
-            <Text style={styles.label}>Jobs today</Text>
-          </View>
-          <View style={styles.card}>
-            <Text style={styles.value}>
-              {summary
+          <MetricCard label="Jobs today" value={summary?.counts.jobsToday} />
+          <MetricCard
+            label="Appointments today"
+            value={summary?.counts.todaysAppointments}
+          />
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard
+            label="Outstanding"
+            value={
+              summary
                 ? formatCurrency(summary.money.outstandingInvoicesCents)
-                : '-'}
-            </Text>
-            <Text style={styles.label}>Outstanding</Text>
-          </View>
+                : undefined
+            }
+          />
+          <MetricCard
+            label="Upcoming appointments"
+            value={summary?.counts.upcomingAppointments}
+          />
         </View>
 
         <View style={styles.grid}>
-          <View style={styles.card}>
-            <Text style={styles.value}>
-              {summary?.counts.upcomingJobs ?? '-'}
-            </Text>
-            <Text style={styles.label}>Upcoming jobs</Text>
-          </View>
-          <View style={styles.card}>
-            <Text style={styles.value}>
-              {summary?.counts.completedToday ?? '-'}
-            </Text>
-            <Text style={styles.label}>Completed today</Text>
-          </View>
+          <MetricCard
+            label="Appointments completed"
+            value={summary?.counts.completedAppointmentsToday}
+          />
+          <MetricCard label="Open jobs" value={summary?.counts.openJobs} />
         </View>
 
         <View style={styles.grid}>
-          <View style={[styles.card, styles.warningCard]}>
-            <Text style={styles.value}>
-              {summary?.counts.overdueJobs ?? '-'}
-            </Text>
-            <Text style={styles.label}>Overdue jobs</Text>
-          </View>
-          <View style={styles.card}>
-            <Text style={styles.value}>{summary?.counts.openJobs ?? '-'}</Text>
-            <Text style={styles.label}>Open jobs</Text>
-          </View>
+          <MetricCard
+            label="Late appointments"
+            tone="warning"
+            value={summary?.counts.lateAppointments}
+          />
+          <MetricCard
+            label="Upcoming today"
+            value={summary?.counts.upcomingTodayAppointments}
+          />
         </View>
 
         <View style={styles.grid}>
-          <View style={styles.card}>
-            <Text style={styles.value}>{summary?.counts.customers ?? '-'}</Text>
-            <Text style={styles.label}>Customers</Text>
-          </View>
-          <View style={styles.card}>
-            <Text style={styles.value}>
-              {summary?.counts.unreadNotifications ?? '-'}
-            </Text>
-            <Text style={styles.label}>Unread alerts</Text>
-          </View>
+          <MetricCard
+            label="My appointments"
+            value={summary?.counts.myAppointments}
+          />
+          <MetricCard
+            label="Upcoming jobs"
+            value={summary?.counts.upcomingJobs}
+          />
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard label="Customers" value={summary?.counts.customers} />
+          <MetricCard
+            label="Unread alerts"
+            value={summary?.counts.unreadNotifications}
+          />
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>Next appointment</Text>
+          {summary?.nextAppointment ? (
+            <>
+              <Text style={styles.itemTitle}>
+                {summary.nextAppointment.jobTitle}
+              </Text>
+              <Text style={styles.itemMeta}>
+                {summary.nextAppointment.customerName}
+              </Text>
+              <Text style={styles.itemMeta}>
+                {summary.nextAppointment.technicianName ?? 'Unassigned'} ·{' '}
+                {formatAppointmentTime(summary.nextAppointment.startsAt)}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.emptyText}>No upcoming appointment found.</Text>
+          )}
         </View>
 
         <View style={styles.toriCard}>
@@ -180,35 +214,37 @@ export function DashboardScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Today’s jobs</Text>
-          {summary?.todayJobs.length ? (
-            summary.todayJobs.map((job) => (
-              <View key={job.id} style={styles.listItem}>
-                <Text style={styles.itemTitle}>{job.title}</Text>
-                <Text style={styles.itemMeta}>
-                  {job.customerName} · {job.status.replaceAll('_', ' ')}
-                </Text>
-                {job.address ? (
-                  <Text style={styles.itemMeta}>{job.address}</Text>
-                ) : null}
+          <Text style={styles.sectionTitle}>Latest notifications</Text>
+          {summary?.notifications.length ? (
+            summary.notifications.map((notification) => (
+              <View key={notification.id} style={styles.listItem}>
+                <Text style={styles.itemTitle}>{notification.title}</Text>
+                <Text style={styles.itemMeta}>{notification.body}</Text>
               </View>
             ))
           ) : (
-            <Text style={styles.emptyText}>No jobs scheduled for today.</Text>
+            <Text style={styles.emptyText}>No notifications yet.</Text>
           )}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Latest notifications</Text>
-          {summary?.notifications.map((notification) => (
-            <View key={notification.id} style={styles.listItem}>
-              <Text style={styles.itemTitle}>{notification.title}</Text>
-              <Text style={styles.itemMeta}>{notification.body}</Text>
-            </View>
-          ))}
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function MetricCard({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone?: 'warning';
+  value?: number | string;
+}) {
+  return (
+    <View style={[styles.card, tone === 'warning' && styles.warningCard]}>
+      <Text style={styles.value}>{value ?? '-'}</Text>
+      <Text style={styles.label}>{label}</Text>
+    </View>
   );
 }
 
@@ -222,7 +258,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 4,
   },
-  grid: { flexDirection: 'row', gap: 12, marginTop: 28 },
+  grid: { flexDirection: 'row', gap: 12, marginTop: 20 },
   card: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -264,10 +300,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   retryText: { color: '#FFFFFF', fontWeight: '800' },
+  summaryCard: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 20,
+    padding: 18,
+  },
   toriCard: {
     backgroundColor: '#F3E8FF',
     borderRadius: 20,
-    marginTop: 16,
+    marginTop: 20,
     padding: 20,
   },
   toriLabel: {
@@ -293,7 +337,12 @@ const styles = StyleSheet.create({
     marginTop: 10,
     padding: 16,
   },
-  itemTitle: { color: colours.ink, fontSize: 16, fontWeight: '700' },
+  itemTitle: {
+    color: colours.ink,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 10,
+  },
   itemMeta: { color: colours.muted, lineHeight: 20, marginTop: 4 },
   emptyText: { color: colours.muted, marginTop: 10 },
 });

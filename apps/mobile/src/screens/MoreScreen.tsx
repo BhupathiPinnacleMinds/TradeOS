@@ -17,8 +17,10 @@ type Props = CompositeScreenProps<
 
 const destinations: Array<{
   label: string;
-  route: 'Quotes' | 'Invoices' | 'Notifications' | 'Team' | 'Settings';
+  route:
+    'Customers' | 'Quotes' | 'Invoices' | 'Notifications' | 'Team' | 'Settings';
 }> = [
+  { label: 'Customers', route: 'Customers' },
   { label: 'Quotes', route: 'Quotes' },
   { label: 'Invoices', route: 'Invoices' },
   { label: 'Notifications', route: 'Notifications' },

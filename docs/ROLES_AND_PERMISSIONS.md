@@ -191,6 +191,13 @@ Implemented job permissions:
 - `TECHNICIAN`: view assigned jobs and update assigned job status/notes.
 - `ACCOUNTANT`, `SALES`, `READ_ONLY`: view jobs only.
 
+Implemented appointment permissions:
+
+- `OWNER`, `ADMIN`, `OFFICE_MANAGER`: create, view, update, assign, reschedule and update appointment status.
+- `SCHEDULER`: create, view, update, assign and reschedule appointments.
+- `TECHNICIAN`: view assigned appointments and update status on assigned appointments only.
+- `ACCOUNTANT`, `SALES`, `READ_ONLY`: view appointments only.
+
 ## Tenant rule
 
 Roles never grant cross-business access.

@@ -106,6 +106,55 @@ Danger buttons:
 - red
 - used for logout, delete, destructive actions
 
+## Calendar navigation
+
+The primary bottom navigation is:
+
+- Dashboard
+- Calendar
+- Jobs
+- Tori
+- More
+
+Customers, quotes, invoices, notifications, team and settings live under More.
+Calendar carries the detailed scheduling experience, while Dashboard shows
+appointment summaries only.
+
+Calendar date jumping should use a dismissible modal or native picker overlay.
+The picker must close after selection, Done, backdrop tap, Android back, and
+navigation changes, and it must not permanently occupy space in the appointment
+list.
+
+Calendar filters should use a compact expandable header with an explicit
+chevron and a plain-language summary such as `All technicians · All statuses`.
+Expanded filters may include search, technician chips and status chips, but
+collapsed filters must preserve the selected values.
+
+Appointment card quick actions must be status-aware. Hide call actions without a
+phone number, hide navigation without an address, hide workflow actions when the
+user lacks permission, and never show Start or Complete on completed, cancelled
+or no-show appointments. Calendar cards and Appointment Details should use the
+same central quick-action rules.
+
+Calendar appointment cards should keep the surface tidy by placing secondary
+actions under `More`. The More menu may include Navigate, Call, Reassign
+Technician, Reschedule, Cancel and View Details according to the same shared
+permission/status rules. Reassignment should open a focused Reassign
+Appointment screen that shows the current appointment summary, recommended
+technician, availability/workload indicators, conflict warning and confirmation
+before saving.
+
+Calendar Previous and Next controls must move by the active view: one day in Day
+view, one week in Week view, one calendar month in Month view, and seven days in
+Agenda view. Month movement should clamp safely around month ends, leap years
+and year boundaries.
+
+Appointment forms must include a Location section before Job selection. Users
+can choose a customer service site, use the customer default address, or enter a
+manual one-off appointment address. Manual addresses require Australian state
+and four-digit postcode validation and should show a readable location summary
+before Save.
+
 ### Forms
 
 Forms should:

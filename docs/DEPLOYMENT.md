@@ -24,6 +24,10 @@ pnpm dev:api
 pnpm dev:mobile
 ```
 
+`pnpm db:migrate` is intentionally non-interactive and applies committed
+migrations with Prisma `migrate deploy`. When intentionally creating a new local
+migration, use `pnpm db:migrate:dev`.
+
 Windows helper scripts:
 
 ```powershell

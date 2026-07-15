@@ -3,6 +3,10 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { AcceptInvitationScreen } from '../screens/AcceptInvitationScreen';
+import { AppointmentDetailsScreen } from '../screens/AppointmentDetailsScreen';
+import { AppointmentFormScreen } from '../screens/AppointmentFormScreen';
+import { AppointmentReassignScreen } from '../screens/AppointmentReassignScreen';
+import { CalendarScreen } from '../screens/CalendarScreen';
 import { CustomerDetailsScreen } from '../screens/CustomerDetailsScreen';
 import { CustomerFormScreen } from '../screens/CustomerFormScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
@@ -48,9 +52,9 @@ function MainTabs() {
       }}
     >
       <Tabs.Screen name="Dashboard" component={DashboardScreen} />
-      <Tabs.Screen name="Tori" component={ToriChatScreen} />
-      <Tabs.Screen name="Customers" component={CustomersScreen} />
+      <Tabs.Screen name="Calendar" component={CalendarScreen} />
       <Tabs.Screen name="Jobs" component={JobsScreen} />
+      <Tabs.Screen name="Tori" component={ToriChatScreen} />
       <Tabs.Screen name="More" component={MoreScreen} />
     </Tabs.Navigator>
   );
@@ -98,9 +102,25 @@ export function RootNavigator() {
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen
+            name="AppointmentDetails"
+            component={AppointmentDetailsScreen}
+            options={{ title: 'Appointment' }}
+          />
+          <Stack.Screen
+            name="AppointmentForm"
+            component={AppointmentFormScreen}
+            options={{ title: 'New appointment' }}
+          />
+          <Stack.Screen
+            name="AppointmentReassign"
+            component={AppointmentReassignScreen}
+            options={{ title: 'Reassign appointment' }}
+          />
+          <Stack.Screen
             name="CustomerDetails"
             component={CustomerDetailsScreen}
           />
+          <Stack.Screen name="Customers" component={CustomersScreen} />
           <Stack.Screen name="CustomerForm" component={CustomerFormScreen} />
           <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
           <Stack.Screen name="JobForm" component={JobFormScreen} />
