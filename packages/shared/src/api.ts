@@ -23,6 +23,9 @@ export interface DashboardSummaryResponse {
     myAppointments: number;
     lateAppointments: number;
     upcomingTodayAppointments: number;
+    techniciansWorking: number;
+    availableTechnicians: number;
+    unassignedAppointments: number;
     openQuotes: number;
     unpaidInvoices: number;
     unreadNotifications: number;

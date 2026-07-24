@@ -12,7 +12,10 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AppointmentsService } from './appointments.service';
 import {
   AppointmentAvailabilityDto,
+  AppointmentWorkLogDto,
+  CompleteAppointmentDto,
   AppointmentRecommendationDto,
+  DispatcherQueryDto,
   ListAppointmentsQueryDto,
   ReassignAppointmentDto,
   UpsertAppointmentDto,
@@ -44,6 +47,19 @@ export class AppointmentsController {
     @Body() dto: AppointmentAvailabilityDto,
   ) {
     return this.appointments.availability(currentUser, dto);
+  }
+
+  @Get('dispatcher')
+  dispatcher(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Query() query: DispatcherQueryDto,
+  ) {
+    return this.appointments.dispatcher(currentUser, query);
+  }
+
+  @Get('my-day')
+  myDay(@CurrentUser() currentUser: AuthenticatedUser) {
+    return this.appointments.myDay(currentUser);
   }
 
   @Get(':id')
@@ -96,6 +112,14 @@ export class AppointmentsController {
     return this.appointments.transition(currentUser, id, 'IN_PROGRESS');
   }
 
+  @Post(':id/start-travel')
+  startTravel(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.appointments.transition(currentUser, id, 'ON_THE_WAY');
+  }
+
   @Post(':id/arrive')
   arrive(
     @CurrentUser() currentUser: AuthenticatedUser,
@@ -108,8 +132,18 @@ export class AppointmentsController {
   complete(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Body() dto: CompleteAppointmentDto,
   ) {
-    return this.appointments.transition(currentUser, id, 'COMPLETED');
+    return this.appointments.completeWithWorkLog(currentUser, id, dto);
+  }
+
+  @Patch(':id/work-log')
+  updateWorkLog(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: AppointmentWorkLogDto,
+  ) {
+    return this.appointments.updateWorkLog(currentUser, id, dto);
   }
 
   @Post(':id/cancel')

@@ -1,6 +1,10 @@
 import { HttpException } from '@nestjs/common';
 import { createHash } from 'crypto';
-import type { AuthResponse, AuthenticatedUser } from '@tradieos/shared';
+import type {
+  AuthResponse,
+  AuthenticatedUser,
+  BusinessRole,
+} from '@tradieos/shared';
 import { MembersService } from './members.service';
 
 jest.mock('../prisma/prisma.service', () => ({
@@ -27,6 +31,15 @@ const technician: AuthenticatedUser = {
   email: 'tech@example.com',
   role: 'TECHNICIAN',
 };
+
+function userForRole(role: BusinessRole): AuthenticatedUser {
+  return {
+    businessId: 'business-1',
+    email: `${role.toLowerCase()}@example.com`,
+    id: role === 'ADMIN' ? 'admin-1' : `${role.toLowerCase()}-1`,
+    role,
+  };
+}
 
 function member(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -635,4 +648,98 @@ describe('MembersService', () => {
       }),
     ).rejects.toBeInstanceOf(HttpException);
   });
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'READ_ONLY'])(
+    'allows %s to GET /members according to team management rules',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.businessMember.findMany.mockResolvedValue([member()]);
+
+      await expect(service.findAll(userForRole(role))).resolves.toHaveLength(1);
+    },
+  );
+
+  it.each<BusinessRole>(['SCHEDULER', 'TECHNICIAN', 'ACCOUNTANT', 'SALES'])(
+    'blocks %s from GET /members with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service.findAll(userForRole(role)).catch((error) => {
+        expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+      });
+    },
+  );
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN'])(
+    'allows %s to POST /members/invite for non-owner roles',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.business.findUnique.mockResolvedValue({ name: 'Demo Tradie Co' });
+      prisma.businessMember.findFirst.mockResolvedValue(null);
+      prisma.businessMember.create.mockResolvedValue(inviteMember());
+      prisma.businessMember.update.mockResolvedValue(
+        inviteMember({ inviteEmailDeliveryStatus: 'SENT' }),
+      );
+
+      const response = await service.invite(userForRole(role), {
+        email: 'new-tech@example.com',
+        firstName: 'New',
+        lastName: 'Tech',
+        role: 'TECHNICIAN',
+      });
+
+      expect(response.inviteUrl).toContain('/invite/');
+    },
+  );
+
+  it.each<BusinessRole>([
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ])(
+    'blocks %s from POST /members/invite with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service
+        .invite(userForRole(role), {
+          email: 'new-tech@example.com',
+          firstName: 'New',
+          lastName: 'Tech',
+          role: 'TECHNICIAN',
+        })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
+
+  it.each<BusinessRole>([
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ])(
+    'blocks %s from member role/status mutation endpoints with 403 domain errors',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.businessMember.findFirst.mockResolvedValue(member());
+
+      await service
+        .updateRole(userForRole(role), 'member-1', { role: 'SCHEDULER' })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+      await service
+        .updateStatus(userForRole(role), 'member-1', { status: 'SUSPENDED' })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
 });

@@ -22,6 +22,11 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import {
+  canArchiveCustomer,
+  canCreateJob,
+  canManageCustomer,
+} from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerDetails'>;
@@ -61,16 +66,9 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
     suburb: '',
   });
 
-  const canArchive = ['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(
-    user?.role ?? '',
-  );
-  const canEdit = [
-    'OWNER',
-    'ADMIN',
-    'OFFICE_MANAGER',
-    'SCHEDULER',
-    'SALES',
-  ].includes(user?.role ?? '');
+  const canArchive = canArchiveCustomer(user?.role);
+  const canEdit = canManageCustomer(user?.role);
+  const canCreateCustomerJob = canCreateJob(user?.role);
 
   async function loadCustomer() {
     if (!token) return;
@@ -347,7 +345,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               </Text>
             </Pressable>
           ))}
-          {canEdit ? (
+          {canCreateCustomerJob ? (
             <Pressable
               accessibilityRole="button"
               onPress={() =>

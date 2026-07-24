@@ -3,6 +3,7 @@ import type {
   AuthenticatedUser,
   DashboardSummaryResponse,
 } from '@tradieos/shared';
+import { getBusinessDayRangeUtc } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const OPEN_JOB_STATUSES = [
@@ -28,13 +29,19 @@ export class DashboardService {
     currentUser: AuthenticatedUser,
   ): Promise<DashboardSummaryResponse> {
     const { businessId } = currentUser;
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTomorrow = new Date(startOfToday);
-    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, name: true, timezone: true },
+    });
+
+    if (!business) {
+      throw new NotFoundException('Business not found');
+    }
+
+    const { end: startOfTomorrow, start: startOfToday } =
+      getBusinessDayRangeUtc(new Date(), business.timezone);
 
     const [
-      business,
       customers,
       jobsToday,
       upcomingJobs,
@@ -47,6 +54,9 @@ export class DashboardService {
       myAppointments,
       lateAppointments,
       upcomingTodayAppointments,
+      unassignedAppointments,
+      dispatcherMembers,
+      dispatcherAppointments,
       openQuotes,
       unpaidInvoices,
       unpaidInvoiceRows,
@@ -57,10 +67,6 @@ export class DashboardService {
       nextAppointment,
       notifications,
     ] = await this.prisma.$transaction([
-      this.prisma.business.findUnique({
-        where: { id: businessId },
-        select: { id: true, name: true, timezone: true },
-      }),
       this.prisma.customer.count({ where: { businessId, isArchived: false } }),
       this.prisma.job.count({
         where: {
@@ -141,6 +147,37 @@ export class DashboardService {
           businessId,
           scheduledStart: { gte: new Date(), lt: startOfTomorrow },
           status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW'] },
+        },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          assignedUserId: null,
+          businessId,
+          scheduledStart: { gte: startOfToday, lt: startOfTomorrow },
+          status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW'] },
+        },
+      }),
+      this.prisma.businessMember.findMany({
+        where: {
+          businessId,
+          role: { in: ['OWNER', 'ADMIN', 'TECHNICIAN'] },
+          status: 'ACTIVE',
+          userId: { not: null },
+        },
+        select: { userId: true },
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          assignedUserId: { not: null },
+          businessId,
+          scheduledStart: { gte: startOfToday, lt: startOfTomorrow },
+          status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW'] },
+        },
+        select: {
+          assignedUserId: true,
+          scheduledEnd: true,
+          scheduledStart: true,
+          status: true,
         },
       }),
       this.prisma.quote.count({
@@ -245,10 +282,6 @@ export class DashboardService {
       }),
     ]);
 
-    if (!business) {
-      throw new NotFoundException('Business not found');
-    }
-
     const outstandingInvoicesCents = unpaidInvoiceRows.reduce(
       (sum, invoice) => {
         const outstanding =
@@ -258,6 +291,20 @@ export class DashboardService {
       },
       0,
     );
+    const now = new Date();
+    const workingUserIds = new Set(
+      dispatcherAppointments
+        .filter(
+          (appointment) =>
+            appointment.scheduledStart <= now &&
+            appointment.scheduledEnd >= now,
+        )
+        .map((appointment) => appointment.assignedUserId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const availableTechnicians = dispatcherMembers.filter(
+      (member) => member.userId && !workingUserIds.has(member.userId),
+    ).length;
 
     return {
       business,
@@ -274,6 +321,9 @@ export class DashboardService {
         myAppointments,
         lateAppointments,
         upcomingTodayAppointments,
+        techniciansWorking: workingUserIds.size,
+        availableTechnicians,
+        unassignedAppointments,
         openQuotes,
         unpaidInvoices,
         unreadNotifications,

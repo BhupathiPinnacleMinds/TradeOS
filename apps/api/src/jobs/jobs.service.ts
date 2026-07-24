@@ -843,6 +843,7 @@ export class JobsService {
       travelDurationMinutes: appointment.travelDurationMinutes,
       updatedAt: appointment.updatedAt.toISOString(),
       updatedBy: appointment.updatedBy,
+      workLog: null,
     };
   }
 

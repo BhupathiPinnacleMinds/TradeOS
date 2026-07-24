@@ -14,6 +14,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  AUSTRALIAN_TIMEZONES,
+  timezoneForAustralianState,
+} from '@tradieos/shared';
 import { useAuth } from '../auth/AuthContext';
 import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -37,6 +41,7 @@ export function RegisterScreen({ navigation }: Props) {
     suburb: '',
     state: 'NSW',
     postcode: '',
+    timezone: timezoneForAustralianState('NSW'),
   });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,7 +50,13 @@ export function RegisterScreen({ navigation }: Props) {
     key: K,
     value: (typeof form)[K],
   ) {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === 'state'
+        ? { timezone: timezoneForAustralianState(String(value)) }
+        : {}),
+    }));
   }
 
   async function submit() {
@@ -171,6 +182,31 @@ export function RegisterScreen({ navigation }: Props) {
                 />
               </View>
             </View>
+            <Text style={styles.label}>Business timezone</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.chipRow}>
+                {AUSTRALIAN_TIMEZONES.map((timezone) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={timezone}
+                    onPress={() => update('timezone', timezone)}
+                    style={[
+                      styles.chip,
+                      form.timezone === timezone && styles.chipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        form.timezone === timezone && styles.chipTextActive,
+                      ]}
+                    >
+                      {timezone}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
           </View>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -250,6 +286,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  chip: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  chipActive: {
+    backgroundColor: colours.primary,
+    borderColor: colours.primary,
+  },
+  chipRow: { flexDirection: 'row', gap: 8, paddingVertical: 8 },
+  chipText: { color: colours.muted, fontWeight: '800' },
+  chipTextActive: { color: '#FFFFFF' },
   row: { flexDirection: 'row', gap: 12 },
   rowItem: { flex: 1 },
   switchRow: {

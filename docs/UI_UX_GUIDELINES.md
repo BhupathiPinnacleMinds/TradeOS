@@ -108,17 +108,49 @@ Danger buttons:
 
 ## Calendar navigation
 
-The primary bottom navigation is:
+The primary bottom navigation is role-aware. Users should only see screens they
+can use.
 
-- Dashboard
-- Calendar
-- Jobs
-- Tori
-- More
+| Role                                 | Bottom navigation                        |
+| ------------------------------------ | ---------------------------------------- |
+| Owner/Admin/Office Manager/Scheduler | Dashboard, Calendar, Jobs, Tori, More    |
+| Technician                           | My Day, Calendar, Tori, More             |
+| Accountant                           | Dashboard, Tori, More                    |
+| Sales                                | Dashboard, Customers, Quotes, Tori, More |
+| Read Only                            | Dashboard, Calendar, More                |
 
 Customers, quotes, invoices, notifications, team and settings live under More.
 Calendar carries the detailed scheduling experience, while Dashboard shows
 appointment summaries only.
+
+Forbidden screens and actions must be hidden from navigation, cards, menus and
+FABs. If a stale route or manual navigation attempt targets a forbidden screen,
+redirect to the role’s permitted home without rendering that forbidden screen.
+
+Calendar uses top tabs for `Calendar`, `Dispatcher`, and `Today`. Calendar must
+remain the default tab. Dispatcher is an operational board for office staff and
+tablet/desktop use; it should feel dense but scannable, with large technician
+cards, workload summaries, unassigned appointments and quick actions.
+
+Dispatcher must use a single primary vertical scroll container. Horizontal
+filter chips may scroll inside the header, but they must not be wrapped in a
+parent `Pressable` or nested inside another vertical scroll container. The last
+chip needs right-side padding so it can scroll fully into view, and every chip
+needs a clear selected state, accessibility selected state and at least a 44px
+touch target.
+
+Dispatcher appointment creation should use one clear global action: the
+floating `+` button. Section-level create actions should be avoided unless they
+are clearly secondary text actions. The FAB must sit above bottom navigation and
+content should have enough bottom padding that appointment cards are not hidden.
+
+Dispatcher operates one day at a time. Always show the selected date with
+previous day, next day and Today controls. Creating an appointment from
+Dispatcher must prefill the selected dispatcher date.
+
+Dispatcher summaries must avoid internal placeholder wording. If travel time is
+not implemented, keep travel fields internal and show customer-facing copy such
+as booked time and available time only.
 
 Calendar date jumping should use a dismissible modal or native picker overlay.
 The picker must close after selection, Done, backdrop tap, Android back, and
@@ -144,6 +176,11 @@ Appointment screen that shows the current appointment summary, recommended
 technician, availability/workload indicators, conflict warning and confirmation
 before saving.
 
+Dispatcher technician cards should show avatar initials, role, working hours,
+derived current status, workload, completed/upcoming counts, overtime warnings
+and appointment badges for priority, status, trade/type and duration. Unassigned
+appointments should show a recommendation with a plain-language reason.
+
 Calendar Previous and Next controls must move by the active view: one day in Day
 view, one week in Week view, one calendar month in Month view, and seven days in
 Agenda view. Month movement should clamp safely around month ends, leap years
@@ -154,6 +191,31 @@ can choose a customer service site, use the customer default address, or enter a
 manual one-off appointment address. Manual addresses require Australian state
 and four-digit postcode validation and should show a readable location summary
 before Save.
+
+Appointment forms opened from global Calendar or Dispatcher creation must start
+with no selected customer. Show `Search and select a customer`, a small recent
+customer list, and a selected-customer summary only after the user chooses one.
+Only Customer Details, Job Details, Schedule Now and future explicit actions may
+prefill a customer. Changing or clearing customer must clear dependent site, job
+and location state.
+
+Appointment date/time copy must use business timezone utilities. Display dates
+as `DD/MM/YYYY`, times as `h:mm am/pm`, time ranges as `8:00 pm – 10:00 pm`, and
+timezone abbreviations from `Intl` so Melbourne/Sydney/Hobart switch between
+AEST/AEDT, Adelaide switches between ACST/ACDT, Brisbane remains AEST and Perth
+remains AWST.
+
+Technician field workflow UI:
+
+- Technician users should land on My Day instead of the owner dashboard.
+- My Day should show only assigned appointment counts and field actions, not
+  owner-only business metrics.
+- Keep 2-3 primary actions visible on appointment cards. Put secondary work in
+  Appointment Details or More menus.
+- Completing an appointment must open a review flow with work completed,
+  technician notes and follow-up fields before submitting.
+- Use large touch targets, pull-to-refresh, centred mutation loaders and friendly
+  error messages.
 
 ### Forms
 

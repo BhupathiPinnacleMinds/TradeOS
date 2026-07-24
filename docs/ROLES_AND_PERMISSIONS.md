@@ -195,8 +195,41 @@ Implemented appointment permissions:
 
 - `OWNER`, `ADMIN`, `OFFICE_MANAGER`: create, view, update, assign, reschedule and update appointment status.
 - `SCHEDULER`: create, view, update, assign and reschedule appointments.
-- `TECHNICIAN`: view assigned appointments and update status on assigned appointments only.
+- `TECHNICIAN`: view assigned appointments, use My Day, update workflow status
+  on assigned appointments only, and save technician/work-completed notes.
 - `ACCOUNTANT`, `SALES`, `READ_ONLY`: view appointments only.
+- Dispatcher is treated as scheduling management and is limited to `OWNER`,
+  `ADMIN`, `OFFICE_MANAGER` and `SCHEDULER`.
+
+Technician workflow permissions:
+
+- Technicians can only receive `/appointments/my-day` data for their own user
+  ID.
+- Technicians cannot reassign appointments.
+- Read-only, accountant and sales roles cannot perform field workflow status
+  transitions.
+- Owners can use My Day for appointments assigned to their own user account
+  without losing owner dashboard access.
+
+## Implemented mobile navigation visibility
+
+Mobile navigation is role-aware and should hide inaccessible screens instead of
+letting a user open a screen and then showing a permission error.
+
+| Role             | Bottom navigation                        |
+| ---------------- | ---------------------------------------- |
+| `OWNER`          | Dashboard, Calendar, Jobs, Tori, More    |
+| `ADMIN`          | Dashboard, Calendar, Jobs, Tori, More    |
+| `OFFICE_MANAGER` | Dashboard, Calendar, Jobs, Tori, More    |
+| `SCHEDULER`      | Dashboard, Calendar, Jobs, Tori, More    |
+| `TECHNICIAN`     | My Day, Calendar, Tori, More             |
+| `ACCOUNTANT`     | Dashboard, Tori, More                    |
+| `SALES`          | Dashboard, Customers, Quotes, Tori, More |
+| `READ_ONLY`      | Dashboard, Calendar, More                |
+
+The mobile role visibility matrix is centralised in one helper. Deep links,
+manual navigation calls, or stale navigation state for forbidden screens should
+fall back to the user’s permitted home instead of rendering forbidden screens.
 
 ## Tenant rule
 

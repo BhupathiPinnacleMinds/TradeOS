@@ -17,6 +17,7 @@ import {
   APPOINTMENT_STATUSES,
   APPOINTMENT_TYPES,
   AUSTRALIAN_STATES,
+  type DispatcherFilter,
   JOB_PRIORITIES,
   type AppointmentFilter,
   type AppointmentLocationSource,
@@ -43,6 +44,15 @@ const APPOINTMENT_FILTERS = [
   'cancelled',
   'my-appointments',
 ] as const satisfies readonly AppointmentFilter[];
+
+const DISPATCHER_FILTERS = [
+  'working',
+  'available',
+  'completed',
+  'high-priority',
+  'overdue',
+  'unassigned',
+] as const satisfies readonly DispatcherFilter[];
 
 export class ListAppointmentsQueryDto {
   @IsOptional()
@@ -102,6 +112,21 @@ export class ListAppointmentsQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: SortOrder;
+}
+
+export class DispatcherQueryDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsIn(DISPATCHER_FILTERS)
+  filter?: DispatcherFilter;
 }
 
 export class UpsertAppointmentDto {
@@ -232,6 +257,47 @@ export class AppointmentAvailabilityDto {
   @IsOptional()
   @IsString()
   excludeAppointmentId?: string;
+}
+
+export class AppointmentWorkLogDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  technicianNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  workCompleted?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  followUpRequired?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  followUpNotes?: string;
+}
+
+export class CompleteAppointmentDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  technicianNotes?: string;
+
+  @IsString()
+  @MaxLength(2000)
+  workCompleted!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  followUpRequired?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  followUpNotes?: string;
 }
 
 export class ReassignAppointmentDto {

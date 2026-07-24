@@ -9,19 +9,25 @@ import type {
   AppointmentRecommendationResponse,
   AppointmentReassignmentOptionsResponse,
   AppointmentReassignmentPayload,
+  AppointmentTransitionAction,
+  AppointmentWorkLogPayload,
   AppointmentStatus,
   BusinessRole,
+  CompleteAppointmentPayload,
   CustomerDetailResponse,
   CustomerListResponse,
   CustomerPayload,
   CustomerSite,
   CustomerSitePayload,
+  DispatcherFilter,
+  DispatcherViewResponse,
   JobDetailResponse,
   JobListResponse,
   JobPayload,
   JobStatus,
   InvitationPreviewResponse,
   InviteMemberResponse,
+  MyDayResponse,
   ResendInvitationResponse,
   TeamMemberDetailResponse,
   TeamMember,
@@ -144,6 +150,7 @@ export function registerRequest(input: {
   suburb?: string;
   state?: string;
   postcode?: string;
+  timezone?: string;
 }) {
   return apiRequest<AuthResponse>('/auth/register', {
     body: JSON.stringify(input),
@@ -439,6 +446,24 @@ export function appointmentsRequest(
   );
 }
 
+export function dispatcherRequest(
+  token: string,
+  params: {
+    date?: string;
+    search?: string;
+    filter?: DispatcherFilter | '';
+  } = {},
+) {
+  return apiRequest<DispatcherViewResponse>(
+    `/appointments/dispatcher${queryString(params)}`,
+    { token },
+  );
+}
+
+export function myDayRequest(token: string) {
+  return apiRequest<MyDayResponse>('/appointments/my-day', { token });
+}
+
 export function appointmentDetailRequest(token: string, appointmentId: string) {
   return apiRequest<AppointmentDetailResponse>(
     `/appointments/${appointmentId}`,
@@ -528,12 +553,29 @@ export function appointmentAvailabilityRequest(
 export function transitionAppointmentRequest(
   token: string,
   appointmentId: string,
-  action: 'start' | 'arrive' | 'complete' | 'cancel',
+  action: AppointmentTransitionAction | 'cancel',
+  input?: CompleteAppointmentPayload,
 ) {
   return apiRequest<AppointmentDetailResponse>(
     `/appointments/${appointmentId}/${action}`,
     {
+      body: input ? JSON.stringify(input) : undefined,
       method: 'POST',
+      token,
+    },
+  );
+}
+
+export function updateAppointmentWorkLogRequest(
+  token: string,
+  appointmentId: string,
+  input: AppointmentWorkLogPayload,
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}/work-log`,
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
       token,
     },
   );

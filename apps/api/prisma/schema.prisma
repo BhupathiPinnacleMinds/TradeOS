@@ -194,6 +194,7 @@ model Business {
   jobs            Job[]
   jobSequence     JobSequence?
   appointments    Appointment[]
+  appointmentWorkLogs AppointmentWorkLog[]
   appointmentSequence AppointmentSequence?
   quotes          Quote[]
   invoices        Invoice[]
@@ -226,6 +227,7 @@ model User {
   updatedCustomers Customer[]       @relation("CustomerUpdater")
   assignedJobs     Job[]            @relation("JobAssignee")
   assignedAppointments Appointment[] @relation("AppointmentAssignee")
+  appointmentWorkLogs AppointmentWorkLog[] @relation("AppointmentWorkLogTechnician")
   createdJobs      Job[]            @relation("JobCreator")
   updatedJobs      Job[]            @relation("JobUpdater")
   createdAppointments Appointment[] @relation("AppointmentCreator")
@@ -403,6 +405,7 @@ model Job {
   messages                 Message[]
   documents                Document[]
   appointments             Appointment[]
+  workLogs                 AppointmentWorkLog[]
 
   @@unique([businessId, jobNumber])
   @@unique([id, businessId])
@@ -454,6 +457,7 @@ model Appointment {
   assignedUser             User?             @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: SetNull)
   creator                  User?             @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater                  User?             @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  workLogs                 AppointmentWorkLog[]
 
   @@unique([businessId, appointmentNumber])
   @@unique([id, businessId])
@@ -461,6 +465,28 @@ model Appointment {
   @@index([businessId, customerSiteId])
   @@index([businessId, assignedUserId, scheduledStart])
   @@index([businessId, status, scheduledStart])
+}
+
+model AppointmentWorkLog {
+  id                 String      @id @default(cuid())
+  businessId         String
+  appointmentId      String
+  jobId              String
+  technicianUserId   String
+  technicianNotes    String?
+  workCompleted      String?
+  followUpRequired   Boolean     @default(false)
+  followUpNotes      String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  business           Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointment        Appointment @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: Cascade)
+  job                Job         @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Cascade)
+  technician         User        @relation("AppointmentWorkLogTechnician", fields: [technicianUserId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([businessId, appointmentId])
+  @@index([businessId, jobId, createdAt])
+  @@index([businessId, technicianUserId, createdAt])
 }
 
 model AppointmentSequence {

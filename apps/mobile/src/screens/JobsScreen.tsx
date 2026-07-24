@@ -15,6 +15,7 @@ import { jobsRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import { canCreateJob } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Navigation = NativeStackNavigationProp<RootStackParamList>;
@@ -45,7 +46,7 @@ function label(value: string) {
 }
 
 export function JobsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { showToast } = useToast();
   const navigation = useNavigation<Navigation>();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -54,6 +55,7 @@ export function JobsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
+  const canAddJob = canCreateJob(user?.role);
 
   const loadJobs = useCallback(
     async (options: { refreshing?: boolean } = {}) => {
@@ -96,8 +98,10 @@ export function JobsScreen() {
     if (filter === 'today') return 'No jobs scheduled for today.';
     if (filter === 'my-jobs') return 'No jobs assigned to you.';
     if (filter === 'unassigned') return 'No unassigned jobs.';
-    return 'No jobs yet. Create a job from a customer to start scheduling work.';
-  }, [filter]);
+    return canAddJob
+      ? 'No jobs yet. Create a job from a customer to start scheduling work.'
+      : 'No jobs yet.';
+  }, [canAddJob, filter]);
 
   return (
     <View style={styles.flex}>
@@ -182,14 +186,16 @@ export function JobsScreen() {
         ))}
       </ScrollView>
 
-      <Pressable
-        accessibilityLabel="Create new job"
-        accessibilityRole="button"
-        onPress={() => navigation.navigate('JobForm', {})}
-        style={styles.floatingButton}
-      >
-        <Text style={styles.floatingText}>+ New Job</Text>
-      </Pressable>
+      {canAddJob ? (
+        <Pressable
+          accessibilityLabel="Create new job"
+          accessibilityRole="button"
+          onPress={() => navigation.navigate('JobForm', {})}
+          style={styles.floatingButton}
+        >
+          <Text style={styles.floatingText}>+ New Job</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

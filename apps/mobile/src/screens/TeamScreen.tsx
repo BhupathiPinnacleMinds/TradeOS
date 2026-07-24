@@ -28,6 +28,7 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import { canManageTeam } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 const roles: BusinessRole[] = [
@@ -198,7 +199,7 @@ export function TeamScreen() {
     memberId: string;
   } | null>(null);
 
-  const canManageTeam = user?.role === 'OWNER' || user?.role === 'ADMIN';
+  const canManageTeamMembers = canManageTeam(user?.role);
   const isDevelopment = process.env.NODE_ENV !== 'production';
 
   async function refreshMembers() {
@@ -627,7 +628,7 @@ export function TeamScreen() {
           {user?.business.name ?? 'this business'}.
         </Text>
 
-        {canManageTeam ? (
+        {canManageTeamMembers ? (
           <Pressable
             accessibilityLabel="Invite team member"
             accessibilityRole="button"
@@ -765,7 +766,7 @@ export function TeamScreen() {
         {filteredMembers.map((member) => {
           const badge = roleColours[member.role] ?? defaultRoleColour;
           const canEditMember =
-            canManageTeam &&
+            canManageTeamMembers &&
             member.userId !== user?.id &&
             !(user?.role === 'ADMIN' && member.role === 'OWNER');
           const memberAction = activeAction?.memberId === member.id;

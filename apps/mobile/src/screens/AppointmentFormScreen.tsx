@@ -13,6 +13,11 @@ import type {
 import {
   APPOINTMENT_LOCATION_SOURCES,
   AUSTRALIAN_STATES,
+  formatBusinessDate,
+  formatBusinessTime,
+  formatBusinessTimeRange,
+  formatBusinessTimezoneAbbreviation,
+  normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -88,20 +93,19 @@ function nextStart() {
   return date;
 }
 
-function formatDate(value: Date) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    month: 'short',
-    weekday: 'short',
-    year: 'numeric',
-  }).format(value);
+function initialStart(selectedDate?: string) {
+  if (!selectedDate) return nextStart();
+  const date = new Date(selectedDate);
+  if (Number.isNaN(date.getTime())) return nextStart();
+  return date;
 }
 
-function formatTime(value: Date) {
-  return new Intl.DateTimeFormat('en-AU', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(value);
+function formatDate(value: Date, timezone = 'Australia/Sydney') {
+  return formatBusinessDate(value, timezone);
+}
+
+function formatTime(value: Date, timezone = 'Australia/Sydney') {
+  return formatBusinessTime(value, timezone);
 }
 
 function formatLocation(location: ResolvedLocation) {
@@ -117,9 +121,18 @@ function formatLocation(location: ResolvedLocation) {
 }
 
 export function AppointmentFormScreen({ navigation, route }: Props) {
-  const { customerId, jobId, siteId } = route.params ?? {};
-  const { token } = useAuth();
+  const {
+    customerId,
+    customerSiteId,
+    jobId,
+    selectedDate,
+    siteId,
+    technicianId,
+  } = route.params ?? {};
+  const preferredSiteId = customerSiteId ?? siteId;
+  const { token, user } = useAuth();
   const { showToast } = useToast();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [sites, setSites] = useState<CustomerSite[]>([]);
@@ -127,13 +140,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(
     customerId ?? '',
   );
-  const [selectedSiteId, setSelectedSiteId] = useState(siteId ?? '');
+  const [selectedSiteId, setSelectedSiteId] = useState(preferredSiteId ?? '');
   const [selectedJobId, setSelectedJobId] = useState(jobId ?? '');
   const [customerSearch, setCustomerSearch] = useState('');
   const [locationSource, setLocationSource] =
-    useState<AppointmentLocationSource>(
-      siteId ? 'CUSTOMER_SITE' : 'CUSTOMER_DEFAULT',
-    );
+    useState<AppointmentLocationSource>('MANUAL');
   const [useQuickCustomer, setUseQuickCustomer] = useState(false);
   const [useQuickJob, setUseQuickJob] = useState(!jobId);
   const [quickCustomerName, setQuickCustomerName] = useState('');
@@ -146,10 +157,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [manualPostcode, setManualPostcode] = useState('');
   const [manualAccessInstructions, setManualAccessInstructions] = useState('');
   const [saveAddressAsSite, setSaveAddressAsSite] = useState(false);
-  const [assignedUserId, setAssignedUserId] = useState<string | null>(null);
+  const [assignedUserId, setAssignedUserId] = useState<string | null>(
+    technicianId ?? null,
+  );
   const [appointmentType, setAppointmentType] =
     useState<AppointmentType>('INSPECTION');
-  const [startAt, setStartAt] = useState(nextStart);
+  const [startAt, setStartAt] = useState(() => initialStart(selectedDate));
   const [durationMinutes, setDurationMinutes] = useState(120);
   const [notes, setNotes] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -172,20 +185,22 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   );
   const filteredCustomers = useMemo(() => {
     const search = customerSearch.trim().toLowerCase();
-    if (!search) return customers;
-    return customers.filter((customer) =>
-      [
-        customer.displayName,
-        customer.companyName,
-        customer.email,
-        customer.phone,
-        customer.suburb,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(search),
-    );
+    if (!search) return customers.slice(0, 5);
+    return customers
+      .filter((customer) =>
+        [
+          customer.displayName,
+          customer.companyName,
+          customer.email,
+          customer.phone,
+          customer.suburb,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(search),
+      )
+      .slice(0, 8);
   }, [customerSearch, customers]);
   const resolvedLocation = useMemo(
     () => getResolvedLocation(),
@@ -244,11 +259,26 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         if (!mounted) return;
         setCustomers(customerResponse.records);
         setMembers(teamResponse.filter((member) => member.status === 'ACTIVE'));
-        const initialCustomerId =
-          customerId ?? customerResponse.records[0]?.id ?? '';
-        if (initialCustomerId) {
-          await loadCustomer(authToken, initialCustomerId, mounted, siteId);
-          setSelectedCustomerId(initialCustomerId);
+        if (customerId) {
+          try {
+            await loadCustomer(
+              authToken,
+              customerId,
+              mounted,
+              preferredSiteId,
+              Boolean(jobId),
+            );
+            if (!mounted) return;
+            setSelectedCustomerId(customerId);
+          } catch {
+            if (!mounted) return;
+            clearCustomerSelection();
+            showToast({
+              message:
+                "We couldn't load that customer. Search and select a customer.",
+              tone: 'error',
+            });
+          }
         }
         if (jobId) {
           const jobResponse = await jobDetailRequest(authToken, jobId);
@@ -276,13 +306,14 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
     };
-  }, [customerId, jobId, showToast, siteId, token]);
+  }, [customerId, jobId, preferredSiteId, showToast, token]);
 
   async function loadCustomer(
     authToken: string,
     nextCustomerId: string,
     mounted = true,
     preferredSiteId?: string,
+    shouldSelectFirstJob = false,
   ) {
     const detail = await customerDetailRequest(authToken, nextCustomerId);
     if (!mounted) return;
@@ -291,24 +322,42 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     );
     setSites(activeSites);
     setJobs(detail.jobs);
-    const nextSiteId =
-      preferredSiteId ??
-      activeSites.find((site) => site.isPrimary)?.id ??
-      activeSites[0]?.id ??
-      '';
+    const nextSiteId = preferredSiteId
+      ? (activeSites.find((site) => site.id === preferredSiteId)?.id ?? '')
+      : '';
     setSelectedSiteId(nextSiteId);
     setLocationSource(nextSiteId ? 'CUSTOMER_SITE' : 'CUSTOMER_DEFAULT');
-    if (!jobId && detail.jobs[0]) {
+    if (shouldSelectFirstJob && !jobId && detail.jobs[0]) {
       setSelectedJobId(detail.jobs[0].id);
       setQuickJobTitle(detail.jobs[0].title);
       setUseQuickJob(false);
     }
   }
 
+  function clearCustomerSelection() {
+    setSelectedCustomerId('');
+    setSelectedSiteId('');
+    setSites([]);
+    setJobs([]);
+    setSelectedJobId('');
+    setQuickJobTitle('');
+    setUseQuickJob(true);
+    setLocationSource('MANUAL');
+    setManualAddressLine1('');
+    setManualAddressLine2('');
+    setManualSuburb('');
+    setManualPostcode('');
+    setManualAccessInstructions('');
+  }
+
   async function selectCustomer(nextCustomerId: string) {
     if (!token) return;
     setSelectedCustomerId(nextCustomerId);
+    setSelectedSiteId('');
+    setSites([]);
+    setJobs([]);
     setSelectedJobId('');
+    setQuickJobTitle('');
     setUseQuickJob(true);
     setLocationSource('CUSTOMER_DEFAULT');
     await loadCustomer(token, nextCustomerId);
@@ -554,18 +603,50 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           ) : (
             <>
               <Field
-                label="Search customers"
+                label="Search and select a customer"
                 onChangeText={setCustomerSearch}
                 value={customerSearch}
               />
-              <HorizontalPicker
-                options={filteredCustomers.map((customer) => ({
-                  label: customer.displayName,
-                  value: customer.id,
-                }))}
-                selected={selectedCustomerId}
-                onSelect={(value) => void selectCustomer(value)}
-              />
+              {selectedCustomer ? (
+                <View style={styles.summaryBox}>
+                  <Text style={styles.label}>Selected customer</Text>
+                  <Text style={styles.summaryTitle}>
+                    {selectedCustomer.companyName ??
+                      selectedCustomer.displayName}
+                  </Text>
+                  <Text style={styles.muted}>
+                    {selectedCustomer.phone ?? 'No phone'} ·{' '}
+                    {selectedCustomer.suburb ?? 'No suburb recorded'}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={clearCustomerSelection}
+                    style={styles.clearButton}
+                  >
+                    <Text style={styles.clearButtonText}>Clear customer</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.muted}>
+                    {customerSearch.trim()
+                      ? 'Search results'
+                      : 'Recent customers'}
+                  </Text>
+                  <HorizontalPicker
+                    options={filteredCustomers.map((customer) => ({
+                      label:
+                        customer.companyName ??
+                        `${customer.displayName}${
+                          customer.phone ? ` · ${customer.phone}` : ''
+                        }`,
+                      value: customer.id,
+                    }))}
+                    selected={selectedCustomerId}
+                    onSelect={(value) => void selectCustomer(value)}
+                  />
+                </>
+              )}
             </>
           )}
         </Section>
@@ -704,11 +785,29 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="5. Date and time">
+          <View style={styles.summaryBox}>
+            <Text style={styles.label}>Appointment time</Text>
+            <Text style={styles.summaryTitle}>
+              {formatBusinessDate(startAt, businessTimezone)}
+            </Text>
+            <Text style={styles.muted}>
+              {formatBusinessTimeRange(
+                startAt,
+                addMinutes(startAt, durationMinutes),
+                businessTimezone,
+              )}
+            </Text>
+            <Text style={styles.muted}>
+              {businessTimezone} ·{' '}
+              {formatBusinessTimezoneAbbreviation(startAt, businessTimezone)}
+            </Text>
+          </View>
           <DateTimeButton
             label="Date"
             mode="date"
             onChange={onDateChange}
             setVisible={setShowDatePicker}
+            timezone={businessTimezone}
             value={startAt}
             visible={showDatePicker}
           />
@@ -717,6 +816,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             mode="time"
             onChange={onTimeChange}
             setVisible={setShowTimePicker}
+            timezone={businessTimezone}
             value={startAt}
             visible={showTimePicker}
           />
@@ -755,7 +855,17 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           <Text style={styles.muted}>
             {selectedCustomer?.displayName || quickCustomerName || 'Customer'} ·{' '}
             {quickJobTitle || selectedJob?.title || 'Job'} ·{' '}
-            {formatDate(startAt)} at {formatTime(startAt)}
+            {formatBusinessDate(startAt, businessTimezone)} at{' '}
+            {formatBusinessTime(startAt, businessTimezone)}
+          </Text>
+          <Text style={styles.muted}>
+            {formatBusinessTimeRange(
+              startAt,
+              addMinutes(startAt, durationMinutes),
+              businessTimezone,
+            )}{' '}
+            · {businessTimezone} ·{' '}
+            {formatBusinessTimezoneAbbreviation(startAt, businessTimezone)}
           </Text>
           <Text style={styles.muted}>
             Location: {formatLocation(resolvedLocation) || 'Not selected'}
@@ -790,6 +900,7 @@ function DateTimeButton({
   mode,
   onChange,
   setVisible,
+  timezone,
   value,
   visible,
 }: {
@@ -797,6 +908,7 @@ function DateTimeButton({
   mode: 'date' | 'time';
   onChange(value?: Date): void;
   setVisible(value: boolean): void;
+  timezone: string;
   value: Date;
   visible: boolean;
 }) {
@@ -809,7 +921,9 @@ function DateTimeButton({
         style={styles.inputButton}
       >
         <Text style={styles.inputButtonText}>
-          {mode === 'date' ? formatDate(value) : formatTime(value)}
+          {mode === 'date'
+            ? formatDate(value, timezone)
+            : formatTime(value, timezone)}
         </Text>
       </Pressable>
       {visible ? (
@@ -961,6 +1075,15 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colours.primary },
   chipText: { color: colours.muted, fontWeight: '800' },
   chipTextActive: { color: '#FFFFFF' },
+  clearButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 999,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  clearButtonText: { color: colours.primary, fontWeight: '900' },
   container: {
     backgroundColor: colours.background,
     padding: 24,
@@ -1058,6 +1181,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 12,
   },
+  summaryTitle: { color: colours.ink, fontSize: 17, fontWeight: '900' },
   textarea: { minHeight: 96, textAlignVertical: 'top' },
   title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 4 },
   toggle: {

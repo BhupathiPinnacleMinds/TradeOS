@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import type { AuthenticatedUser } from '@tradieos/shared';
+import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
 import { AppointmentNotificationsService } from './appointment-notifications.service';
 import { AppointmentsService } from './appointments.service';
 import { SchedulingService } from './scheduling.service';
@@ -22,11 +22,21 @@ const technician: AuthenticatedUser = {
   role: 'TECHNICIAN',
 };
 
+function userForRole(role: BusinessRole): AuthenticatedUser {
+  return {
+    businessId: 'business-1',
+    email: `${role.toLowerCase()}@example.com`,
+    id: role === 'TECHNICIAN' ? 'tech-1' : `${role.toLowerCase()}-1`,
+    role,
+  };
+}
+
 type MockPrisma = {
   appointment: {
     count: jest.Mock;
     create: jest.Mock;
     findFirst: jest.Mock;
+    findFirstOrThrow: jest.Mock;
     findMany: jest.Mock;
     update: jest.Mock;
   };
@@ -36,9 +46,11 @@ type MockPrisma = {
     update: jest.Mock;
   };
   auditLog: { create: jest.Mock };
+  appointmentWorkLog: { upsert: jest.Mock };
+  business: { findUnique: jest.Mock };
   businessMember: { findFirst: jest.Mock; findMany: jest.Mock };
   customerSite: { create: jest.Mock; findFirst: jest.Mock };
-  job: { findFirst: jest.Mock };
+  job: { findFirst: jest.Mock; update: jest.Mock };
   user: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -118,6 +130,7 @@ function createService() {
       count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(appointment()),
       findFirst: jest.fn().mockResolvedValue(appointment()),
+      findFirstOrThrow: jest.fn().mockResolvedValue(appointment()),
       findMany: jest.fn().mockResolvedValue([appointment()]),
       update: jest.fn().mockResolvedValue(appointment({ status: 'COMPLETED' })),
     },
@@ -129,6 +142,10 @@ function createService() {
       update: jest.fn(),
     },
     auditLog: { create: jest.fn() },
+    appointmentWorkLog: { upsert: jest.fn() },
+    business: {
+      findUnique: jest.fn().mockResolvedValue({ timezone: 'Australia/Sydney' }),
+    },
     businessMember: {
       findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
       findMany: jest.fn().mockResolvedValue([
@@ -168,7 +185,9 @@ function createService() {
         postcode: '2150',
         state: 'NSW',
         suburb: 'Parramatta',
+        status: 'SCHEDULED',
       }),
+      update: jest.fn(),
     },
     user: { findFirst: jest.fn().mockResolvedValue({ id: 'tech-1' }) },
     $transaction: jest.fn(
@@ -374,8 +393,15 @@ describe('AppointmentsService', () => {
 
   it('records completion transitions', async () => {
     const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
 
-    await service.transition(owner, 'appointment-1', 'COMPLETED');
+    await service.transition(owner, 'appointment-1', 'COMPLETED', {
+      followUpRequired: false,
+      technicianNotes: 'Checked all outlets.',
+      workCompleted: 'Replaced faulty switch and tested circuit.',
+    });
 
     const updateCalls = prisma.appointment.update.mock
       .calls as unknown as Array<
@@ -383,6 +409,7 @@ describe('AppointmentsService', () => {
     >;
     expect(updateCalls[0][0].data.status).toBe('COMPLETED');
     expect(updateCalls[0][0].data.actualEnd).toBeInstanceOf(Date);
+    expect(prisma.appointmentWorkLog.upsert).toHaveBeenCalled();
   });
 
   it('keeps same-record reschedules active instead of leaving RESCHEDULED', async () => {
@@ -579,4 +606,277 @@ describe('AppointmentsService', () => {
     expect(result.technicians[0].todayWorkload).toBe(1);
     expect(result.recommendation.technicianId).toBe('tech-1');
   });
+
+  it('loads dispatcher board with technicians, unassigned work and recommendations', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findMany
+      .mockResolvedValueOnce([
+        {
+          role: 'TECHNICIAN',
+          user: {
+            email: 'mia@example.com',
+            firstName: 'Mia',
+            id: 'tech-1',
+            lastName: 'Technician',
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          role: 'TECHNICIAN',
+          user: { firstName: 'Mia', id: 'tech-1', lastName: 'Technician' },
+        },
+      ]);
+    prisma.appointment.findMany
+      .mockResolvedValueOnce([
+        appointment(),
+        appointment({ assignedUser: null, assignedUserId: null }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    const result = await service.dispatcher(owner, {
+      date: '2026-07-15T00:00:00.000Z',
+    });
+
+    expect(result.summary.totalAppointmentsToday).toBe(2);
+    expect(result.summary.unassignedAppointments).toBe(1);
+    expect(result.technicians[0].todaysWorkload).toBe(1);
+    expect(result.unassigned[0].recommendation?.technicianId).toBe('tech-1');
+    const auditCalls = prisma.auditLog.create.mock.calls as unknown as Array<
+      [{ data: { action: string } }]
+    >;
+    expect(
+      auditCalls.some((call) => call[0].data.action === 'DISPATCHER_VIEWED'),
+    ).toBe(true);
+  });
+
+  it('blocks technicians from the dispatcher management board', async () => {
+    const { service } = createService();
+
+    await service
+      .dispatcher(technician, {
+        date: '2026-07-15T00:00:00.000Z',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+      });
+  });
+
+  it('filters dispatcher board by search and high priority', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findMany.mockResolvedValueOnce([
+      {
+        role: 'TECHNICIAN',
+        user: {
+          email: 'mia@example.com',
+          firstName: 'Mia',
+          id: 'tech-1',
+          lastName: 'Technician',
+        },
+      },
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        job: {
+          ...appointment().job,
+          priority: 'HIGH',
+          title: 'Emergency switchboard',
+        },
+      }),
+    ]);
+
+    const result = await service.dispatcher(owner, {
+      date: '2026-07-15T00:00:00.000Z',
+      filter: 'high-priority',
+      search: 'switchboard',
+    });
+
+    expect(result.technicians).toHaveLength(1);
+    expect(result.technicians[0].appointments[0].appointment.job.priority).toBe(
+      'HIGH',
+    );
+  });
+
+  it('loads My Day with only the logged-in user assigned appointments', async () => {
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({ assignedUserId: 'tech-1' }),
+      appointment({
+        assignedUserId: 'tech-1',
+        id: 'appointment-2',
+        job: {
+          ...appointment().job,
+          priority: 'URGENT',
+          title: 'Emergency repair',
+        },
+        status: 'COMPLETED',
+      }),
+    ]);
+
+    const result = await service.myDay(technician);
+
+    expect(result.businessName).toBe('Demo Tradie Co');
+    expect(result.technicianUserId).toBe('tech-1');
+    expect(result.appointments).toHaveLength(2);
+    expect(result.completedCount).toBe(1);
+    expect(result.remainingCount).toBe(1);
+    const findManyCalls = prisma.appointment.findMany.mock
+      .calls as unknown as Array<
+      [{ where: { assignedUserId: string; businessId: string } }]
+    >;
+    expect(findManyCalls[0][0].where.assignedUserId).toBe('tech-1');
+    expect(findManyCalls[0][0].where.businessId).toBe('business-1');
+  });
+
+  it('rejects invalid technician workflow transitions', async () => {
+    const { service } = createService();
+
+    await service
+      .transition(technician, 'appointment-1', 'COMPLETED', {
+        workCompleted: 'Done',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'INVALID_STATUS_TRANSITION');
+      });
+  });
+
+  it('requires work completed before completing an in-progress appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service
+      .transition(technician, 'appointment-1', 'COMPLETED', {
+        workCompleted: '  ',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'WORK_COMPLETED_REQUIRED');
+      });
+  });
+
+  it('saves work logs and writes follow-up audit events', async () => {
+    const { prisma, service } = createService();
+
+    await service.updateWorkLog(technician, 'appointment-1', {
+      followUpNotes: 'Return with a replacement breaker.',
+      followUpRequired: true,
+      technicianNotes: 'Breaker is intermittent.',
+      workCompleted: 'Made site safe.',
+    });
+
+    const upsertCalls = prisma.appointmentWorkLog.upsert.mock
+      .calls as unknown as Array<
+      [
+        {
+          create: {
+            businessId: string;
+            followUpRequired: boolean;
+            technicianUserId: string;
+          };
+        },
+      ]
+    >;
+    expect(upsertCalls[0][0].create.businessId).toBe('business-1');
+    expect(upsertCalls[0][0].create.followUpRequired).toBe(true);
+    expect(upsertCalls[0][0].create.technicianUserId).toBe('tech-1');
+    const auditCalls = prisma.auditLog.create.mock.calls as unknown as Array<
+      [{ data: { action: string } }]
+    >;
+    const auditActions = auditCalls.map((call) => call[0].data.action);
+    expect(auditActions).toContain('APPOINTMENT_WORK_LOG_UPDATED');
+    expect(auditActions).toContain('FOLLOW_UP_REQUIRED');
+  });
+
+  it.each<BusinessRole>([
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ])(
+    'allows %s to GET /appointments according to appointment view rules',
+    async (role) => {
+      const { service } = createService();
+
+      const result = await service.findAll(userForRole(role), {
+        page: 1,
+        pageSize: 20,
+      });
+
+      expect(Array.isArray(result.records)).toBe(true);
+    },
+  );
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(
+    'allows %s to POST /appointments according to appointment write rules',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+      await expect(
+        service.create(userForRole(role), {
+          appointmentType: 'INSPECTION',
+          assignedUserId: 'tech-1',
+          jobId: 'job-1',
+          scheduledEnd: '2026-07-15T10:00:00',
+          scheduledStart: '2026-07-15T09:00:00',
+        }),
+      ).resolves.toMatchObject({ appointment: { id: 'appointment-1' } });
+    },
+  );
+
+  it.each<BusinessRole>(['TECHNICIAN', 'ACCOUNTANT', 'SALES', 'READ_ONLY'])(
+    'blocks %s from POST /appointments with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service
+        .create(userForRole(role), {
+          appointmentType: 'INSPECTION',
+          assignedUserId: 'tech-1',
+          jobId: 'job-1',
+          scheduledEnd: '2026-07-15T10:00:00',
+          scheduledStart: '2026-07-15T09:00:00',
+        })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(
+    'allows %s to GET /appointments/dispatcher for scheduling management',
+    async (role) => {
+      const { service } = createService();
+
+      const result = await service.dispatcher(userForRole(role), {
+        date: '2026-07-15T00:00:00.000Z',
+      });
+
+      expect(result.summary.totalAppointmentsToday).toBeGreaterThanOrEqual(0);
+    },
+  );
+
+  it.each<BusinessRole>(['TECHNICIAN', 'ACCOUNTANT', 'SALES', 'READ_ONLY'])(
+    'blocks %s from GET /appointments/dispatcher with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service
+        .dispatcher(userForRole(role), {
+          date: '2026-07-15T00:00:00.000Z',
+        })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
 });

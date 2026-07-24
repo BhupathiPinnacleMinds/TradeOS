@@ -1,7 +1,13 @@
-import type { Appointment, AppointmentQuickAction } from '@tradieos/shared';
+import type {
+  Appointment,
+  AppointmentQuickAction,
+  AppointmentTransitionAction,
+} from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_COLOURS,
+  formatBusinessDateTime,
   getAppointmentQuickActions,
+  normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,7 +20,9 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {
@@ -25,23 +33,31 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import { canCreateAppointment } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
+type AppointmentDetailsAction =
+  | AppointmentQuickAction
+  | {
+      id: 'edit' | 'job' | 'sms';
+      label: string;
+      onPress(): void;
+    };
+
+function isAppointmentDetailsAction(
+  action: AppointmentDetailsAction | null | undefined,
+): action is AppointmentDetailsAction {
+  return Boolean(action);
+}
 
 function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
-function formatDateTime(value: string | null) {
+function formatDateTime(value: string | null, timezone = 'Australia/Sydney') {
   if (!value) return 'Not recorded';
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(value));
+  return formatBusinessDateTime(value, timezone);
 }
 
 function durationMinutes(appointment: Appointment) {
@@ -59,9 +75,16 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [appointment, setAppointment] = useState<Appointment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyText, setBusyText] = useState<string | null>(null);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isCompletionOpen, setIsCompletionOpen] = useState(false);
+  const [technicianNotes, setTechnicianNotes] = useState('');
+  const [workCompleted, setWorkCompleted] = useState('');
+  const [followUpRequired, setFollowUpRequired] = useState(false);
+  const [followUpNotes, setFollowUpNotes] = useState('');
 
   async function loadAppointment() {
     if (!token) return;
@@ -69,6 +92,12 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     try {
       const response = await appointmentDetailRequest(token, appointmentId);
       setAppointment(response.appointment);
+      setTechnicianNotes(response.appointment.workLog?.technicianNotes ?? '');
+      setWorkCompleted(response.appointment.workLog?.workCompleted ?? '');
+      setFollowUpRequired(
+        response.appointment.workLog?.followUpRequired ?? false,
+      );
+      setFollowUpNotes(response.appointment.workLog?.followUpNotes ?? '');
       navigation.setOptions({ title: response.appointment.appointmentNumber });
     } catch (error) {
       showToast({
@@ -89,20 +118,37 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     }, [appointmentId, token]),
   );
 
-  async function transition(
-    action: 'start' | 'arrive' | 'complete' | 'cancel',
-  ) {
+  async function transition(action: AppointmentTransitionAction | 'cancel') {
     if (!token || !appointment || busyText) return;
+    if (action === 'complete' && !workCompleted.trim()) {
+      showToast({
+        message: 'Add a short work completed summary before completing.',
+        tone: 'error',
+      });
+      return;
+    }
     setBusyText(actionText(action));
     try {
       const response = await transitionAppointmentRequest(
         token,
         appointment.id,
         action,
+        action === 'complete'
+          ? {
+              followUpNotes,
+              followUpRequired,
+              technicianNotes,
+              workCompleted,
+            }
+          : undefined,
       );
       setAppointment(response.appointment);
+      setIsCompletionOpen(false);
       showToast({
-        message: `${response.appointment.appointmentNumber} updated.`,
+        message:
+          action === 'complete'
+            ? 'Appointment completed.'
+            : `${response.appointment.appointmentNumber} updated.`,
         tone: 'success',
       });
     } catch (error) {
@@ -201,12 +247,75 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     role: user?.role,
     status: appointment.status,
   });
-  const canReassign = [
-    'OWNER',
-    'ADMIN',
-    'OFFICE_MANAGER',
-    'SCHEDULER',
-  ].includes(user?.role ?? '');
+  const terminalStatus = ['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(
+    appointment.status,
+  );
+  const navigateAction = quickActions.find(
+    (action) => action.id === 'navigate',
+  );
+  const workflowAction = quickActions.find((action) =>
+    ['startTravel', 'start', 'arrive', 'complete'].includes(action.id),
+  );
+  const reassignAction = quickActions.find(
+    (action) => action.id === 'reassign',
+  );
+  const callAction = quickActions.find((action) => action.id === 'call');
+  const cancelAction = quickActions.find((action) => action.id === 'cancel');
+  const rescheduleAction = quickActions.find(
+    (action) => action.id === 'reschedule',
+  );
+  const canEditAppointment = canCreateAppointment(user?.role);
+  const primaryActions = [
+    navigateAction,
+    workflowAction,
+    reassignAction
+      ? {
+          ...reassignAction,
+          label: 'Reassign Technician',
+        }
+      : null,
+  ].filter((action): action is AppointmentQuickAction => Boolean(action));
+  const secondaryActionCandidates: Array<
+    AppointmentDetailsAction | null | undefined
+  > = [
+    callAction,
+    customer.phone && callAction
+      ? {
+          id: 'sms' as const,
+          label: 'SMS Customer',
+          onPress: () => {
+            void Linking.openURL(`sms:${customer.phone}`);
+          },
+        }
+      : null,
+    !terminalStatus && canEditAppointment
+      ? {
+          id: 'edit' as const,
+          label: 'Edit Appointment',
+          onPress: () =>
+            navigation.navigate('AppointmentForm', {
+              customerId: appointment.job.customer.id,
+              customerSiteId: appointment.customerSiteId ?? undefined,
+              jobId: appointment.jobId,
+              selectedDate: appointment.scheduledStart,
+              technicianId: appointment.assignedUserId ?? null,
+            }),
+        }
+      : null,
+    !terminalStatus
+      ? {
+          id: 'job' as const,
+          label: 'View Job',
+          onPress: () =>
+            navigation.navigate('JobDetails', { jobId: appointment.jobId }),
+        }
+      : null,
+    cancelAction,
+    rescheduleAction,
+  ];
+  const secondaryActions = secondaryActionCandidates.filter(
+    isAppointmentDetailsAction,
+  );
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -224,36 +333,28 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.quickRow}>
-        {canReassign ? (
+        {terminalStatus ? (
           <QuickAction
-            label="Reassign Technician"
+            label="View Job"
             onPress={() =>
-              navigation.navigate('AppointmentReassign', {
-                appointmentId: appointment.id,
-              })
+              navigation.navigate('JobDetails', { jobId: appointment.jobId })
             }
             primary
           />
         ) : null}
-        {quickActions.map((action) => (
-          <QuickAction
-            key={action.id}
-            label={action.label}
-            onPress={() => void runQuickAction(action)}
-          />
-        ))}
-        {customer.phone ? (
-          <QuickAction
-            label="SMS"
-            onPress={() => void Linking.openURL(`sms:${customer.phone}`)}
-          />
+        {!terminalStatus
+          ? primaryActions.map((action) => (
+              <QuickAction
+                key={action.id}
+                label={action.label}
+                onPress={() => void runQuickAction(action)}
+                primary={action.id === 'reassign'}
+              />
+            ))
+          : null}
+        {secondaryActions.length ? (
+          <QuickAction label="More" onPress={() => setIsMoreOpen(true)} />
         ) : null}
-        <QuickAction
-          label="Job"
-          onPress={() =>
-            navigation.navigate('JobDetails', { jobId: appointment.jobId })
-          }
-        />
       </View>
 
       <Card title="Customer">
@@ -267,10 +368,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
       <Card title="Appointment">
         <Text style={styles.meta}>
-          Start: {formatDateTime(appointment.scheduledStart)}
+          Start: {formatDateTime(appointment.scheduledStart, businessTimezone)}
         </Text>
         <Text style={styles.meta}>
-          End: {formatDateTime(appointment.scheduledEnd)}
+          End: {formatDateTime(appointment.scheduledEnd, businessTimezone)}
         </Text>
         <Text style={styles.meta}>
           Duration:{' '}
@@ -300,6 +401,22 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
+      <Card title="Field notes">
+        <Text style={styles.meta}>
+          Technician notes:{' '}
+          {appointment.workLog?.technicianNotes ?? 'No technician notes yet.'}
+        </Text>
+        <Text style={styles.meta}>
+          Work completed:{' '}
+          {appointment.workLog?.workCompleted ?? 'Not recorded yet.'}
+        </Text>
+        {appointment.workLog?.followUpRequired ? (
+          <Text style={styles.meta}>
+            Follow-up required: {appointment.workLog.followUpNotes ?? 'Yes'}
+          </Text>
+        ) : null}
+      </Card>
+
       <Card title="Future scheduling">
         <Text style={styles.meta}>
           Drag-and-drop calendar movement, technician working hours, lunch
@@ -309,11 +426,40 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       </Card>
 
       <BlockingLoader text={busyText} />
+      <MoreActionsMenu
+        actions={secondaryActions}
+        busy={Boolean(busyText)}
+        onAction={(action) => {
+          setIsMoreOpen(false);
+          void runQuickAction(action);
+        }}
+        onDismiss={() => setIsMoreOpen(false)}
+        visible={isMoreOpen}
+      />
+      <CompletionModal
+        appointment={appointment}
+        busy={Boolean(busyText)}
+        followUpNotes={followUpNotes}
+        followUpRequired={followUpRequired}
+        onCancel={() => setIsCompletionOpen(false)}
+        onConfirm={() => void transition('complete')}
+        setFollowUpNotes={setFollowUpNotes}
+        setFollowUpRequired={setFollowUpRequired}
+        setTechnicianNotes={setTechnicianNotes}
+        setWorkCompleted={setWorkCompleted}
+        technicianNotes={technicianNotes}
+        visible={isCompletionOpen}
+        workCompleted={workCompleted}
+      />
     </ScrollView>
   );
 
-  async function runQuickAction(action: AppointmentQuickAction) {
+  async function runQuickAction(action: AppointmentDetailsAction) {
     if (!appointment) return;
+    if ('onPress' in action) {
+      action.onPress();
+      return;
+    }
     if (action.id === 'navigate') {
       void Linking.openURL(
         `https://maps.apple.com/?q=${encodeURIComponent(address)}`,
@@ -336,14 +482,16 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       return;
     }
     if (action.id === 'cancel') await transition('cancel');
+    if (action.id === 'startTravel') await transition('start-travel');
     if (action.id === 'start') await transition('start');
     if (action.id === 'arrive') await transition('arrive');
-    if (action.id === 'complete') await transition('complete');
+    if (action.id === 'complete') setIsCompletionOpen(true);
   }
 }
 
-function actionText(action: 'start' | 'arrive' | 'complete' | 'cancel') {
-  if (action === 'start') return 'Starting appointment...';
+function actionText(action: AppointmentTransitionAction | 'cancel') {
+  if (action === 'start-travel') return 'Starting travel...';
+  if (action === 'start') return 'Starting work...';
   if (action === 'arrive') return 'Marking arrival...';
   if (action === 'complete') return 'Completing appointment...';
   return 'Cancelling appointment...';
@@ -371,6 +519,176 @@ function QuickAction({
         {text}
       </Text>
     </Pressable>
+  );
+}
+
+function CompletionModal({
+  appointment,
+  busy,
+  followUpNotes,
+  followUpRequired,
+  onCancel,
+  onConfirm,
+  setFollowUpNotes,
+  setFollowUpRequired,
+  setTechnicianNotes,
+  setWorkCompleted,
+  technicianNotes,
+  visible,
+  workCompleted,
+}: {
+  appointment: Appointment;
+  busy: boolean;
+  followUpNotes: string;
+  followUpRequired: boolean;
+  onCancel(): void;
+  onConfirm(): void;
+  setFollowUpNotes(value: string): void;
+  setFollowUpRequired(value: boolean): void;
+  setTechnicianNotes(value: string): void;
+  setWorkCompleted(value: string): void;
+  technicianNotes: string;
+  visible: boolean;
+  workCompleted: string;
+}) {
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onCancel}
+      transparent
+      visible={visible}
+    >
+      <View style={styles.modalBackdrop}>
+        <View style={styles.completionCard}>
+          <Text style={styles.moreTitle}>Complete this appointment?</Text>
+          <Text style={styles.meta}>
+            {appointment.job.customer.companyName ??
+              appointment.job.customer.displayName}{' '}
+            · {appointment.job.title}
+          </Text>
+
+          <Text style={styles.inputLabel}>Work completed</Text>
+          <TextInput
+            multiline
+            onChangeText={setWorkCompleted}
+            placeholder="Example: Replaced faulty switch and tested circuit."
+            style={styles.textArea}
+            value={workCompleted}
+          />
+
+          <Text style={styles.inputLabel}>Technician notes</Text>
+          <TextInput
+            multiline
+            onChangeText={setTechnicianNotes}
+            placeholder="Internal notes for the business."
+            style={styles.textArea}
+            value={technicianNotes}
+          />
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.inputLabel}>Follow-up required</Text>
+              <Text style={styles.meta}>
+                Keep the job open and flag another visit or admin follow-up.
+              </Text>
+            </View>
+            <Switch
+              onValueChange={setFollowUpRequired}
+              value={followUpRequired}
+            />
+          </View>
+
+          {followUpRequired ? (
+            <TextInput
+              multiline
+              onChangeText={setFollowUpNotes}
+              placeholder="What follow-up is needed?"
+              style={styles.textArea}
+              value={followUpNotes}
+            />
+          ) : null}
+
+          <View style={styles.modalActions}>
+            <Pressable style={styles.quickAction} onPress={onCancel}>
+              <Text style={styles.quickText}>Decide later</Text>
+            </Pressable>
+            <Pressable
+              disabled={busy || !workCompleted.trim()}
+              style={[
+                styles.quickAction,
+                styles.quickActionPrimary,
+                (busy || !workCompleted.trim()) && styles.disabledAction,
+              ]}
+              onPress={onConfirm}
+            >
+              <Text style={styles.quickTextPrimary}>
+                {busy ? 'Completing...' : 'Complete appointment'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function MoreActionsMenu({
+  actions,
+  busy,
+  onAction,
+  onDismiss,
+  visible,
+}: {
+  actions: AppointmentDetailsAction[];
+  busy: boolean;
+  onAction(action: AppointmentDetailsAction): void;
+  onDismiss(): void;
+  visible: boolean;
+}) {
+  return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onDismiss}
+      transparent
+      visible={visible}
+    >
+      <Pressable
+        accessibilityLabel="Close appointment actions"
+        accessibilityRole="button"
+        onPress={onDismiss}
+        style={styles.modalBackdrop}
+      >
+        <Pressable
+          accessibilityLabel="Appointment actions"
+          onPress={(event) => event.stopPropagation()}
+          style={styles.moreCard}
+        >
+          <Text style={styles.moreTitle}>More actions</Text>
+          {actions.map((action) => (
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              key={action.id}
+              onPress={() => onAction(action)}
+              style={[
+                styles.moreAction,
+                action.id === 'cancel' && styles.moreActionDanger,
+                busy && styles.disabledAction,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.moreActionText,
+                  action.id === 'cancel' && styles.moreActionDangerText,
+                ]}
+              >
+                {action.label}
+              </Text>
+            </Pressable>
+          ))}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -412,6 +730,16 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  completionCard: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 24,
+    borderWidth: 1,
+    maxHeight: '92%',
+    maxWidth: 520,
+    padding: 18,
+    width: '94%',
+  },
   container: {
     backgroundColor: colours.background,
     padding: 24,
@@ -447,6 +775,52 @@ const styles = StyleSheet.create({
   },
   loaderText: { color: colours.ink, fontWeight: '900', textAlign: 'center' },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
+  disabledAction: { opacity: 0.55 },
+  inputLabel: {
+    color: colours.ink,
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 14,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'flex-end',
+    marginTop: 16,
+  },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.32)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  moreAction: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 14,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  moreActionDanger: { backgroundColor: '#FFE4E6' },
+  moreActionDangerText: { color: '#BE123C' },
+  moreActionText: { color: colours.primary, fontWeight: '900' },
+  moreCard: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    maxWidth: 420,
+    padding: 16,
+    width: '92%',
+  },
+  moreTitle: {
+    color: colours.ink,
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 10,
+  },
   quickAction: {
     backgroundColor: '#EEF2FF',
     borderRadius: 999,
@@ -457,6 +831,22 @@ const styles = StyleSheet.create({
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
   quickText: { color: colours.primary, fontWeight: '900' },
   quickTextPrimary: { color: '#FFFFFF' },
+  switchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  textArea: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colours.ink,
+    minHeight: 84,
+    padding: 12,
+    textAlignVertical: 'top',
+  },
   statusPill: {
     alignSelf: 'flex-start',
     borderRadius: 999,

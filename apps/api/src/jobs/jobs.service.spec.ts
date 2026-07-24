@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import type { AuthenticatedUser } from '@tradieos/shared';
+import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
 import { JobsService } from './jobs.service';
 
 jest.mock('../prisma/prisma.service', () => ({
@@ -26,6 +26,15 @@ const accountant: AuthenticatedUser = {
   id: 'accounts-1',
   role: 'ACCOUNTANT',
 };
+
+function userForRole(role: BusinessRole): AuthenticatedUser {
+  return {
+    businessId: 'business-1',
+    email: `${role.toLowerCase()}@example.com`,
+    id: role === 'TECHNICIAN' ? 'tech-1' : `${role.toLowerCase()}-1`,
+    role,
+  };
+}
 
 type MockPrisma = {
   appointment: { findMany: jest.Mock };
@@ -264,4 +273,43 @@ describe('JobsService', () => {
       expectDomainError(error, 'INSUFFICIENT_PERMISSION');
     });
   });
+
+  it.each<BusinessRole>([
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ])('allows %s to GET /jobs according to job view rules', async (role) => {
+    const { service } = createService();
+
+    const result = await service.findAll(userForRole(role), {});
+
+    expect(Array.isArray(result.records)).toBe(true);
+  });
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(
+    'allows %s to POST /jobs according to job write rules',
+    async (role) => {
+      const { service } = createService();
+
+      await expect(
+        service.create(userForRole(role), payload()),
+      ).resolves.toMatchObject({ job: { id: 'job-1' } });
+    },
+  );
+
+  it.each<BusinessRole>(['TECHNICIAN', 'ACCOUNTANT', 'SALES', 'READ_ONLY'])(
+    'blocks %s from POST /jobs with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service.create(userForRole(role), payload()).catch((error) => {
+        expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+      });
+    },
+  );
 });

@@ -63,4 +63,8 @@ export class RegisterDto extends LoginDto {
   @IsOptional()
   @IsString()
   postcode?: string;
+
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 }

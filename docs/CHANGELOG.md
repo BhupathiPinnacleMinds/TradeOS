@@ -1,9 +1,39 @@
 # Changelog
 
+## 2026-07-24
+
+### Added
+
+- Local demo login accounts for every supported role: owner, admin, office
+  manager, scheduler, technician, accountant, sales and read-only.
+- `docs/LOCAL_TEST_ACCOUNTS.md` with local-only credentials, landing screens,
+  permitted modules, blocked modules and role-specific seeded demo data.
+- Role-based API permission regression coverage for customers, jobs,
+  appointments and team-management endpoints.
+- Mobile role navigation regression coverage for visible tabs, hidden screens,
+  management action visibility and safe forbidden-route fallbacks.
+
+### Changed
+
+- Demo seed data now activates Scheduler and includes Admin, Accountant, Sales
+  and Read Only users in Demo Tradie Co using the existing hashed local demo
+  password flow.
+- Mobile role navigation is documented as a role-aware matrix rather than one
+  global tab layout.
+
 ## 2026-07-15
 
 ### Added
 
+- Technician Field Workflow with `My Day`, assigned appointment counts, next
+  appointment, start travel, arrived, start work and completion review.
+- Tenant-scoped `AppointmentWorkLog` model for technician notes, work completed
+  summaries and follow-up flags.
+- `GET /appointments/my-day`, `POST /appointments/:id/start-travel` and
+  `PATCH /appointments/:id/work-log` API support.
+- Mobile My Day screen for technician users, with owner access from More.
+- Completion review modal on Appointment Details that requires work completed
+  before closing an appointment.
 - Appointment & Smart Scheduling foundation.
 - Multi-tenant `Appointment` and `AppointmentSequence` database models.
 - Appointment API endpoints for listing, details, create, update, start, arrive, complete, cancel and technician recommendation.
@@ -22,10 +52,14 @@
 - Appointment form Location and Review sections with searchable customer selection, manual Australian address validation and optional save-as-service-site behaviour.
 - Appointment reassignment API with assignment-only updates, technician workload/recommendation options, conflict checks, owner/admin override support, audit timeline entries and development notification stubs.
 - Mobile Reassign Appointment screen with appointment summary, recommended technician, availability indicators, conflict warning, confirmation prompt and success toast.
+- Dispatcher View API and mobile board with technician workload cards, derived current status, unassigned appointments, smart recommendations, dispatcher search/filters and quick action hooks for future drag-and-drop scheduling.
+- Dashboard dispatcher metrics for technicians working, available technicians and unassigned appointments.
+- Dispatcher UX polish with one vertical board container, resilient horizontal filter chips, selected-date controls, refined loading/error/empty states, and canonical appointment creation through `AppointmentForm`.
 
 ### Changed
 
 - Dashboard summary now includes appointment-based scheduling metrics while keeping existing job counts.
+- Calendar now has top tabs for Calendar, Dispatcher and Today while keeping Calendar as the default scheduling view.
 - Bottom navigation now uses Dashboard, Calendar, Jobs, Tori and More.
 - Customers moved under More.
 - Dashboard keeps appointment detail lists in Calendar and shows only scheduling summaries.
@@ -34,6 +68,11 @@
 - Calendar Previous and Next navigation now moves by the active view period: day, week, month or a documented seven-day agenda range.
 - Same-record rescheduling keeps the active appointment in `SCHEDULED` or `CONFIRMED` and records `APPOINTMENT_RESCHEDULED` in audit metadata instead of leaving active visits in `RESCHEDULED`.
 - Calendar, Appointment Details and Job Details now expose Reassign Technician entry points and refresh appointment data after returning from reassignment.
+- Dispatcher now uses the floating `+` button as the primary appointment creation action and removes confusing customer-facing travel placeholder copy.
+- Appointment Details now shows reassignment only once as `Reassign Technician`, with secondary actions moved into a More menu according to status and permissions.
+- Appointment Form no longer auto-selects the first customer for global Calendar/Dispatcher creation. Customer, site, job and location prefill now only happens from explicit navigation context.
+- Added shared business timezone/date formatting utilities and wired Dashboard, Dispatcher, Calendar, Appointment Form, Appointment Details and Job Details appointment displays to Australian business timezone formatting.
+- Business registration now records an IANA Australian timezone, defaulting from business state with an owner-selectable timezone option.
 
 ## 2026-07-14
 

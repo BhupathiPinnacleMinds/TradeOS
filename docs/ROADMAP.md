@@ -45,6 +45,8 @@ Current completed items:
 - Job Management with per-business job numbers, assignment, scheduling, status transitions, dashboard metrics and customer-linked history.
 - Appointment & Smart Scheduling foundation with multi-visit appointments, technician recommendations, appointment dashboard metrics and job timeline.
 - Calendar & Appointment Management with day/week/month/agenda views, appointment details, technician filters, conflict detection and availability APIs for future Tori scheduling.
+- Technician Field Workflow with My Day, assigned appointment actions, work
+  logs, completion review and follow-up flags.
 
 ## Phase 2: Tori AI and operating workflows
 
@@ -92,6 +94,7 @@ Modules:
 - Mobile widgets
 - Offline mode
 - Route and map assistance
+- Photos, signatures, materials and field documents
 - Weather-aware scheduling
 - Smart quote recommendations
 - Business coaching

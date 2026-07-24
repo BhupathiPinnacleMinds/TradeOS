@@ -1,4 +1,8 @@
 import type { DashboardSummaryResponse } from '@tradieos/shared';
+import {
+  formatBusinessDateTime,
+  normaliseBusinessTimezone,
+} from '@tradieos/shared';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import {
@@ -22,13 +26,8 @@ function formatCurrency(cents: number) {
   }).format(cents / 100);
 }
 
-function formatAppointmentTime(value: string) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-  }).format(new Date(value));
+function formatAppointmentTime(value: string, timezone = 'Australia/Sydney') {
+  return formatBusinessDateTime(value, timezone);
 }
 
 export function DashboardScreen() {
@@ -36,6 +35,9 @@ export function DashboardScreen() {
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const businessTimezone = normaliseBusinessTimezone(
+    summary?.business.timezone ?? user?.business.timezone,
+  );
 
   const loadSummary = useCallback(
     async (shouldApply: () => boolean = () => true) => {
@@ -175,10 +177,33 @@ export function DashboardScreen() {
         </View>
 
         <View style={styles.grid}>
+          <MetricCard
+            label="Technicians working"
+            value={summary?.counts.techniciansWorking}
+          />
+          <MetricCard
+            label="Available technicians"
+            value={summary?.counts.availableTechnicians}
+          />
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard
+            label="Unassigned appointments"
+            tone="warning"
+            value={summary?.counts.unassignedAppointments}
+          />
           <MetricCard label="Customers" value={summary?.counts.customers} />
+        </View>
+
+        <View style={styles.grid}>
           <MetricCard
             label="Unread alerts"
             value={summary?.counts.unreadNotifications}
+          />
+          <MetricCard
+            label="Tori messages"
+            value={summary?.counts.aiMessages}
           />
         </View>
 
@@ -194,7 +219,10 @@ export function DashboardScreen() {
               </Text>
               <Text style={styles.itemMeta}>
                 {summary.nextAppointment.technicianName ?? 'Unassigned'} ·{' '}
-                {formatAppointmentTime(summary.nextAppointment.startsAt)}
+                {formatAppointmentTime(
+                  summary.nextAppointment.startsAt,
+                  businessTimezone,
+                )}
               </Text>
             </>
           ) : (

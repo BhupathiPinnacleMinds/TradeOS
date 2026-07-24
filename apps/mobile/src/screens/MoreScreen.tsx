@@ -9,27 +9,16 @@ import type {
   MainTabsParamList,
   RootStackParamList,
 } from '../navigation/types';
+import { getMoreDestinationsForRole } from '../permissions/roleVisibility';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabsParamList, 'More'>,
   NativeStackScreenProps<RootStackParamList>
 >;
 
-const destinations: Array<{
-  label: string;
-  route:
-    'Customers' | 'Quotes' | 'Invoices' | 'Notifications' | 'Team' | 'Settings';
-}> = [
-  { label: 'Customers', route: 'Customers' },
-  { label: 'Quotes', route: 'Quotes' },
-  { label: 'Invoices', route: 'Invoices' },
-  { label: 'Notifications', route: 'Notifications' },
-  { label: 'Team', route: 'Team' },
-  { label: 'Settings', route: 'Settings' },
-];
-
 export function MoreScreen({ navigation }: Props) {
   const { logout, user } = useAuth();
+  const visibleDestinations = getMoreDestinationsForRole(user?.role);
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
@@ -41,7 +30,7 @@ export function MoreScreen({ navigation }: Props) {
           </Text>
         </View>
 
-        {destinations.map(({ label, route }) => (
+        {visibleDestinations.map(({ label, route }) => (
           <Pressable
             accessibilityRole="button"
             key={route}

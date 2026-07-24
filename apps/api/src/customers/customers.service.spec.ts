@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import type { AuthenticatedUser } from '@tradieos/shared';
+import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
 import { CustomersService } from './customers.service';
 
 jest.mock('../prisma/prisma.service', () => ({
@@ -26,6 +26,15 @@ const technician: AuthenticatedUser = {
   id: 'tech-1',
   role: 'TECHNICIAN',
 };
+
+function userForRole(role: BusinessRole): AuthenticatedUser {
+  return {
+    businessId: 'business-1',
+    email: `${role.toLowerCase()}@example.com`,
+    id: `${role.toLowerCase()}-1`,
+    role,
+  };
+}
 
 type MockPrisma = {
   auditLog: { create: jest.Mock; findMany: jest.Mock };
@@ -275,4 +284,74 @@ describe('CustomersService', () => {
       }),
     );
   });
+
+  it.each<BusinessRole>([
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ])(
+    'allows %s to GET /customers according to customer view rules',
+    async (role) => {
+      const { service } = createService();
+
+      const result = await service.findAll(userForRole(role), {});
+
+      expect(Array.isArray(result.records)).toBe(true);
+    },
+  );
+
+  it('blocks TECHNICIAN from broad GET /customers access', async () => {
+    const { service } = createService();
+
+    await service.findAll(userForRole('TECHNICIAN'), {}).catch((error) => {
+      expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+    });
+  });
+
+  it.each<BusinessRole>([
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'SALES',
+  ])(
+    'allows %s to POST /customers according to customer write rules',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.create.mockResolvedValue(customer());
+      prisma.customer.findFirst.mockResolvedValue(customer());
+
+      await expect(
+        service.create(userForRole(role), {
+          contactPreference: 'SMS',
+          customerType: 'RESIDENTIAL',
+          firstName: 'Priya',
+          phone: '0400 111 222',
+        }),
+      ).resolves.toMatchObject({ customer: { id: 'customer-1' } });
+    },
+  );
+
+  it.each<BusinessRole>(['TECHNICIAN', 'ACCOUNTANT', 'READ_ONLY'])(
+    'blocks %s from POST /customers with 403 domain error',
+    async (role) => {
+      const { service } = createService();
+
+      await service
+        .create(userForRole(role), {
+          contactPreference: 'SMS',
+          customerType: 'RESIDENTIAL',
+          firstName: 'Priya',
+          phone: '0400 111 222',
+        })
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
 });

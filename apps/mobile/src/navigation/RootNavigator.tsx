@@ -17,6 +17,7 @@ import { JobFormScreen } from '../screens/JobFormScreen';
 import { JobsScreen } from '../screens/JobsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { MoreScreen } from '../screens/MoreScreen';
+import { MyDayScreen } from '../screens/MyDayScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
@@ -25,6 +26,11 @@ import { TeamScreen } from '../screens/TeamScreen';
 import { TeamMemberProfileScreen } from '../screens/TeamMemberProfileScreen';
 import { ToriChatScreen } from '../screens/ToriChatScreen';
 import { colours } from '../theme';
+import {
+  canAccessStackRoute,
+  getBottomTabsForRole,
+  getDefaultTabForRole,
+} from '../permissions/roleVisibility';
 import type { MainTabsParamList, RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -41,8 +47,12 @@ function getInviteTokenFromLocation() {
 }
 
 function MainTabs() {
+  const { user } = useAuth();
+  const tabs = getBottomTabsForRole(user?.role);
+
   return (
     <Tabs.Navigator
+      initialRouteName={getDefaultTabForRole(user?.role)}
       screenOptions={{
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colours.background },
@@ -51,17 +61,40 @@ function MainTabs() {
         tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
       }}
     >
-      <Tabs.Screen name="Dashboard" component={DashboardScreen} />
-      <Tabs.Screen name="Calendar" component={CalendarScreen} />
-      <Tabs.Screen name="Jobs" component={JobsScreen} />
-      <Tabs.Screen name="Tori" component={ToriChatScreen} />
-      <Tabs.Screen name="More" component={MoreScreen} />
+      {tabs.includes('Dashboard') ? (
+        <Tabs.Screen name="Dashboard" component={DashboardScreen} />
+      ) : null}
+      {tabs.includes('MyDay') ? (
+        <Tabs.Screen
+          name="MyDay"
+          component={MyDayScreen}
+          options={{ title: 'My Day' }}
+        />
+      ) : null}
+      {tabs.includes('Calendar') ? (
+        <Tabs.Screen name="Calendar" component={CalendarScreen} />
+      ) : null}
+      {tabs.includes('Customers') ? (
+        <Tabs.Screen name="Customers" component={CustomersScreen} />
+      ) : null}
+      {tabs.includes('Jobs') ? (
+        <Tabs.Screen name="Jobs" component={JobsScreen} />
+      ) : null}
+      {tabs.includes('Quotes') ? (
+        <Tabs.Screen name="Quotes" component={QuotesScreen} />
+      ) : null}
+      {tabs.includes('Tori') ? (
+        <Tabs.Screen name="Tori" component={ToriChatScreen} />
+      ) : null}
+      {tabs.includes('More') ? (
+        <Tabs.Screen name="More" component={MoreScreen} />
+      ) : null}
     </Tabs.Navigator>
   );
 }
 
 export function RootNavigator() {
-  const { isLoading, token } = useAuth();
+  const { isLoading, token, user } = useAuth();
   const inviteToken = getInviteTokenFromLocation();
 
   if (isLoading) {
@@ -97,39 +130,80 @@ export function RootNavigator() {
             component={MainTabs}
             options={{ headerShown: false }}
           />
-          <Stack.Screen name="Quotes" component={QuotesScreen} />
-          <Stack.Screen name="Invoices" component={InvoicesScreen} />
-          <Stack.Screen name="Notifications" component={NotificationsScreen} />
-          <Stack.Screen name="Settings" component={SettingsScreen} />
-          <Stack.Screen
-            name="AppointmentDetails"
-            component={AppointmentDetailsScreen}
-            options={{ title: 'Appointment' }}
-          />
-          <Stack.Screen
-            name="AppointmentForm"
-            component={AppointmentFormScreen}
-            options={{ title: 'New appointment' }}
-          />
-          <Stack.Screen
-            name="AppointmentReassign"
-            component={AppointmentReassignScreen}
-            options={{ title: 'Reassign appointment' }}
-          />
-          <Stack.Screen
-            name="CustomerDetails"
-            component={CustomerDetailsScreen}
-          />
-          <Stack.Screen name="Customers" component={CustomersScreen} />
-          <Stack.Screen name="CustomerForm" component={CustomerFormScreen} />
-          <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
-          <Stack.Screen name="JobForm" component={JobFormScreen} />
-          <Stack.Screen name="Team" component={TeamScreen} />
-          <Stack.Screen
-            name="TeamMemberProfile"
-            component={TeamMemberProfileScreen}
-            options={{ title: 'Team profile' }}
-          />
+          {canAccessStackRoute(user?.role, 'Quotes') ? (
+            <Stack.Screen name="Quotes" component={QuotesScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Invoices') ? (
+            <Stack.Screen name="Invoices" component={InvoicesScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Notifications') ? (
+            <Stack.Screen
+              name="Notifications"
+              component={NotificationsScreen}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Settings') ? (
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'MyDay') ? (
+            <Stack.Screen
+              name="MyDay"
+              component={MyDayScreen}
+              options={{ title: 'My Day' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'AppointmentDetails') ? (
+            <Stack.Screen
+              name="AppointmentDetails"
+              component={AppointmentDetailsScreen}
+              options={{ title: 'Appointment' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'AppointmentForm') ? (
+            <Stack.Screen
+              name="AppointmentForm"
+              component={AppointmentFormScreen}
+              options={{ title: 'New appointment' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'AppointmentReassign') ? (
+            <Stack.Screen
+              name="AppointmentReassign"
+              component={AppointmentReassignScreen}
+              options={{ title: 'Reassign appointment' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'CustomerDetails') ? (
+            <Stack.Screen
+              name="CustomerDetails"
+              component={CustomerDetailsScreen}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Customers') ? (
+            <Stack.Screen name="Customers" component={CustomersScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'CustomerForm') ? (
+            <Stack.Screen name="CustomerForm" component={CustomerFormScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'JobDetails') ? (
+            <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Jobs') ? (
+            <Stack.Screen name="Jobs" component={JobsScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'JobForm') ? (
+            <Stack.Screen name="JobForm" component={JobFormScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Team') ? (
+            <Stack.Screen name="Team" component={TeamScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'TeamMemberProfile') ? (
+            <Stack.Screen
+              name="TeamMemberProfile"
+              component={TeamMemberProfileScreen}
+              options={{ title: 'Team profile' }}
+            />
+          ) : null}
         </>
       ) : (
         <>

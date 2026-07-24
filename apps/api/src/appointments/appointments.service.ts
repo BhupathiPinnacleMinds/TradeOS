@@ -7,12 +7,19 @@ import type {
   AppointmentReassignmentOptionsResponse,
   AppointmentStatus,
   AuthenticatedUser,
+  CompleteAppointmentPayload,
+  DispatcherFilter,
+  DispatcherTechnicianStatus,
+  DispatcherViewResponse,
+  MyDayResponse,
 } from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_UPDATE_ROLES,
   APPOINTMENT_VIEW_ROLES,
   APPOINTMENT_WRITE_ROLES,
   AUSTRALIAN_STATES,
+  getBusinessDayRangeUtc,
+  getAllowedAppointmentTransitions,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +27,9 @@ import { AppointmentNotificationsService } from './appointment-notifications.ser
 import type {
   AppointmentRecommendationDto,
   AppointmentAvailabilityDto,
+  AppointmentWorkLogDto,
+  CompleteAppointmentDto,
+  DispatcherQueryDto,
   ListAppointmentsQueryDto,
   ReassignAppointmentDto,
   UpsertAppointmentDto,
@@ -30,6 +40,21 @@ const DEFAULT_PAGE_SIZE = 20;
 const TECHNICIAN_ROLE = 'TECHNICIAN';
 const VIEW_ONLY_ROLES = ['ACCOUNTANT', 'READ_ONLY', 'SALES'] as const;
 const CLOSED_STATUSES = ['COMPLETED', 'CANCELLED', 'NO_SHOW'] as const;
+const NON_ACTIONABLE_STATUSES = [
+  'COMPLETED',
+  'CANCELLED',
+  'NO_SHOW',
+  'RESCHEDULED',
+] as const;
+const DISPATCHER_MANAGE_ROLES = [
+  'OWNER',
+  'ADMIN',
+  'OFFICE_MANAGER',
+  'SCHEDULER',
+] as const;
+const DISPATCHER_TECHNICIAN_ROLES = ['OWNER', 'ADMIN', 'TECHNICIAN'] as const;
+const WORKDAY_MINUTES = 8 * 60;
+const TRAVEL_PLACEHOLDER_MINUTES = 10;
 
 type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
   include: ReturnType<AppointmentsService['appointmentInclude']>;
@@ -121,6 +146,272 @@ export class AppointmentsService {
       scheduledEnd: new Date(dto.scheduledEnd),
       scheduledStart: new Date(dto.scheduledStart),
     });
+  }
+
+  async dispatcher(
+    currentUser: AuthenticatedUser,
+    query: DispatcherQueryDto,
+  ): Promise<DispatcherViewResponse> {
+    this.assertRole(currentUser, DISPATCHER_MANAGE_ROLES);
+    const selectedDate = query.date ? new Date(query.date) : new Date();
+    const business = await this.prisma.business.findUnique({
+      where: { id: currentUser.businessId },
+      select: { timezone: true },
+    });
+    const { end: endOfDay, start: startOfDay } = getBusinessDayRangeUtc(
+      selectedDate,
+      business?.timezone,
+    );
+    const now = new Date();
+    const canManage = DISPATCHER_MANAGE_ROLES.includes(
+      currentUser.role as never,
+    );
+    const search = query.search?.trim().toLowerCase() ?? '';
+
+    const [members, appointments] = await this.prisma.$transaction([
+      this.prisma.businessMember.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          role: { in: [...DISPATCHER_TECHNICIAN_ROLES] },
+          status: 'ACTIVE',
+          userId: { not: null },
+          ...(currentUser.role === TECHNICIAN_ROLE
+            ? { userId: currentUser.id }
+            : {}),
+        },
+        include: {
+          user: {
+            select: {
+              email: true,
+              firstName: true,
+              id: true,
+              lastName: true,
+            },
+          },
+        },
+        orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          scheduledStart: { gte: startOfDay, lt: endOfDay },
+          ...(currentUser.role === TECHNICIAN_ROLE
+            ? { assignedUserId: currentUser.id }
+            : {}),
+        },
+        include: this.appointmentInclude(),
+        orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
+      }),
+    ]);
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'DISPATCHER_VIEWED',
+        actorUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        entityId: null,
+        entityType: 'Dispatcher',
+        metadata: {
+          date: startOfDay.toISOString(),
+          filter: query.filter ?? null,
+          search: query.search ?? null,
+        },
+      },
+    });
+
+    const unassignedAppointments = appointments.filter(
+      (appointment) => !appointment.assignedUserId,
+    );
+    const unassigned = await Promise.all(
+      unassignedAppointments.map(async (appointment) => {
+        const recommendation = await this.scheduling.recommendTechnician(
+          currentUser.businessId,
+          {
+            estimatedDurationMinutes: appointment.estimatedDurationMinutes,
+            jobId: appointment.jobId,
+            priority: appointment.job.priority,
+            scheduledEnd: appointment.scheduledEnd.toISOString(),
+            scheduledStart: appointment.scheduledStart.toISOString(),
+          },
+        );
+        return {
+          appointment: this.toAppointment(appointment),
+          recommendation: {
+            reason: recommendation.reason,
+            technicianId: recommendation.recommendedTechnicianId,
+            technicianName: recommendation.technicianName,
+          },
+        };
+      }),
+    );
+
+    const technicians = members
+      .map((member) => {
+        if (!member.user) return null;
+        const technicianAppointments = appointments.filter(
+          (appointment) => appointment.assignedUserId === member.user?.id,
+        );
+        const estimatedWorkMinutes = technicianAppointments.reduce(
+          (sum, appointment) => sum + this.appointmentDuration(appointment),
+          0,
+        );
+        const travelPlaceholderMinutes =
+          technicianAppointments.length * TRAVEL_PLACEHOLDER_MINUTES;
+        const availableMinutes =
+          WORKDAY_MINUTES - estimatedWorkMinutes - travelPlaceholderMinutes;
+        const completedToday = technicianAppointments.filter(
+          (appointment) => appointment.status === 'COMPLETED',
+        ).length;
+        const upcomingToday = technicianAppointments.filter(
+          (appointment) =>
+            appointment.scheduledStart >= now &&
+            !CLOSED_STATUSES.includes(appointment.status as never),
+        ).length;
+        const status = this.dispatcherStatus(technicianAppointments, now);
+        return {
+          appointments: technicianAppointments.map((appointment) => ({
+            appointment: this.toAppointment(appointment),
+          })),
+          availableMinutes,
+          avatarInitials: this.initials(
+            member.user.firstName,
+            member.user.lastName,
+          ),
+          completedToday,
+          currentStatus: status,
+          email: member.user.email,
+          estimatedWorkMinutes,
+          name: `${member.user.firstName} ${member.user.lastName}`,
+          overtimeWarning: availableMinutes < 0,
+          role: member.role,
+          todaysWorkload: technicianAppointments.length,
+          travelPlaceholderMinutes,
+          upcomingToday,
+          userId: member.user.id,
+          workingHours: '8:00 - 4:00',
+        };
+      })
+      .filter((technician): technician is NonNullable<typeof technician> =>
+        Boolean(technician),
+      );
+
+    const filteredTechnicians = technicians.filter((technician) =>
+      this.matchesDispatcherFilters(technician, search, query.filter),
+    );
+    const filteredUnassigned = unassigned.filter((item) =>
+      this.matchesAppointmentSearch(item.appointment, search),
+    );
+    const estimatedWorkMinutes = technicians.reduce(
+      (sum, technician) => sum + technician.estimatedWorkMinutes,
+      0,
+    );
+    const travelPlaceholderMinutes = technicians.reduce(
+      (sum, technician) => sum + technician.travelPlaceholderMinutes,
+      0,
+    );
+    const availableMinutes = technicians.reduce(
+      (sum, technician) => sum + technician.availableMinutes,
+      0,
+    );
+
+    return {
+      canManage,
+      date: startOfDay.toISOString(),
+      filters: [
+        'working',
+        'available',
+        'completed',
+        'high-priority',
+        'overdue',
+        'unassigned',
+      ],
+      summary: {
+        availableMinutes,
+        availableTechnicians: technicians.filter(
+          (technician) => technician.currentStatus === 'AVAILABLE',
+        ).length,
+        estimatedWorkMinutes,
+        overtimeWarning: technicians.some(
+          (technician) => technician.overtimeWarning,
+        ),
+        techniciansWorking: technicians.filter((technician) =>
+          ['TRAVELLING', 'WORKING'].includes(technician.currentStatus),
+        ).length,
+        totalAppointmentsToday: appointments.length,
+        travelPlaceholderMinutes,
+        unassignedAppointments: unassigned.length,
+      },
+      technicians: query.filter === 'unassigned' ? [] : filteredTechnicians,
+      unassigned:
+        query.filter && query.filter !== 'unassigned' ? [] : filteredUnassigned,
+    };
+  }
+
+  async myDay(currentUser: AuthenticatedUser): Promise<MyDayResponse> {
+    this.assertRole(currentUser, APPOINTMENT_VIEW_ROLES);
+
+    const business = await this.prisma.business.findUnique({
+      where: { id: currentUser.businessId },
+      select: { name: true, timezone: true },
+    });
+    if (!business) {
+      throw this.domainError(
+        'BUSINESS_NOT_FOUND',
+        'Business workspace not found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const { end, start } = getBusinessDayRangeUtc(
+      new Date(),
+      business.timezone,
+    );
+
+    const appointments = await this.prisma.appointment.findMany({
+      where: {
+        assignedUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        scheduledStart: { gte: start, lt: end },
+      },
+      include: this.appointmentInclude(),
+      orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
+    });
+    const now = new Date();
+    const mapped = appointments.map((appointment) =>
+      this.toAppointment(appointment),
+    );
+    const actionable = mapped.filter(
+      (appointment) =>
+        !NON_ACTIONABLE_STATUSES.includes(appointment.status as never),
+    );
+    const nextAppointment =
+      actionable.find(
+        (appointment) => new Date(appointment.scheduledEnd) >= now,
+      ) ??
+      actionable[0] ??
+      null;
+
+    return {
+      appointments: mapped,
+      businessDate: start.toISOString(),
+      businessName: business.name,
+      businessTimezone: business.timezone,
+      completedCount: mapped.filter(
+        (appointment) => appointment.status === 'COMPLETED',
+      ).length,
+      nextAppointment,
+      remainingCount: actionable.length,
+      technicianName:
+        [currentUser.firstName, currentUser.lastName]
+          .filter(Boolean)
+          .join(' ') || currentUser.email,
+      technicianUserId: currentUser.id,
+      urgentCount: mapped.filter(
+        (appointment) =>
+          ['HIGH', 'URGENT'].includes(appointment.job.priority) &&
+          !NON_ACTIONABLE_STATUSES.includes(appointment.status as never),
+      ).length,
+    };
   }
 
   async create(
@@ -447,13 +738,80 @@ export class AppointmentsService {
     return { appointment };
   }
 
+  async updateWorkLog(
+    currentUser: AuthenticatedUser,
+    id: string,
+    dto: AppointmentWorkLogDto,
+  ): Promise<AppointmentDetailResponse> {
+    this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
+    const existing = await this.getAppointmentForUser(currentUser, id);
+    const workLogData = this.workLogData(currentUser, existing, dto);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.appointmentWorkLog.upsert({
+        create: workLogData,
+        update: {
+          followUpNotes: workLogData.followUpNotes,
+          followUpRequired: workLogData.followUpRequired,
+          technicianNotes: workLogData.technicianNotes,
+          workCompleted: workLogData.workCompleted,
+        },
+        where: {
+          businessId_appointmentId: {
+            appointmentId: existing.id,
+            businessId: currentUser.businessId,
+          },
+        },
+      });
+      await this.log(
+        tx,
+        currentUser,
+        'APPOINTMENT_WORK_LOG_UPDATED',
+        existing,
+        {
+          followUpRequired: workLogData.followUpRequired,
+        },
+      );
+      if (workLogData.followUpRequired) {
+        await this.log(tx, currentUser, 'FOLLOW_UP_REQUIRED', existing, {
+          followUpNotes: workLogData.followUpNotes,
+        });
+      }
+      return tx.appointment.findFirstOrThrow({
+        where: { businessId: currentUser.businessId, id },
+        include: this.appointmentInclude(),
+      });
+    });
+
+    return { appointment: this.toAppointment(updated) };
+  }
+
+  async completeWithWorkLog(
+    currentUser: AuthenticatedUser,
+    id: string,
+    dto: CompleteAppointmentDto,
+  ): Promise<AppointmentDetailResponse> {
+    return this.transition(currentUser, id, 'COMPLETED', dto);
+  }
+
   async transition(
     currentUser: AuthenticatedUser,
     id: string,
     status: AppointmentStatus,
+    completion?: CompleteAppointmentPayload,
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
     const existing = await this.getAppointmentForUser(currentUser, id);
+    this.assertAllowedTransition(currentUser, existing, status);
+    if (status === 'COMPLETED') {
+      const completed = this.clean(completion?.workCompleted);
+      if (!completed) {
+        throw this.domainError(
+          'WORK_COMPLETED_REQUIRED',
+          'Add a short summary of the work completed before closing this appointment.',
+        );
+      }
+    }
     const now = new Date();
     const data: Prisma.AppointmentUncheckedUpdateInput = {
       status,
@@ -467,6 +825,38 @@ export class AppointmentsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (completion) {
+        const workLogData = this.workLogData(currentUser, existing, completion);
+        await tx.appointmentWorkLog.upsert({
+          create: workLogData,
+          update: {
+            followUpNotes: workLogData.followUpNotes,
+            followUpRequired: workLogData.followUpRequired,
+            technicianNotes: workLogData.technicianNotes,
+            workCompleted: workLogData.workCompleted,
+          },
+          where: {
+            businessId_appointmentId: {
+              appointmentId: existing.id,
+              businessId: currentUser.businessId,
+            },
+          },
+        });
+        await this.log(
+          tx,
+          currentUser,
+          'APPOINTMENT_WORK_LOG_UPDATED',
+          existing,
+          {
+            followUpRequired: workLogData.followUpRequired,
+          },
+        );
+        if (workLogData.followUpRequired) {
+          await this.log(tx, currentUser, 'FOLLOW_UP_REQUIRED', existing, {
+            followUpNotes: workLogData.followUpNotes,
+          });
+        }
+      }
       const appointment = await tx.appointment.update({
         where: { id },
         data,
@@ -482,6 +872,7 @@ export class AppointmentsService {
           to: status,
         },
       );
+      await this.syncJobProgress(tx, currentUser, existing, status);
       return appointment;
     });
 
@@ -562,6 +953,123 @@ export class AppointmentsService {
     sortOrder: ListAppointmentsQueryDto['sortOrder'] = 'asc',
   ): Prisma.AppointmentOrderByWithRelationInput[] {
     return [{ [sortBy]: sortOrder }, { createdAt: 'desc' }];
+  }
+
+  private appointmentDuration(appointment: {
+    estimatedDurationMinutes: number | null;
+    scheduledEnd: Date;
+    scheduledStart: Date;
+  }) {
+    return (
+      appointment.estimatedDurationMinutes ??
+      Math.max(
+        0,
+        Math.round(
+          (appointment.scheduledEnd.getTime() -
+            appointment.scheduledStart.getTime()) /
+            60000,
+        ),
+      )
+    );
+  }
+
+  private dispatcherStatus(
+    appointments: AppointmentWithRelations[],
+    now: Date,
+  ): DispatcherTechnicianStatus {
+    const active = appointments.find(
+      (appointment) =>
+        appointment.scheduledStart <= now &&
+        appointment.scheduledEnd >= now &&
+        !CLOSED_STATUSES.includes(appointment.status as never),
+    );
+    if (active?.status === 'ON_THE_WAY') return 'TRAVELLING';
+    if (active) return 'WORKING';
+    const upcoming = appointments.some(
+      (appointment) =>
+        appointment.scheduledStart > now &&
+        !CLOSED_STATUSES.includes(appointment.status as never),
+    );
+    if (upcoming) return 'AVAILABLE';
+    if (
+      appointments.length > 0 &&
+      appointments.every((appointment) =>
+        CLOSED_STATUSES.includes(appointment.status as never),
+      )
+    ) {
+      return 'FINISHED_TODAY';
+    }
+    return 'AVAILABLE';
+  }
+
+  private initials(firstName: string, lastName: string) {
+    return `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase() || 'TO';
+  }
+
+  private matchesDispatcherFilters(
+    technician: {
+      appointments: Array<{ appointment: Appointment }>;
+      completedToday: number;
+      currentStatus: DispatcherTechnicianStatus;
+      name: string;
+      role: string;
+    },
+    search: string,
+    filter?: DispatcherFilter,
+  ) {
+    if (
+      search &&
+      !technician.name.toLowerCase().includes(search) &&
+      !technician.appointments.some((item) =>
+        this.matchesAppointmentSearch(item.appointment, search),
+      )
+    ) {
+      return false;
+    }
+
+    if (!filter) return true;
+    if (filter === 'working') {
+      return ['WORKING', 'TRAVELLING'].includes(technician.currentStatus);
+    }
+    if (filter === 'available') {
+      return technician.currentStatus === 'AVAILABLE';
+    }
+    if (filter === 'completed') {
+      return technician.completedToday > 0;
+    }
+    if (filter === 'high-priority') {
+      return technician.appointments.some(
+        (item) => item.appointment.job.priority === 'HIGH',
+      );
+    }
+    if (filter === 'overdue') {
+      const now = new Date();
+      return technician.appointments.some(
+        (item) =>
+          new Date(item.appointment.scheduledEnd) < now &&
+          !['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(
+            item.appointment.status,
+          ),
+      );
+    }
+    return true;
+  }
+
+  private matchesAppointmentSearch(appointment: Appointment, search: string) {
+    if (!search) return true;
+    const customer = appointment.job.customer;
+    return [
+      appointment.appointmentNumber,
+      appointment.job.title,
+      appointment.job.jobNumber,
+      customer.companyName,
+      customer.displayName,
+      appointment.suburb,
+      appointment.status,
+      appointment.job.priority,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(search));
   }
 
   private async normalise(
@@ -868,6 +1376,120 @@ export class AppointmentsService {
     return appointment;
   }
 
+  private assertAllowedTransition(
+    currentUser: AuthenticatedUser,
+    appointment: AppointmentWithRelations,
+    nextStatus: AppointmentStatus,
+  ) {
+    if (appointment.status === nextStatus) return;
+    const action = this.transitionActionForStatus(
+      appointment.status,
+      nextStatus,
+    );
+    const allowed = getAllowedAppointmentTransitions({
+      currentStatus: appointment.status,
+      isAssignedTechnician: appointment.assignedUserId === currentUser.id,
+      userRole: currentUser.role,
+    });
+    if (!action || !allowed.some((option) => option.action === action)) {
+      throw this.domainError(
+        appointment.status === 'COMPLETED'
+          ? 'APPOINTMENT_ALREADY_COMPLETED'
+          : 'INVALID_STATUS_TRANSITION',
+        'That appointment status change is not available from the current state.',
+        HttpStatus.CONFLICT,
+        {
+          from: appointment.status,
+          to: nextStatus,
+        },
+      );
+    }
+  }
+
+  private transitionActionForStatus(
+    currentStatus: AppointmentStatus,
+    nextStatus: AppointmentStatus,
+  ) {
+    if (
+      ['SCHEDULED', 'CONFIRMED'].includes(currentStatus) &&
+      nextStatus === 'ON_THE_WAY'
+    ) {
+      return 'start-travel';
+    }
+    if (currentStatus === 'ON_THE_WAY' && nextStatus === 'ARRIVED') {
+      return 'arrive';
+    }
+    if (
+      ['SCHEDULED', 'CONFIRMED', 'ARRIVED'].includes(currentStatus) &&
+      nextStatus === 'IN_PROGRESS'
+    ) {
+      return 'start';
+    }
+    if (currentStatus === 'IN_PROGRESS' && nextStatus === 'COMPLETED') {
+      return 'complete';
+    }
+    if (!NON_ACTIONABLE_STATUSES.includes(currentStatus as never)) {
+      if (nextStatus === 'CANCELLED') return 'cancel';
+    }
+    return null;
+  }
+
+  private workLogData(
+    currentUser: AuthenticatedUser,
+    appointment: Pick<AppointmentWithRelations, 'id' | 'businessId' | 'jobId'>,
+    dto: AppointmentWorkLogDto | CompleteAppointmentPayload,
+  ): Prisma.AppointmentWorkLogUncheckedCreateInput {
+    const followUpRequired = Boolean(dto.followUpRequired);
+    return {
+      appointmentId: appointment.id,
+      businessId: appointment.businessId,
+      followUpNotes: followUpRequired ? this.clean(dto.followUpNotes) : null,
+      followUpRequired,
+      jobId: appointment.jobId,
+      technicianNotes: this.clean(dto.technicianNotes),
+      technicianUserId: currentUser.id,
+      workCompleted: this.clean(dto.workCompleted),
+    };
+  }
+
+  private async syncJobProgress(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    appointment: AppointmentWithRelations,
+    nextStatus: AppointmentStatus,
+  ) {
+    if (!['ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS'].includes(nextStatus)) return;
+    const job = await tx.job.findFirst({
+      where: { businessId: currentUser.businessId, id: appointment.jobId },
+      select: { actualStart: true, status: true },
+    });
+    if (!job || ['CANCELLED', 'COMPLETED'].includes(job.status)) return;
+    if (job.status === 'IN_PROGRESS') return;
+
+    const now = new Date();
+    await tx.job.update({
+      where: { id: appointment.jobId },
+      data: {
+        actualStart: job.actualStart ?? now,
+        status: 'IN_PROGRESS',
+        updatedBy: currentUser.id,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'JOB_STARTED_FROM_APPOINTMENT',
+        actorUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        entityId: appointment.jobId,
+        entityType: 'Job',
+        metadata: {
+          appointmentId: appointment.id,
+          appointmentStatus: nextStatus,
+        },
+      },
+    });
+  }
+
   private async getAppointment(businessId: string, id: string) {
     const appointment = await this.prisma.appointment.findFirst({
       where: { businessId, id },
@@ -1027,11 +1649,11 @@ export class AppointmentsService {
   }
 
   private actionForStatus(status: AppointmentStatus) {
-    if (status === 'IN_PROGRESS') return 'APPOINTMENT_STARTED';
+    if (status === 'IN_PROGRESS') return 'APPOINTMENT_WORK_STARTED';
     if (status === 'ARRIVED') return 'APPOINTMENT_ARRIVED';
     if (status === 'COMPLETED') return 'APPOINTMENT_COMPLETED';
     if (status === 'CANCELLED') return 'APPOINTMENT_CANCELLED';
-    if (status === 'ON_THE_WAY') return 'APPOINTMENT_ON_THE_WAY';
+    if (status === 'ON_THE_WAY') return 'APPOINTMENT_TRAVEL_STARTED';
     if (status === 'NO_SHOW') return 'APPOINTMENT_NO_SHOW';
     if (status === 'RESCHEDULED') return 'APPOINTMENT_RESCHEDULED';
     return 'APPOINTMENT_UPDATED';
@@ -1063,6 +1685,10 @@ export class AppointmentsService {
           suburb: true,
           title: true,
         },
+      },
+      workLogs: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
       },
     } satisfies Prisma.AppointmentInclude;
   }
@@ -1103,6 +1729,21 @@ export class AppointmentsService {
       travelDurationMinutes: appointment.travelDurationMinutes,
       updatedAt: appointment.updatedAt.toISOString(),
       updatedBy: appointment.updatedBy,
+      workLog: appointment.workLogs?.[0]
+        ? {
+            appointmentId: appointment.workLogs[0].appointmentId,
+            businessId: appointment.workLogs[0].businessId,
+            createdAt: appointment.workLogs[0].createdAt.toISOString(),
+            followUpNotes: appointment.workLogs[0].followUpNotes,
+            followUpRequired: appointment.workLogs[0].followUpRequired,
+            id: appointment.workLogs[0].id,
+            jobId: appointment.workLogs[0].jobId,
+            technicianNotes: appointment.workLogs[0].technicianNotes,
+            technicianUserId: appointment.workLogs[0].technicianUserId,
+            updatedAt: appointment.workLogs[0].updatedAt.toISOString(),
+            workCompleted: appointment.workLogs[0].workCompleted,
+          }
+        : null,
     };
   }
 

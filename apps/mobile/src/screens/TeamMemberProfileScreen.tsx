@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ApiRequestError, memberDetailRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { RootStackParamList } from '../navigation/types';
+import { canManageTeam } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TeamMemberProfile'>;
@@ -71,8 +72,8 @@ export function TeamMemberProfileScreen({ route }: Props) {
   }, [route.params.memberId, token]);
 
   const canManage =
-    user?.role === 'OWNER' ||
-    (user?.role === 'ADMIN' && detail?.member.role !== 'OWNER');
+    canManageTeam(user?.role) &&
+    !(user?.role === 'ADMIN' && detail?.member.role === 'OWNER');
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>

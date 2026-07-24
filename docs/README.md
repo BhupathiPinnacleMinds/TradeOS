@@ -15,6 +15,7 @@ This `/docs` folder is the master documentation source for the project. Future f
 - [AI Tori](./AI_TORI.md)
 - [Security](./SECURITY.md)
 - [Roles and Permissions](./ROLES_AND_PERMISSIONS.md)
+- [Local Test Accounts](./LOCAL_TEST_ACCOUNTS.md)
 - [UI/UX Guidelines](./UI_UX_GUIDELINES.md)
 - [Coding Standards](./CODING_STANDARDS.md)
 - [Deployment](./DEPLOYMENT.md)
@@ -47,12 +48,11 @@ The current codebase contains:
 - Database-backed dashboard summary.
 - Placeholder modules for future product areas.
 
-## Demo login
+## Demo logins
 
-```text
-email: owner@demo-tradieos.com
-password: password123
-```
+Local role-specific demo accounts are documented in
+[Local Test Accounts](./LOCAL_TEST_ACCOUNTS.md). These accounts are for local
+development only and must never be used in production.
 
 ## Future implementation instruction
 

@@ -8,6 +8,10 @@ import { JwtService } from '@nestjs/jwt';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
+import {
+  normaliseBusinessTimezone,
+  timezoneForAustralianState,
+} from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { LoginDto, RegisterDto } from './dto/auth.dto';
 
@@ -47,6 +51,9 @@ export class AuthService {
           suburb: dto.suburb?.trim() || null,
           state: dto.state?.trim() || null,
           postcode: dto.postcode?.trim() || null,
+          timezone: normaliseBusinessTimezone(
+            dto.timezone ?? timezoneForAustralianState(dto.state),
+          ),
         },
       });
 

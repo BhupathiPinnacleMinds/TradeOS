@@ -20,6 +20,7 @@ describe('DashboardService', () => {
         findMany: jest.fn(),
       },
       business: { findUnique: jest.fn() },
+      businessMember: { findMany: jest.fn() },
       customer: { count: jest.fn() },
       invoice: { count: jest.fn(), findMany: jest.fn() },
       job: { count: jest.fn(), findMany: jest.fn() },
@@ -47,7 +48,12 @@ describe('DashboardService', () => {
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(3)
       .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(2);
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(1);
+    prisma.businessMember.findMany.mockResolvedValue([
+      { userId: 'owner-1' },
+      { userId: 'tech-1' },
+    ]);
     prisma.quote.count.mockResolvedValue(2);
     prisma.invoice.count.mockResolvedValue(2);
     prisma.invoice.findMany.mockResolvedValue([]);
@@ -78,6 +84,9 @@ describe('DashboardService', () => {
       myAppointments: 3,
       lateAppointments: 1,
       upcomingTodayAppointments: 2,
+      unassignedAppointments: 1,
+      techniciansWorking: 0,
+      availableTechnicians: 2,
     });
     const jobCountCalls = prisma.job.count.mock.calls as unknown as Array<
       [JobCountCall]

@@ -1,4 +1,8 @@
 import type { Appointment, Job, JobStatus } from '@tradieos/shared';
+import {
+  formatBusinessDateTime,
+  normaliseBusinessTimezone,
+} from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
@@ -21,6 +25,11 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import {
+  canArchiveJob,
+  canCreateAppointment,
+  canManageJob,
+} from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'JobDetails'>;
@@ -29,21 +38,16 @@ function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
-function formatDateTime(value: string | null) {
+function formatDateTime(value: string | null, timezone = 'Australia/Sydney') {
   if (!value) return 'Not recorded';
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(value));
+  return formatBusinessDateTime(value, timezone);
 }
 
 export function JobDetailsScreen({ navigation, route }: Props) {
   const { jobId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [job, setJob] = useState<Job | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [timeline, setTimeline] = useState<
@@ -52,19 +56,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
 
-  const canEdit = ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'].includes(
-    user?.role ?? '',
-  );
-  const canArchive = ['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(
-    user?.role ?? '',
-  );
-  const canUpdateStatus = [
-    'OWNER',
-    'ADMIN',
-    'OFFICE_MANAGER',
-    'SCHEDULER',
-    'TECHNICIAN',
-  ].includes(user?.role ?? '');
+  const canEdit = canManageJob(user?.role);
+  const canArchive = canArchiveJob(user?.role);
+  const canScheduleAppointment = canCreateAppointment(user?.role);
+  const canUpdateStatus = canEdit;
 
   async function loadJob() {
     if (!token) return;
@@ -142,7 +137,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
   async function transitionAppointment(
     appointmentId: string,
-    action: 'start' | 'arrive' | 'complete' | 'cancel',
+    action: 'start-travel' | 'start' | 'arrive' | 'cancel',
   ) {
     if (!token || isBusy) return;
     setIsBusy(true);
@@ -225,7 +220,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             onPress={() => navigation.navigate('JobForm', { jobId: job.id })}
           />
         ) : null}
-        {canEdit ? (
+        {canScheduleAppointment ? (
           <QuickAction
             label="Schedule Appointment"
             onPress={() =>
@@ -310,8 +305,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               {label(appointment.appointmentType)}
             </Text>
             <Text style={styles.meta}>
-              {formatDateTime(appointment.scheduledStart)} –{' '}
-              {formatDateTime(appointment.scheduledEnd)}
+              {formatDateTime(appointment.scheduledStart, businessTimezone)} –{' '}
+              {formatDateTime(appointment.scheduledEnd, businessTimezone)}
             </Text>
             <Text style={styles.meta}>Status: {label(appointment.status)}</Text>
             <Text style={styles.meta}>
@@ -336,9 +331,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                   />
                 ) : null}
                 <ActionButton
-                  label="Start"
+                  label="Start travel"
                   onPress={() =>
-                    void transitionAppointment(appointment.id, 'start')
+                    void transitionAppointment(appointment.id, 'start-travel')
                   }
                 />
                 <ActionButton
@@ -350,7 +345,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 <ActionButton
                   label="Complete"
                   onPress={() =>
-                    void transitionAppointment(appointment.id, 'complete')
+                    navigation.navigate('AppointmentDetails', {
+                      appointmentId: appointment.id,
+                    })
                   }
                 />
                 <ActionButton
@@ -386,7 +383,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             key={`${entry.entityType}-${entry.action}-${entry.createdAt}`}
             style={styles.meta}
           >
-            {formatDateTime(entry.createdAt)} · {label(entry.action)}
+            {formatDateTime(entry.createdAt, businessTimezone)} ·{' '}
+            {label(entry.action)}
           </Text>
         ))}
       </Card>

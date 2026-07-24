@@ -40,7 +40,9 @@ Current screens:
 - Accept Invitation
 - Dashboard
 - Calendar
+- Dispatcher View
 - Appointment Details
+- Appointment Form
 - Appointment Reassign
 - Tori Chat
 - Customers
@@ -56,6 +58,21 @@ Current screens:
 - More
 - Team
 - Team Member Profile
+
+Appointment creation navigation:
+
+- `AppointmentForm` is the single canonical mobile route for creating appointments.
+- Calendar FAB, Dispatcher FAB, Job Details `Schedule Appointment`, and the job-created `Schedule Now` prompt must all open `AppointmentForm`.
+- Supported prefill params are `customerId`, `customerSiteId`, `jobId`, `selectedDate`, and `technicianId`.
+- Dispatcher opens the same route with the selected dispatcher date so users do not silently schedule against today's date while viewing another day.
+- Do not add duplicate appointment creation routes unless the navigation architecture is intentionally migrated in one change.
+- Global appointment creation entry points must not preselect the first customer from API results. `AppointmentForm` only preselects a customer, site, job, date or technician when that value is explicitly supplied by the navigation context and validated through the tenant-scoped API.
+
+Dispatcher navigation:
+
+- Dispatcher remains a top tab inside Calendar, not a separate bottom tab.
+- Dispatcher uses one primary vertical list container for the whole board. Horizontal filter chips live inside the list header to avoid nested vertical scroll/gesture conflicts.
+- Calendar day/week/month/agenda swipe behaviour must not wrap Dispatcher content.
 
 ## Backend
 
@@ -106,6 +123,8 @@ Database rules:
 - Every tenant-owned entity must include `businessId` or be reachable only through a business-scoped parent.
 - Cross-tenant relations must be prevented with compound relations where practical.
 - Queries must filter by authenticated `businessId`.
+- Business workspaces store an IANA `timezone` such as `Australia/Melbourne`, `Australia/Sydney`, `Australia/Brisbane`, `Australia/Adelaide`, `Australia/Perth`, `Australia/Hobart`, or `Australia/Darwin`.
+- Appointment and job timestamps are stored as UTC instants. Dashboard and Dispatcher business-day ranges are calculated from the business timezone before querying UTC timestamps.
 
 ## Authentication
 
@@ -181,12 +200,30 @@ Appointment and scheduling architecture:
 - Calendar, Tori scheduling, notifications and future travel planning should use appointments instead of job schedule fields.
 - Appointment recommendation is deliberately non-AI for now. It checks working hours, active technicians and existing appointment conflicts, then returns a recommendation with a human-readable reason.
 - Calendar is a mobile tab over appointment APIs. It supports day, week, month and agenda ranges, technician/status/search filters, jump-to-date, swipe date movement and appointment detail drill-in.
+- Dispatcher View is an operational read model over the same appointment APIs. It groups today's appointments by technician, derives status from appointment state/time, shows workload and unassigned work, exposes move/reassign hooks for future drag-and-drop, and keeps assignment changes on the existing reassignment endpoint.
 - Appointment availability checks are exposed as API architecture for Tori prompts such as “show today’s appointments”, “who is available tomorrow?”, “move John’s appointment”, and “schedule this job”. Tori must still draft or recommend changes before user confirmation.
 - Appointment reassignment is a dedicated command path, not a full appointment edit. It updates only `assignedUserId`, keeps the appointment's job, customer, time, notes and location snapshot intact, checks technician availability for the existing time window, writes `APPOINTMENT_REASSIGNED` audit/timeline metadata and calls notification-service stubs for future push/SMS/email delivery.
 - Reassignment options use the existing scheduling recommendation service plus workload/availability data so future Tori scheduling commands can reuse the same API without redesign.
 - Appointment notification events are represented as audit/loggable domain actions for created, updated, reassigned, rescheduled, cancelled and completed appointments. Push/SMS/email delivery remains future work.
 - Appointment status changes create audit log entries that are shown in the job timeline.
 - Existing job schedule fields remain for compatibility while appointments become the future scheduling source.
+
+Technician field workflow architecture:
+
+- `GET /appointments/my-day` is the mobile-first field read model for
+  technicians and solo owners. It returns only appointments assigned to the
+  logged-in user for the current business day in the business timezone.
+- Status transition rules are centralised in shared code and revalidated by the
+  API before writes. The active path is `SCHEDULED/CONFIRMED -> ON_THE_WAY ->
+ARRIVED -> IN_PROGRESS -> COMPLETED`.
+- `AppointmentWorkLog` stores technician notes, work completed and follow-up
+  flags. Audit logs remain the timeline/event history.
+- Completing an appointment does not automatically complete the job. A job may
+  have multiple appointments, and job completion remains an explicit action.
+- When field work starts, a non-cancelled/non-completed job may safely move to
+  `IN_PROGRESS`.
+- Offline support is intentionally future work; the current service boundaries
+  keep status changes and work-log updates as queueable command operations.
 
 ## AI layer
 

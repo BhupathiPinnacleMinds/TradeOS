@@ -16,6 +16,7 @@ import { customersRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
+import { canCreateCustomer } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Navigation = NativeStackNavigationProp<RootStackParamList>;
@@ -40,7 +41,7 @@ function errorMessage(error: unknown) {
 }
 
 export function CustomersScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { showToast } = useToast();
   const navigation = useNavigation<Navigation>();
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -51,6 +52,7 @@ export function CustomersScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
+  const canAddCustomer = canCreateCustomer(user?.role);
 
   const loadCustomers = useCallback(
     async (options: { refreshing?: boolean } = {}) => {
@@ -91,8 +93,10 @@ export function CustomersScreen() {
   const emptyTitle = useMemo(() => {
     if (search.trim()) return 'No customers match your search.';
     if (archived) return 'No archived customers.';
-    return 'No customers yet. Add your first customer to start creating jobs, quotes and invoices.';
-  }, [archived, search]);
+    return canAddCustomer
+      ? 'No customers yet. Add your first customer to start creating jobs, quotes and invoices.'
+      : 'No customers yet.';
+  }, [archived, canAddCustomer, search]);
 
   return (
     <ScrollView
@@ -111,14 +115,16 @@ export function CustomersScreen() {
         invoices.
       </Text>
 
-      <Pressable
-        accessibilityLabel="Add Customer"
-        accessibilityRole="button"
-        onPress={() => navigation.navigate('CustomerForm', {})}
-        style={styles.primaryButton}
-      >
-        <Text style={styles.primaryButtonText}>Add Customer</Text>
-      </Pressable>
+      {canAddCustomer ? (
+        <Pressable
+          accessibilityLabel="Add Customer"
+          accessibilityRole="button"
+          onPress={() => navigation.navigate('CustomerForm', {})}
+          style={styles.primaryButton}
+        >
+          <Text style={styles.primaryButtonText}>Add Customer</Text>
+        </Pressable>
+      ) : null}
 
       <TextInput
         accessibilityLabel="Search customers"

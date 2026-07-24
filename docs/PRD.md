@@ -59,7 +59,7 @@ The current implementation includes:
 - Team Management and invitation acceptance.
 - Customer Management with mobile list, add/edit, details, archive/restore, duplicate warning and service-location support.
 - Job Management with mobile list, add/edit, details, assignment, status transitions, archive/restore, dashboard metrics and customer-linked jobs.
-- Calendar & Appointment Management with day, week, month and agenda views, appointment details, technician filters, conflict detection, availability APIs and assignment-only appointment reassignment.
+- Calendar & Appointment Management with day, week, month and agenda views, appointment details, technician filters, Dispatcher View, conflict detection, availability APIs and assignment-only appointment reassignment.
 - Basic navigation and placeholder screens for remaining modules.
 
 ## Target customers
@@ -241,3 +241,8 @@ Current implementation supports the full role model documented in [Roles and Per
 - Appointment actions must be tenant-scoped, permission-aware and audit logged.
 - Calendar UI must show detailed appointment schedules; Dashboard should show scheduling summaries only.
 - Appointment reassignment must never create a duplicate appointment or change the job, customer, time, notes or visit-location snapshot. It changes only the technician assignment, checks conflicts, records old/new technicians in audit history and refreshes Calendar, Dashboard, Job Details and Appointment Details views through normal API reloads.
+- Dispatcher View is an additional operations board inside Calendar. It must show technician workload, current status, completed/upcoming counts, unassigned appointments, recommendations and quick actions without replacing Calendar. Future drag-and-drop scheduling should plug into the exposed move/reassign actions instead of redesigning appointments.
+- Technician Field Workflow gives technicians and solo owners a fast My Day
+  view over assigned appointments. It supports navigate, start travel, arrived,
+  start work, completion review, technician notes, work-completed notes and
+  follow-up flags while keeping job and appointment status separate.

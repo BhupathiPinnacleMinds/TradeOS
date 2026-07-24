@@ -495,6 +495,24 @@ Important fields:
 - metadata
 - createdAt
 
+### AppointmentWorkLog
+
+Represents technician-entered field notes for one appointment visit.
+
+Important fields:
+
+- id
+- businessId
+- appointmentId
+- jobId
+- technicianUserId
+- technicianNotes
+- workCompleted
+- followUpRequired
+- followUpNotes
+- createdAt
+- updatedAt
+
 ## Relationships
 
 - Business has many users, members, customers, jobs, appointments, quotes, invoices, payments, messages, notifications, AI conversations, documents, integrations, and audit logs.
@@ -503,7 +521,10 @@ Important fields:
 - BusinessMember belongs to a business and may belong to a user.
 - Customer has many jobs, quotes, invoices, and messages.
 - Job belongs to a business and customer, may be assigned to a user, and can have appointments, quotes, invoices, messages and documents.
-- Appointment belongs to a business and job, and may be assigned to a user.
+- Appointment belongs to a business and job, may be assigned to a user, and may
+  have one current `AppointmentWorkLog`.
+- AppointmentWorkLog belongs to a business, appointment, job and technician
+  user. It is unique per business/appointment.
 - Quote belongs to customer and may belong to a job.
 - Invoice belongs to customer and may belong to a job.
 - Payment belongs to invoice.
@@ -526,6 +547,8 @@ Current examples:
 - AI conversation user/update time by business
 - business member role/status by business
 - audit log action/entity by business
+- appointment work log by business/appointment, business/job and
+  business/technician
 
 ## Security
 

@@ -5,7 +5,12 @@ import { promisify } from 'util';
 
 const businessId = 'demo-business-tradieos';
 const ownerId = 'demo-owner-user';
+const adminId = 'demo-admin-user';
 const staffIds = ['demo-staff-user-1', 'demo-staff-user-2'];
+const schedulerId = 'demo-scheduler-user';
+const accountantId = 'demo-accountant-user';
+const salesId = 'demo-sales-user';
+const readOnlyId = 'demo-readonly-user';
 const databaseUrl = process.env.DATABASE_URL;
 const scrypt = promisify(scryptCallback);
 
@@ -64,9 +69,25 @@ async function main() {
       `INSERT INTO "User" (id, "businessId", email, "passwordHash", "firstName", "lastName", role, "isActive", "createdAt", "updatedAt")
        VALUES
        ($1, $5, 'owner@demo-tradieos.com', $4, 'Sam', 'Owner', 'OWNER', true, NOW(), NOW()),
+       ($6, $5, 'admin@demo-tradieos.com', $4, 'Ava', 'Admin', 'ADMIN', true, NOW(), NOW()),
        ($2, $5, 'alex@demo-tradieos.com', $4, 'Alex', 'Office', 'OFFICE_MANAGER', true, NOW(), NOW()),
-       ($3, $5, 'mia@demo-tradieos.com', $4, 'Mia', 'Technician', 'TECHNICIAN', true, NOW(), NOW())`,
-      [ownerId, staffIds[0], staffIds[1], demoPasswordHash, businessId],
+       ($3, $5, 'mia@demo-tradieos.com', $4, 'Mia', 'Technician', 'TECHNICIAN', true, NOW(), NOW()),
+       ($7, $5, 'scheduler@demo-tradieos.com', $4, 'Sasha', 'Scheduler', 'SCHEDULER', true, NOW(), NOW()),
+       ($8, $5, 'accountant@demo-tradieos.com', $4, 'Noah', 'Accounts', 'ACCOUNTANT', true, NOW(), NOW()),
+       ($9, $5, 'sales@demo-tradieos.com', $4, 'Sienna', 'Sales', 'SALES', true, NOW(), NOW()),
+       ($10, $5, 'readonly@demo-tradieos.com', $4, 'Riley', 'Read Only', 'READ_ONLY', true, NOW(), NOW())`,
+      [
+        ownerId,
+        staffIds[0],
+        staffIds[1],
+        demoPasswordHash,
+        businessId,
+        adminId,
+        schedulerId,
+        accountantId,
+        salesId,
+        readOnlyId,
+      ],
     );
 
     await query(
@@ -74,22 +95,30 @@ async function main() {
         id, "businessId", "userId", role, status, "invitedEmail", "invitedFirstName", "invitedLastName", "inviteTokenHash", "inviteExpiresAt", "inviteAcceptedAt", "inviteCancelledAt", "inviteEmailDeliveryStatus", "inviteEmailDeliveryError", "invitedBy", "invitedAt", "joinedAt", "lastLoginAt", "createdAt", "updatedAt"
        ) VALUES
        ('demo-member-owner', $1, $2, 'OWNER', 'ACTIVE', 'owner@demo-tradieos.com', 'Sam', 'Owner', NULL, NULL, NOW(), NULL, NULL, NULL, NULL, NULL, NOW(), NOW(), NOW(), NOW()),
+       ('demo-member-admin', $1, $5, 'ADMIN', 'ACTIVE', 'admin@demo-tradieos.com', 'Ava', 'Admin', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
        ('demo-member-office', $1, $3, 'OFFICE_MANAGER', 'ACTIVE', 'alex@demo-tradieos.com', 'Alex', 'Office', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
        ('demo-member-tech', $1, $4, 'TECHNICIAN', 'ACTIVE', 'mia@demo-tradieos.com', 'Mia', 'Technician', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
-       ('demo-member-invited', $1, NULL, 'SCHEDULER', 'INVITED', 'scheduler@demo-tradieos.com', 'Sasha', 'Scheduler', $5, NOW() + INTERVAL '7 days', NULL, NULL, 'SENT', NULL, $2, NOW(), NULL, NULL, NOW(), NOW())`,
+       ('demo-member-scheduler', $1, $6, 'SCHEDULER', 'ACTIVE', 'scheduler@demo-tradieos.com', 'Sasha', 'Scheduler', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-accountant', $1, $7, 'ACCOUNTANT', 'ACTIVE', 'accountant@demo-tradieos.com', 'Noah', 'Accounts', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-sales', $1, $8, 'SALES', 'ACTIVE', 'sales@demo-tradieos.com', 'Sienna', 'Sales', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW()),
+       ('demo-member-readonly', $1, $9, 'READ_ONLY', 'ACTIVE', 'readonly@demo-tradieos.com', 'Riley', 'Read Only', NULL, NULL, NOW(), NULL, NULL, NULL, $2, NOW(), NOW(), NULL, NOW(), NOW())`,
       [
         businessId,
         ownerId,
         staffIds[0],
         staffIds[1],
-        'f1f1f64d0a7dfd8126660ce8d7d9cdc36e724162021d3e6506e3bea8bae1976c',
+        adminId,
+        schedulerId,
+        accountantId,
+        salesId,
+        readOnlyId,
       ],
     );
 
     await query(
       `INSERT INTO "AuditLog" (id, "businessId", "actorUserId", action, "entityType", "entityId", metadata, "createdAt")
        VALUES
-       ('demo-audit-member-invited', $1, $2, 'INVITE_CREATED', 'BusinessMember', 'demo-member-invited', '{"email":"scheduler@demo-tradieos.com","role":"SCHEDULER"}', NOW())`,
+       ('demo-audit-member-scheduler-active', $1, $2, 'MEMBER_ACTIVATED', 'BusinessMember', 'demo-member-scheduler', '{"email":"scheduler@demo-tradieos.com","role":"SCHEDULER","source":"demo_seed"}', NOW())`,
       [businessId, ownerId],
     );
 
@@ -464,6 +493,36 @@ async function main() {
         false,
         ownerId,
       ],
+      [
+        'demo-job-6',
+        'demo-customer-1',
+        ownerId,
+        'JOB-2026-000006',
+        'Owner field workflow test visit',
+        'Demo appointment for testing owner My Day field workflow.',
+        'Electrical',
+        'SCHEDULED',
+        'NORMAL',
+        hoursFromStartOfToday(8),
+        hoursFromStartOfToday(9),
+        60,
+        null,
+        null,
+        null,
+        '12 King Street',
+        null,
+        'Parramatta',
+        'NSW',
+        '2150',
+        'Side gate access after 8am.',
+        'Prefers SMS reminders.',
+        'Use this appointment to test CONFIRMED → ON_THE_WAY → ARRIVED → IN_PROGRESS → COMPLETED.',
+        false,
+        false,
+        false,
+        false,
+        ownerId,
+      ],
     ];
 
     for (const job of jobs) {
@@ -481,7 +540,7 @@ async function main() {
 
     await query(
       `INSERT INTO "JobSequence" ("businessId", "nextNumber", "updatedAt")
-       VALUES ($1, 6, NOW())
+       VALUES ($1, 7, NOW())
        ON CONFLICT ("businessId") DO UPDATE SET "nextNumber" = EXCLUDED."nextNumber", "updatedAt" = NOW()`,
       [businessId],
     );
@@ -589,6 +648,23 @@ async function main() {
         'Optional return visit if extra switchboard work is approved.',
         ownerId,
       ],
+      [
+        'demo-appointment-7',
+        'demo-job-6',
+        ownerId,
+        'APT-2026-000007',
+        'MAINTENANCE',
+        'CONFIRMED',
+        hoursFromStartOfToday(8),
+        hoursFromStartOfToday(9),
+        null,
+        null,
+        60,
+        12,
+        '7.4',
+        'Owner demo field workflow: confirm arrival, start work, complete and capture work notes.',
+        ownerId,
+      ],
     ];
 
     for (const appointment of appointments) {
@@ -610,7 +686,7 @@ async function main() {
 
     await query(
       `INSERT INTO "AppointmentSequence" ("businessId", "nextNumber", "updatedAt")
-       VALUES ($1, 7, NOW())
+       VALUES ($1, 8, NOW())
        ON CONFLICT ("businessId") DO UPDATE SET "nextNumber" = EXCLUDED."nextNumber", "updatedAt" = NOW()`,
       [businessId],
     );

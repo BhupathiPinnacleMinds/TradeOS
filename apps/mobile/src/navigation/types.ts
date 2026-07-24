@@ -3,6 +3,7 @@ export type RootStackParamList = {
   Register: undefined;
   AcceptInvitation: { token: string };
   Main: undefined;
+  MyDay: undefined;
   Quotes: undefined;
   Invoices: undefined;
   Notifications: undefined;
@@ -14,21 +15,28 @@ export type RootStackParamList = {
   CustomerForm: { customerId?: string };
   JobDetails: { jobId: string };
   JobForm: { jobId?: string; customerId?: string };
+  Jobs: undefined;
   AppointmentDetails: { appointmentId: string };
   AppointmentReassign: { appointmentId: string };
   AppointmentForm:
     | {
         customerId?: string;
+        customerSiteId?: string;
         jobId?: string;
+        selectedDate?: string;
         siteId?: string;
+        technicianId?: string | null;
       }
     | undefined;
 };
 
 export type MainTabsParamList = {
   Dashboard: undefined;
+  MyDay: undefined;
   Calendar: undefined;
+  Customers: undefined;
   Jobs: undefined;
+  Quotes: undefined;
   Tori: undefined;
   More: undefined;
 };

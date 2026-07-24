@@ -1,49 +1,85 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
+import { canViewBusinessSettings } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 export function SettingsScreen() {
   const { logout, user } = useAuth();
+  const canAccessSettings = canViewBusinessSettings(user?.role);
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>
-          Manage your business workspace, members, defaults and integrations.
-        </Text>
+        {!canAccessSettings ? (
+          <>
+            <Text style={styles.subtitle}>
+              Your role can use operational tools like Calendar, Jobs and Tori,
+              but business settings are limited to owners and office admins.
+            </Text>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Business workspace</Text>
-          <Text style={styles.value}>{user?.business.name}</Text>
-          <Text style={styles.meta}>
-            {user?.business.tradeType ?? 'Trade not set'} · ABN{' '}
-            {user?.business.abn ?? 'not set'}
-          </Text>
-          <Text style={styles.meta}>
-            GST {user?.business.gstRegistered ? 'registered' : 'not registered'}
-          </Text>
-        </View>
+            <View style={styles.card}>
+              <Text style={styles.label}>Signed in as</Text>
+              <Text style={styles.value}>
+                {user?.firstName} {user?.lastName}
+              </Text>
+              <Text style={styles.meta}>
+                {user?.email} · {user?.role}
+              </Text>
+            </View>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Signed in as</Text>
-          <Text style={styles.value}>
-            {user?.firstName} {user?.lastName}
-          </Text>
-          <Text style={styles.meta}>{user?.email}</Text>
-        </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void logout()}
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <Text style={styles.logoutText}>Log out</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Text style={styles.subtitle}>
+              Manage your business workspace, members, defaults and
+              integrations.
+            </Text>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void logout()}
-          style={({ pressed }) => [
-            styles.logoutButton,
-            pressed && styles.buttonPressed,
-          ]}
-        >
-          <Text style={styles.logoutText}>Log out</Text>
-        </Pressable>
+            <View style={styles.card}>
+              <Text style={styles.label}>Business workspace</Text>
+              <Text style={styles.value}>{user?.business.name}</Text>
+              <Text style={styles.meta}>
+                {user?.business.tradeType ?? 'Trade not set'} · ABN{' '}
+                {user?.business.abn ?? 'not set'}
+              </Text>
+              <Text style={styles.meta}>
+                GST{' '}
+                {user?.business.gstRegistered ? 'registered' : 'not registered'}
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.label}>Signed in as</Text>
+              <Text style={styles.value}>
+                {user?.firstName} {user?.lastName}
+              </Text>
+              <Text style={styles.meta}>{user?.email}</Text>
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void logout()}
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <Text style={styles.logoutText}>Log out</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );

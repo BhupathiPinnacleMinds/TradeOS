@@ -68,21 +68,18 @@ curl http://localhost:3000/api/health
 The local seed creates:
 
 - 1 demo business: `Demo Tradie Co`
-- 1 owner: `owner@demo-tradieos.com`
-- 2 staff users
+- active local demo users for every supported role
 - 5 customers
-- 5 jobs
+- demo jobs and appointments for owner, technician, scheduler and read-only
+  workflow testing
 - 3 quotes
 - 2 invoices
 - 5 notifications
 - 3 Tori AI messages
 
-Demo login:
-
-```text
-email: owner@demo-tradieos.com
-password: password123
-```
+See [Local Test Accounts](./docs/LOCAL_TEST_ACCOUNTS.md) for local-only demo
+emails, the shared local password, landing screens, permitted modules, blocked
+modules and assigned seeded data.
 
 The mobile app logs in through `POST /api/auth/login`, stores the JWT with
 Expo SecureStore on device, and sends that token with dashboard requests. The

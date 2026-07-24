@@ -14,7 +14,7 @@ describe('getAppointmentQuickActions', () => {
         role: 'OWNER',
         status: 'SCHEDULED',
       }),
-    ).toEqual(['navigate', 'call', 'start', 'reassign', 'cancel']);
+    ).toEqual(['navigate', 'call', 'startTravel', 'reassign', 'cancel']);
   });
 
   it('shows confirmed appointment actions', () => {
@@ -26,7 +26,7 @@ describe('getAppointmentQuickActions', () => {
         role: 'ADMIN',
         status: 'CONFIRMED',
       }),
-    ).toEqual(['navigate', 'call', 'start', 'reassign', 'cancel']);
+    ).toEqual(['navigate', 'call', 'startTravel', 'reassign', 'cancel']);
   });
 
   it('shows arrive for on-the-way appointments', () => {
@@ -120,7 +120,7 @@ describe('getAppointmentQuickActions', () => {
         role: 'OWNER',
         status: 'SCHEDULED',
       }),
-    ).toEqual(['start', 'reassign', 'cancel']);
+    ).toEqual(['startTravel', 'reassign', 'cancel']);
   });
 
   it('limits technicians to status updates on assigned appointments', () => {

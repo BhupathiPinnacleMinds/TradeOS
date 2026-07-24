@@ -33,6 +33,7 @@ export type AppointmentType = (typeof APPOINTMENT_TYPES)[number];
 export type AppointmentLocationSource =
   (typeof APPOINTMENT_LOCATION_SOURCES)[number];
 export type CalendarViewMode = 'day' | 'week' | 'month' | 'agenda';
+export type CalendarTopTab = 'calendar' | 'dispatcher' | 'today';
 
 export type AppointmentSortBy =
   'scheduledStart' | 'createdAt' | 'updatedAt' | 'appointmentNumber' | 'status';
@@ -88,6 +89,7 @@ export interface Appointment {
   updatedAt: string;
   assignedUser: JobAssignedUser | null;
   job: AppointmentJobSummary;
+  workLog: AppointmentWorkLog | null;
 }
 
 export interface AppointmentListResponse {
@@ -100,6 +102,44 @@ export interface AppointmentListResponse {
 
 export interface AppointmentDetailResponse {
   appointment: Appointment;
+}
+
+export interface AppointmentWorkLog {
+  id: string;
+  businessId: string;
+  appointmentId: string;
+  jobId: string;
+  technicianUserId: string;
+  technicianNotes: string | null;
+  workCompleted: string | null;
+  followUpRequired: boolean;
+  followUpNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppointmentWorkLogPayload {
+  technicianNotes?: string;
+  workCompleted?: string;
+  followUpRequired?: boolean;
+  followUpNotes?: string;
+}
+
+export interface CompleteAppointmentPayload extends AppointmentWorkLogPayload {
+  workCompleted: string;
+}
+
+export interface MyDayResponse {
+  businessDate: string;
+  businessTimezone: string;
+  businessName: string;
+  technicianUserId: string;
+  technicianName: string;
+  nextAppointment: Appointment | null;
+  appointments: Appointment[];
+  completedCount: number;
+  remainingCount: number;
+  urgentCount: number;
 }
 
 export interface AppointmentPayload {
@@ -191,6 +231,65 @@ export interface AppointmentReassignmentOptionsResponse {
   recommendation: AppointmentReassignmentRecommendation;
 }
 
+export type DispatcherTechnicianStatus =
+  | 'AVAILABLE'
+  | 'TRAVELLING'
+  | 'WORKING'
+  | 'ON_BREAK'
+  | 'FINISHED_TODAY'
+  | 'OFFLINE';
+
+export type DispatcherFilter =
+  | 'working'
+  | 'available'
+  | 'completed'
+  | 'high-priority'
+  | 'overdue'
+  | 'unassigned';
+
+export interface DispatcherAppointment {
+  appointment: Appointment;
+  recommendation?: AppointmentReassignmentRecommendation;
+}
+
+export interface DispatcherTechnician {
+  userId: string;
+  name: string;
+  email: string;
+  role: BusinessRole;
+  avatarInitials: string;
+  workingHours: string;
+  currentStatus: DispatcherTechnicianStatus;
+  todaysWorkload: number;
+  completedToday: number;
+  upcomingToday: number;
+  estimatedWorkMinutes: number;
+  travelPlaceholderMinutes: number;
+  availableMinutes: number;
+  overtimeWarning: boolean;
+  appointments: DispatcherAppointment[];
+}
+
+export interface DispatcherSummary {
+  totalAppointmentsToday: number;
+  estimatedWorkMinutes: number;
+  travelPlaceholderMinutes: number;
+  availableMinutes: number;
+  overtimeWarning: boolean;
+  techniciansWorking: number;
+  availableTechnicians: number;
+  unassignedAppointments: number;
+}
+
+export interface DispatcherViewResponse {
+  date: string;
+  canManage: boolean;
+  summary: DispatcherSummary;
+  technicians: DispatcherTechnician[];
+  unassigned: DispatcherAppointment[];
+  filters: DispatcherFilter[];
+}
+
 export const APPOINTMENT_STATUS_COLOURS: Record<
   AppointmentStatus,
   { background: string; border: string; text: string }
@@ -245,9 +344,12 @@ export type AppointmentQuickActionId =
   | 'navigate'
   | 'call'
   | 'reassign'
+  | 'startTravel'
   | 'start'
   | 'arrive'
   | 'complete'
+  | 'hold'
+  | 'resume'
   | 'reschedule'
   | 'cancel'
   | 'viewDetails';
@@ -265,6 +367,21 @@ export interface AppointmentQuickActionInput {
   role?: BusinessRole | null;
   isAssignedUser?: boolean;
   hasRescheduledToAppointment?: boolean;
+}
+
+export type AppointmentTransitionAction =
+  | 'start-travel'
+  | 'arrive'
+  | 'start'
+  | 'hold'
+  | 'resume'
+  | 'complete'
+  | 'cancel';
+
+export interface AppointmentTransitionOption {
+  action: AppointmentTransitionAction;
+  label: string;
+  nextStatus: AppointmentStatus;
 }
 
 const APPOINTMENT_RESCHEDULE_ROLES: BusinessRole[] = [
@@ -291,6 +408,58 @@ function canUpdateAppointmentStatus(input: AppointmentQuickActionInput) {
   }
 
   return true;
+}
+
+export function getAllowedAppointmentTransitions(input: {
+  currentStatus: AppointmentStatus;
+  userRole?: BusinessRole | null;
+  isAssignedTechnician?: boolean;
+}): AppointmentTransitionOption[] {
+  const canUpdate = canUpdateAppointmentStatus({
+    hasAddress: true,
+    hasPhone: true,
+    isAssignedUser: input.isAssignedTechnician,
+    role: input.userRole,
+    status: input.currentStatus,
+  });
+  if (!canUpdate) return [];
+
+  if (
+    ['CANCELLED', 'COMPLETED', 'NO_SHOW', 'RESCHEDULED'].includes(
+      input.currentStatus,
+    )
+  ) {
+    return [];
+  }
+
+  if (['SCHEDULED', 'CONFIRMED'].includes(input.currentStatus)) {
+    return [
+      {
+        action: 'start-travel',
+        label: 'Start travel',
+        nextStatus: 'ON_THE_WAY',
+      },
+      { action: 'start', label: 'Start work', nextStatus: 'IN_PROGRESS' },
+    ];
+  }
+  if (input.currentStatus === 'ON_THE_WAY') {
+    return [{ action: 'arrive', label: 'Mark arrived', nextStatus: 'ARRIVED' }];
+  }
+  if (input.currentStatus === 'ARRIVED') {
+    return [
+      { action: 'start', label: 'Start work', nextStatus: 'IN_PROGRESS' },
+    ];
+  }
+  if (input.currentStatus === 'IN_PROGRESS') {
+    return [
+      {
+        action: 'complete',
+        label: 'Complete appointment',
+        nextStatus: 'COMPLETED',
+      },
+    ];
+  }
+  return [];
 }
 
 function canRescheduleAppointment(input: AppointmentQuickActionInput) {
@@ -342,15 +511,20 @@ export function getAppointmentQuickActions(
     actions.push({ id: 'call', kind: 'contact', label: 'Call' });
   }
 
-  if (
-    canUpdateStatus &&
-    ['SCHEDULED', 'CONFIRMED', 'ARRIVED'].includes(input.status)
-  ) {
-    actions.push({ id: 'start', kind: 'workflow', label: 'Start' });
+  if (canUpdateStatus && ['SCHEDULED', 'CONFIRMED'].includes(input.status)) {
+    actions.push({
+      id: 'startTravel',
+      kind: 'workflow',
+      label: 'Start travel',
+    });
+  }
+
+  if (canUpdateStatus && input.status === 'ARRIVED') {
+    actions.push({ id: 'start', kind: 'workflow', label: 'Start work' });
   }
 
   if (canUpdateStatus && input.status === 'ON_THE_WAY') {
-    actions.push({ id: 'arrive', kind: 'workflow', label: 'Arrive' });
+    actions.push({ id: 'arrive', kind: 'workflow', label: 'Arrived' });
   }
 
   if (canUpdateStatus && input.status === 'IN_PROGRESS') {

@@ -90,6 +90,9 @@ the next appointment, late appointments, upcoming appointments today, upcoming
 future appointments, completed appointments today, and the logged-in user’s open
 appointments.
 
+Dashboard dispatcher counts are summary-only and include technicians currently
+working, available technicians, and unassigned appointments for today.
+
 ### Team members
 
 ```http
@@ -244,6 +247,7 @@ Job error codes include `JOB_NOT_FOUND`, `INVALID_JOB_DATA`, `CUSTOMER_NOT_FOUND
 
 ```http
 GET /api/appointments
+GET /api/appointments/dispatcher
 GET /api/appointments/:id
 GET /api/appointments/:id/reassignment-options
 POST /api/appointments
@@ -275,6 +279,7 @@ Appointment rules:
 - Appointment location source can be customer service site, customer default address, or a one-off manual appointment address.
 - Manual appointment addresses can optionally be saved as a customer service site in the same appointment creation transaction.
 - `GET /api/appointments` supports date range, status, assigned technician, unassigned, job, customer and search filters for calendar views.
+- `GET /api/appointments/dispatcher` returns the Dispatcher View read model for a selected day: technician workload cards, current status, completed/upcoming counts, estimated booked time, travel placeholder, overtime warning, unassigned appointments and recommendations for unassigned work. Dispatcher is a scheduling-management surface and is limited to owners, admins, office managers and schedulers.
 - `POST /api/appointments/availability` checks business working hours and technician overlaps before scheduling or rescheduling.
 - Overlapping appointments and outside-working-hours appointments are blocked by default. Owners may intentionally override conflicts by sending `allowConflictOverride: true`.
 - Appointment reassignment conflict overrides are limited to owners and admins. Office managers and schedulers can reassign only when the selected technician is available.
@@ -401,6 +406,30 @@ where: {
 ## Response contracts
 
 Shared response contracts should live in `packages/shared` when used by both API and mobile.
+
+## Technician field workflow endpoints
+
+Appointments remain the field-work unit. Jobs describe the overall work; an
+appointment describes one visit.
+
+Implemented technician workflow endpoints:
+
+- `GET /api/appointments/my-day` returns the authenticated user's assigned
+  appointments for the current business day, scoped by `businessId` and the
+  logged-in user ID.
+- `POST /api/appointments/:id/start-travel` moves `SCHEDULED` or `CONFIRMED`
+  appointments to `ON_THE_WAY`.
+- `POST /api/appointments/:id/arrive` moves `ON_THE_WAY` appointments to
+  `ARRIVED`.
+- `POST /api/appointments/:id/start` moves `SCHEDULED`, `CONFIRMED` or
+  `ARRIVED` appointments to `IN_PROGRESS`.
+- `PATCH /api/appointments/:id/work-log` saves internal technician notes, work
+  completed notes and follow-up flags.
+- `POST /api/appointments/:id/complete` requires `workCompleted`, saves the
+  work log and moves `IN_PROGRESS` appointments to `COMPLETED`.
+
+The API validates transitions again even when the mobile UI hides unavailable
+actions.
 
 ## AI endpoint rule
 
