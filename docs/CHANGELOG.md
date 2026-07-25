@@ -4,6 +4,8 @@
 
 ### Added
 
+- Business timezone foundation with `Australia/Melbourne` as the default
+  workspace timezone and shared date/time helpers for business-local display.
 - Local demo login accounts for every supported role: owner, admin, office
   manager, scheduler, technician, accountant, sales and read-only.
 - `docs/LOCAL_TEST_ACCOUNTS.md` with local-only credentials, landing screens,
@@ -15,11 +17,23 @@
 
 ### Changed
 
+- Appointment, job, dashboard, dispatcher, My Day and scheduling calculations now
+  derive business-day ranges and working-hour checks from the business timezone
+  while continuing to store timestamps in UTC.
+- Demo appointment seed data now uses realistic tradie business-hour slots with
+  travel gaps instead of late evening appointments.
 - Demo seed data now activates Scheduler and includes Admin, Accountant, Sales
   and Read Only users in Demo Tradie Co using the existing hashed local demo
   password flow.
 - Mobile role navigation is documented as a role-aware matrix rather than one
   global tab layout.
+- Technician My Day now separates Current/Next appointment, Later today and
+  Completed today without duplicating appointments across sections.
+- My Day summary counts now use consistent business-timezone appointment
+  sections: completed counts only `COMPLETED`, remaining counts active workflow
+  statuses and urgent counts only active `URGENT` priority appointments.
+- My Day appointment cards now use compact field-work actions with no more than
+  two visible buttons.
 
 ## 2026-07-15
 

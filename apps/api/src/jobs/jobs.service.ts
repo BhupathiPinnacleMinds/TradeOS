@@ -13,6 +13,8 @@ import {
   JOB_STATUS_UPDATE_ROLES,
   JOB_VIEW_ROLES,
   JOB_WRITE_ROLES,
+  getBusinessDateParts,
+  getBusinessDayRangeUtc,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -95,7 +97,11 @@ export class JobsService {
       100,
       Math.max(1, query.pageSize ?? DEFAULT_PAGE_SIZE),
     );
-    const where = this.buildWhere(currentUser, query);
+    const business = await this.prisma.business.findUnique({
+      where: { id: currentUser.businessId },
+      select: { timezone: true },
+    });
+    const where = this.buildWhere(currentUser, query, business?.timezone);
 
     const [records, total] = await this.prisma.$transaction([
       this.prisma.job.findMany({
@@ -443,6 +449,7 @@ export class JobsService {
   private buildWhere(
     currentUser: AuthenticatedUser,
     query: ListJobsQueryDto,
+    timezone?: string,
   ): Prisma.JobWhereInput {
     const where: Prisma.JobWhereInput = {
       businessId: currentUser.businessId,
@@ -455,7 +462,9 @@ export class JobsService {
     if (query.assignedToUserId && currentUser.role !== TECHNICIAN_ROLE) {
       where.assignedToUserId = query.assignedToUserId;
     }
-    if (query.filter) this.applyFilter(where, query.filter, currentUser);
+    if (query.filter) {
+      this.applyFilter(where, query.filter, currentUser, timezone);
+    }
     if (query.dateFrom || query.dateTo) {
       where.scheduledStart = {
         ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
@@ -488,20 +497,23 @@ export class JobsService {
     where: Prisma.JobWhereInput,
     filter: NonNullable<ListJobsQueryDto['filter']>,
     currentUser: AuthenticatedUser,
+    timezone?: string,
   ) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dayAfterTomorrow = new Date(tomorrow);
-    dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+    const today = getBusinessDayRangeUtc(new Date(), timezone);
+    const tomorrow = getBusinessDayRangeUtc(today.end, timezone);
+    const dayAfterTomorrow = getBusinessDayRangeUtc(tomorrow.end, timezone);
 
-    if (filter === 'today') where.scheduledStart = { gte: today, lt: tomorrow };
+    if (filter === 'today') {
+      where.scheduledStart = { gte: today.start, lt: today.end };
+    }
     if (filter === 'tomorrow') {
-      where.scheduledStart = { gte: tomorrow, lt: dayAfterTomorrow };
+      where.scheduledStart = {
+        gte: tomorrow.start,
+        lt: dayAfterTomorrow.start,
+      };
     }
     if (filter === 'upcoming') {
-      where.scheduledStart = { gte: tomorrow };
+      where.scheduledStart = { gte: tomorrow.start };
       where.status = { notIn: [...COMPLETED_STATUSES] };
     }
     if (filter === 'completed') where.status = 'COMPLETED';
@@ -558,6 +570,10 @@ export class JobsService {
     businessId: string,
     scheduledStart: Date,
   ) {
+    const business = await tx.business.findUnique({
+      where: { id: businessId },
+      select: { timezone: true },
+    });
     const existing = await tx.jobSequence.findUnique({ where: { businessId } });
     const nextNumber = existing?.nextNumber ?? 1;
     if (existing) {
@@ -570,7 +586,8 @@ export class JobsService {
         data: { businessId, nextNumber: 2 },
       });
     }
-    return `JOB-${scheduledStart.getFullYear()}-${String(nextNumber).padStart(6, '0')}`;
+    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
+    return `JOB-${year}-${String(nextNumber).padStart(6, '0')}`;
   }
 
   private async getJobForUser(currentUser: AuthenticatedUser, id: string) {

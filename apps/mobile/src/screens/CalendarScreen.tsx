@@ -11,10 +11,16 @@ import type {
 import {
   APPOINTMENT_STATUS_COLOURS,
   APPOINTMENT_STATUSES,
+  DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessRelativeDay,
+  formatBusinessTimeRange,
   formatBusinessLongDate,
   formatBusinessTime,
+  getBusinessDateParts,
+  getBusinessDayRangeUtc,
   normaliseBusinessTimezone,
   getAppointmentQuickActions,
+  zonedTimeToUtc,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
@@ -80,54 +86,95 @@ const dispatcherFilters: Array<{
 ];
 const AGENDA_RANGE_DAYS = 7;
 
-function startOfDay(date: Date) {
-  const next = new Date(date);
-  next.setHours(0, 0, 0, 0);
-  return next;
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function addMonths(date: Date, months: number) {
-  const next = new Date(date);
-  const originalDay = next.getDate();
-  next.setDate(1);
-  next.setMonth(next.getMonth() + months);
-  const lastDayOfTargetMonth = new Date(
-    next.getFullYear(),
-    next.getMonth() + 1,
-    0,
-  ).getDate();
-  next.setDate(Math.min(originalDay, lastDayOfTargetMonth));
-  return next;
-}
-
 function addMinutes(date: Date, minutes: number) {
   const next = new Date(date);
   next.setMinutes(next.getMinutes() + minutes);
   return next;
 }
 
-function dateRange(viewMode: CalendarViewMode, anchor: Date) {
-  const start = startOfDay(anchor);
+function businessAnchorAtNoon(date: Date, timezone: string, dayOffset = 0) {
+  const parts = getBusinessDateParts(date, timezone);
+  return zonedTimeToUtc(
+    {
+      day: parts.day + dayOffset,
+      hour: 12,
+      month: parts.month,
+      year: parts.year,
+    },
+    timezone,
+  );
+}
+
+function addBusinessDays(date: Date, days: number, timezone: string) {
+  return businessAnchorAtNoon(date, timezone, days);
+}
+
+function addBusinessMonths(date: Date, months: number, timezone: string) {
+  const parts = getBusinessDateParts(date, timezone);
+  const monthStart = new Date(Date.UTC(parts.year, parts.month - 1, 1));
+  monthStart.setUTCMonth(monthStart.getUTCMonth() + months);
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  return zonedTimeToUtc(
+    {
+      day: Math.min(parts.day, lastDayOfTargetMonth),
+      hour: 12,
+      month: monthStart.getUTCMonth() + 1,
+      year: monthStart.getUTCFullYear(),
+    },
+    timezone,
+  );
+}
+
+function dateRange(viewMode: CalendarViewMode, anchor: Date, timezone: string) {
+  const parts = getBusinessDateParts(anchor, timezone);
   if (viewMode === 'day') {
-    return { end: addDays(start, 1), start };
+    return getBusinessDayRangeUtc(anchor, timezone);
   }
   if (viewMode === 'agenda') {
-    return { end: addDays(start, AGENDA_RANGE_DAYS), start };
+    const start = zonedTimeToUtc(
+      { day: parts.day, month: parts.month, year: parts.year },
+      timezone,
+    );
+    return {
+      end: zonedTimeToUtc(
+        {
+          day: parts.day + AGENDA_RANGE_DAYS,
+          month: parts.month,
+          year: parts.year,
+        },
+        timezone,
+      ),
+      start,
+    };
   }
   if (viewMode === 'week') {
-    const day = start.getDay() || 7;
-    const weekStart = addDays(start, 1 - day);
-    return { end: addDays(weekStart, 7), start: weekStart };
+    const businessDate = new Date(
+      Date.UTC(parts.year, parts.month - 1, parts.day),
+    );
+    const day = businessDate.getUTCDay() || 7;
+    const start = zonedTimeToUtc(
+      { day: parts.day + 1 - day, month: parts.month, year: parts.year },
+      timezone,
+    );
+    return {
+      end: zonedTimeToUtc(
+        { day: parts.day + 8 - day, month: parts.month, year: parts.year },
+        timezone,
+      ),
+      start,
+    };
   }
-  const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+  const monthStart = zonedTimeToUtc(
+    { day: 1, month: parts.month, year: parts.year },
+    timezone,
+  );
   return {
-    end: new Date(start.getFullYear(), start.getMonth() + 1, 1),
+    end: zonedTimeToUtc(
+      { day: 1, month: parts.month + 1, year: parts.year },
+      timezone,
+    ),
     start: monthStart,
   };
 }
@@ -136,19 +183,30 @@ function navigatePeriod(
   viewMode: CalendarViewMode,
   anchor: Date,
   direction: -1 | 1,
+  timezone: string,
 ) {
-  if (viewMode === 'day') return addDays(anchor, direction);
-  if (viewMode === 'week') return addDays(anchor, direction * 7);
-  if (viewMode === 'month') return addMonths(anchor, direction);
-  return addDays(anchor, direction * AGENDA_RANGE_DAYS);
+  if (viewMode === 'day') return addBusinessDays(anchor, direction, timezone);
+  if (viewMode === 'week') {
+    return addBusinessDays(anchor, direction * 7, timezone);
+  }
+  if (viewMode === 'month') {
+    return addBusinessMonths(anchor, direction, timezone);
+  }
+  return addBusinessDays(anchor, direction * AGENDA_RANGE_DAYS, timezone);
 }
 
 function periodLabel(
   viewMode: CalendarViewMode,
   range: ReturnType<typeof dateRange>,
-  timezone = 'Australia/Sydney',
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
-  if (viewMode === 'day') return formatDate(range.start, timezone);
+  if (viewMode === 'day') {
+    return `${formatBusinessRelativeDay(
+      range.start,
+      new Date(),
+      timezone,
+    )} · ${formatDate(range.start, timezone)}`;
+  }
   if (viewMode === 'month') {
     return new Intl.DateTimeFormat('en-AU', {
       month: 'long',
@@ -157,7 +215,7 @@ function periodLabel(
     }).format(range.start);
   }
   return `${formatDate(range.start, timezone)} – ${formatDate(
-    addDays(range.end, -1),
+    addBusinessDays(range.end, -1, timezone),
     timezone,
   )}`;
 }
@@ -170,11 +228,14 @@ function emptyMessage(viewMode: CalendarViewMode) {
   return 'No appointments scheduled for this day.';
 }
 
-function formatDate(value: Date, timezone = 'Australia/Sydney') {
+function formatDate(value: Date, timezone: string = DEFAULT_BUSINESS_TIMEZONE) {
   return formatBusinessLongDate(value, timezone);
 }
 
-function formatTime(value: string, timezone = 'Australia/Sydney') {
+function formatTime(
+  value: string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
   return formatBusinessTime(value, timezone);
 }
 
@@ -219,8 +280,11 @@ function appointmentAddress(appointment: Appointment) {
     .join(', ');
 }
 
-function isSameCalendarDay(left: Date, right: Date) {
-  return startOfDay(left).getTime() === startOfDay(right).getTime();
+function isSameCalendarDay(left: Date, right: Date, timezone: string) {
+  return (
+    getBusinessDayRangeUtc(left, timezone).start.getTime() ===
+    getBusinessDayRangeUtc(right, timezone).start.getTime()
+  );
 }
 
 function selectedActionText(action: AppointmentQuickAction['id']) {
@@ -274,8 +338,8 @@ export function CalendarScreen({ navigation }: Props) {
   );
 
   const range = useMemo(
-    () => dateRange(viewMode, anchorDate),
-    [anchorDate, viewMode],
+    () => dateRange(viewMode, anchorDate, businessTimezone),
+    [anchorDate, businessTimezone, viewMode],
   );
 
   const loadCalendar = useCallback(
@@ -387,13 +451,14 @@ export function CalendarScreen({ navigation }: Props) {
   const grouped = useMemo(() => {
     const map = new Map<string, Appointment[]>();
     appointments.forEach((appointment) => {
-      const key = startOfDay(
-        new Date(appointment.scheduledStart),
-      ).toISOString();
+      const key = getBusinessDayRangeUtc(
+        appointment.scheduledStart,
+        businessTimezone,
+      ).start.toISOString();
       map.set(key, [...(map.get(key) ?? []), appointment]);
     });
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [appointments]);
+  }, [appointments, businessTimezone]);
 
   const canFilterTechnicians = canUseDispatcher;
 
@@ -444,7 +509,9 @@ export function CalendarScreen({ navigation }: Props) {
     const delta = event.nativeEvent.pageX - swipeStartX;
     setSwipeStartX(null);
     if (Math.abs(delta) < 70) return;
-    setAnchorDate((current) => addDays(current, delta > 0 ? -1 : 1));
+    setAnchorDate((current) =>
+      addBusinessDays(current, delta > 0 ? -1 : 1, businessTimezone),
+    );
   }
 
   function navigateToAppointment(appointment: Appointment) {
@@ -656,7 +723,7 @@ export function CalendarScreen({ navigation }: Props) {
               accessibilityRole="button"
               onPress={() =>
                 setAnchorDate((current) =>
-                  navigatePeriod(viewMode, current, -1),
+                  navigatePeriod(viewMode, current, -1, businessTimezone),
                 )
               }
               style={styles.navButton}
@@ -667,7 +734,9 @@ export function CalendarScreen({ navigation }: Props) {
               accessibilityLabel="Next date"
               accessibilityRole="button"
               onPress={() =>
-                setAnchorDate((current) => navigatePeriod(viewMode, current, 1))
+                setAnchorDate((current) =>
+                  navigatePeriod(viewMode, current, 1, businessTimezone),
+                )
               }
               style={styles.navButton}
             >
@@ -787,7 +856,8 @@ export function CalendarScreen({ navigation }: Props) {
             </View>
           ) : null}
 
-          {viewMode === 'day' && isSameCalendarDay(anchorDate, new Date()) ? (
+          {viewMode === 'day' &&
+          isSameCalendarDay(anchorDate, new Date(), businessTimezone) ? (
             <CurrentTimeIndicator />
           ) : null}
 
@@ -962,7 +1032,9 @@ function DispatcherBoard({
               accessibilityLabel="Previous dispatcher day"
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => onDateChange(addDays(selectedDate, -1))}
+              onPress={() =>
+                onDateChange(addBusinessDays(selectedDate, -1, timezone))
+              }
               style={styles.navButton}
             >
               <Text style={styles.navText}>‹</Text>
@@ -977,7 +1049,9 @@ function DispatcherBoard({
               accessibilityLabel="Next dispatcher day"
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => onDateChange(addDays(selectedDate, 1))}
+              onPress={() =>
+                onDateChange(addBusinessDays(selectedDate, 1, timezone))
+              }
               style={styles.navButton}
             >
               <Text style={styles.navText}>›</Text>
@@ -1493,8 +1567,11 @@ function AppointmentCard({
         <Text style={styles.chevron}>›</Text>
       </View>
       <Text style={styles.eventTime}>
-        {formatTime(appointment.scheduledStart, timezone)} –{' '}
-        {formatTime(appointment.scheduledEnd, timezone)}
+        {formatBusinessTimeRange(
+          appointment.scheduledStart,
+          appointment.scheduledEnd,
+          timezone,
+        )}
       </Text>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
       <Text style={styles.meta}>

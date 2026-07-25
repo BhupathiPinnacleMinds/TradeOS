@@ -3,6 +3,7 @@ import type {
   AppointmentRecommendationRequest,
   AppointmentRecommendationResponse,
 } from '@tradieos/shared';
+import { getBusinessDateParts } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TECHNICIAN_ROLES = ['TECHNICIAN', 'OWNER', 'ADMIN'] as const;
@@ -20,7 +21,18 @@ export class SchedulingService {
     const scheduledStart = new Date(input.scheduledStart);
     const scheduledEnd = new Date(input.scheduledEnd);
 
-    if (!this.isInsideWorkingHours(scheduledStart, scheduledEnd)) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { timezone: true },
+    });
+
+    if (
+      !this.isInsideWorkingHours(
+        scheduledStart,
+        scheduledEnd,
+        business?.timezone,
+      )
+    ) {
       return {
         recommendedTechnicianId: null,
         technicianName: null,
@@ -92,11 +104,19 @@ export class SchedulingService {
     };
   }
 
-  private isInsideWorkingHours(start: Date, end: Date) {
+  private isInsideWorkingHours(start: Date, end: Date, timezone?: string) {
+    const startParts = getBusinessDateParts(start, timezone);
+    const endParts = getBusinessDateParts(end, timezone);
+    const startMinutes = startParts.hour * 60 + startParts.minute;
+    const endMinutes = endParts.hour * 60 + endParts.minute;
+
     return (
       start < end &&
-      start.getHours() >= WORK_START_HOUR &&
-      end.getHours() <= WORK_END_HOUR
+      startMinutes >= WORK_START_HOUR * 60 &&
+      endMinutes <= WORK_END_HOUR * 60 &&
+      startParts.year === endParts.year &&
+      startParts.month === endParts.month &&
+      startParts.day === endParts.day
     );
   }
 }

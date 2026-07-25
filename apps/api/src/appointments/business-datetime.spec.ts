@@ -1,10 +1,13 @@
 import {
+  DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDate,
+  formatBusinessRelativeDay,
   formatBusinessTime,
   formatBusinessTimeRange,
   formatBusinessTimezoneAbbreviation,
   getBusinessDayRangeUtc,
   timezoneForAustralianState,
+  zonedTimeToUtc,
 } from '@tradieos/shared';
 
 describe('business datetime utilities', () => {
@@ -20,6 +23,13 @@ describe('business datetime utilities', () => {
         'Australia/Melbourne',
       ),
     ).toBe('8:00 pm – 10:00 pm');
+  });
+
+  it('defaults unknown business timezones to Melbourne', () => {
+    expect(DEFAULT_BUSINESS_TIMEZONE).toBe('Australia/Melbourne');
+    expect(formatBusinessTime('2026-07-16T22:00:00.000Z', 'Mars/Base')).toBe(
+      '8:00 am',
+    );
   });
 
   it('uses daylight-saving-aware timezone abbreviations', () => {
@@ -69,5 +79,51 @@ describe('business datetime utilities', () => {
 
     expect(range.start.toISOString()).toBe('2026-07-15T14:00:00.000Z');
     expect(range.end.toISOString()).toBe('2026-07-16T14:00:00.000Z');
+  });
+
+  it('stores business-local appointment times as UTC instants', () => {
+    const start = zonedTimeToUtc(
+      { day: 24, hour: 7, minute: 30, month: 7, year: 2026 },
+      'Australia/Sydney',
+    );
+    const end = zonedTimeToUtc(
+      { day: 24, hour: 9, minute: 0, month: 7, year: 2026 },
+      'Australia/Sydney',
+    );
+
+    expect(start.toISOString()).toBe('2026-07-23T21:30:00.000Z');
+    expect(end.toISOString()).toBe('2026-07-23T23:00:00.000Z');
+    expect(formatBusinessTimeRange(start, end, 'Australia/Sydney')).toBe(
+      '7:30 am – 9:00 am',
+    );
+  });
+
+  it('handles daylight-saving business day boundaries', () => {
+    const range = getBusinessDayRangeUtc(
+      '2026-10-04T02:00:00.000Z',
+      'Australia/Melbourne',
+    );
+
+    expect(range.start.toISOString()).toBe('2026-10-03T14:00:00.000Z');
+    expect(range.end.toISOString()).toBe('2026-10-04T13:00:00.000Z');
+  });
+
+  it('formats relative business-day labels', () => {
+    const reference = '2026-07-24T02:00:00.000Z';
+
+    expect(
+      formatBusinessRelativeDay(
+        '2026-07-23T23:00:00.000Z',
+        reference,
+        'Australia/Sydney',
+      ),
+    ).toBe('Today');
+    expect(
+      formatBusinessRelativeDay(
+        '2026-07-24T23:00:00.000Z',
+        reference,
+        'Australia/Sydney',
+      ),
+    ).toBe('Tomorrow');
   });
 });

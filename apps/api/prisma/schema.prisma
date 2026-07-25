@@ -184,7 +184,7 @@ model Business {
   suburb          String?
   state           String?
   postcode        String?
-  timezone        String           @default("Australia/Sydney")
+  timezone        String           @default("Australia/Melbourne")
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   users           User[]

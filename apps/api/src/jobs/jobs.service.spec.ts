@@ -39,6 +39,7 @@ function userForRole(role: BusinessRole): AuthenticatedUser {
 type MockPrisma = {
   appointment: { findMany: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
+  business: { findUnique: jest.Mock };
   customer: { findFirst: jest.Mock };
   job: {
     count: jest.Mock;
@@ -145,6 +146,9 @@ function createService() {
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+    },
+    business: {
+      findUnique: jest.fn().mockResolvedValue({ timezone: 'Australia/Sydney' }),
     },
     customer: {
       findFirst: jest.fn().mockResolvedValue({ id: 'customer-1' }),

@@ -20,6 +20,7 @@ import {
   AUSTRALIAN_STATES,
   getBusinessDayRangeUtc,
   getAllowedAppointmentTransitions,
+  getBusinessDateParts,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -45,6 +46,18 @@ const NON_ACTIONABLE_STATUSES = [
   'CANCELLED',
   'NO_SHOW',
   'RESCHEDULED',
+] as const;
+const REMAINING_MY_DAY_STATUSES = [
+  'SCHEDULED',
+  'CONFIRMED',
+  'ON_THE_WAY',
+  'ARRIVED',
+  'IN_PROGRESS',
+] as const;
+const CURRENT_MY_DAY_STATUSES = [
+  'IN_PROGRESS',
+  'ARRIVED',
+  'ON_THE_WAY',
 ] as const;
 const DISPATCHER_MANAGE_ROLES = [
   'OWNER',
@@ -380,27 +393,41 @@ export class AppointmentsService {
     const mapped = appointments.map((appointment) =>
       this.toAppointment(appointment),
     );
-    const actionable = mapped.filter(
-      (appointment) =>
-        !NON_ACTIONABLE_STATUSES.includes(appointment.status as never),
+    const remaining = mapped.filter((appointment) =>
+      REMAINING_MY_DAY_STATUSES.includes(appointment.status as never),
     );
-    const nextAppointment =
-      actionable.find(
-        (appointment) => new Date(appointment.scheduledEnd) >= now,
+    const completedToday = mapped.filter(
+      (appointment) => appointment.status === 'COMPLETED',
+    );
+    const currentAppointment =
+      CURRENT_MY_DAY_STATUSES.map((status) =>
+        remaining.find((appointment) => appointment.status === status),
+      ).find(Boolean) ?? null;
+    const nextUpcomingAppointment =
+      remaining.find(
+        (appointment) =>
+          ['SCHEDULED', 'CONFIRMED'].includes(appointment.status) &&
+          new Date(appointment.scheduledEnd) >= now,
       ) ??
-      actionable[0] ??
+      remaining.find((appointment) =>
+        ['SCHEDULED', 'CONFIRMED'].includes(appointment.status),
+      ) ??
       null;
+    const nextAppointment = currentAppointment ?? nextUpcomingAppointment;
+    const laterToday = remaining.filter(
+      (appointment) => appointment.id !== nextAppointment?.id,
+    );
 
     return {
       appointments: mapped,
       businessDate: start.toISOString(),
       businessName: business.name,
       businessTimezone: business.timezone,
-      completedCount: mapped.filter(
-        (appointment) => appointment.status === 'COMPLETED',
-      ).length,
+      completedCount: completedToday.length,
+      completedToday,
+      laterToday,
       nextAppointment,
-      remainingCount: actionable.length,
+      remainingCount: remaining.length,
       technicianName:
         [currentUser.firstName, currentUser.lastName]
           .filter(Boolean)
@@ -408,8 +435,8 @@ export class AppointmentsService {
       technicianUserId: currentUser.id,
       urgentCount: mapped.filter(
         (appointment) =>
-          ['HIGH', 'URGENT'].includes(appointment.job.priority) &&
-          !NON_ACTIONABLE_STATUSES.includes(appointment.status as never),
+          appointment.job.priority === 'URGENT' &&
+          REMAINING_MY_DAY_STATUSES.includes(appointment.status as never),
       ).length,
     };
   }
@@ -1284,7 +1311,19 @@ export class AppointmentsService {
       excludeAppointmentId?: string;
     },
   ): Promise<AppointmentAvailabilityResponse> {
-    if (!this.isInsideWorkingHours(input.scheduledStart, input.scheduledEnd)) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: currentUser.businessId },
+      select: { timezone: true },
+    });
+    const timezone = business?.timezone;
+
+    if (
+      !this.isInsideWorkingHours(
+        input.scheduledStart,
+        input.scheduledEnd,
+        timezone,
+      )
+    ) {
       return {
         canOverride: currentUser.role === 'OWNER',
         conflicts: [],
@@ -1343,8 +1382,20 @@ export class AppointmentsService {
     };
   }
 
-  private isInsideWorkingHours(start: Date, end: Date) {
-    return start < end && start.getHours() >= 7 && end.getHours() <= 18;
+  private isInsideWorkingHours(start: Date, end: Date, timezone?: string) {
+    const startParts = getBusinessDateParts(start, timezone);
+    const endParts = getBusinessDateParts(end, timezone);
+    const startMinutes = startParts.hour * 60 + startParts.minute;
+    const endMinutes = endParts.hour * 60 + endParts.minute;
+
+    return (
+      start < end &&
+      startMinutes >= 7 * 60 &&
+      endMinutes <= 18 * 60 &&
+      startParts.year === endParts.year &&
+      startParts.month === endParts.month &&
+      startParts.day === endParts.day
+    );
   }
 
   private assertDateRange(start: string, end: string) {
@@ -1599,6 +1650,10 @@ export class AppointmentsService {
     businessId: string,
     scheduledStart: Date,
   ) {
+    const business = await tx.business.findUnique({
+      where: { id: businessId },
+      select: { timezone: true },
+    });
     const existing = await tx.appointmentSequence.findUnique({
       where: { businessId },
     });
@@ -1613,7 +1668,8 @@ export class AppointmentsService {
         data: { businessId, nextNumber: 2 },
       });
     }
-    return `APT-${scheduledStart.getFullYear()}-${String(nextNumber).padStart(6, '0')}`;
+    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
+    return `APT-${year}-${String(nextNumber).padStart(6, '0')}`;
   }
 
   private changedFields(

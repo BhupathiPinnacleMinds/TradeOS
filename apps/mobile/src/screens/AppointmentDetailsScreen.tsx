@@ -5,6 +5,7 @@ import type {
 } from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_COLOURS,
+  DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   getAppointmentQuickActions,
   normaliseBusinessTimezone,
@@ -55,7 +56,10 @@ function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
-function formatDateTime(value: string | null, timezone = 'Australia/Sydney') {
+function formatDateTime(
+  value: string | null,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
   if (!value) return 'Not recorded';
   return formatBusinessDateTime(value, timezone);
 }

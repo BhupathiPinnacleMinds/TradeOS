@@ -136,6 +136,8 @@ export interface MyDayResponse {
   technicianUserId: string;
   technicianName: string;
   nextAppointment: Appointment | null;
+  laterToday: Appointment[];
+  completedToday: Appointment[];
   appointments: Appointment[];
   completedCount: number;
   remainingCount: number;

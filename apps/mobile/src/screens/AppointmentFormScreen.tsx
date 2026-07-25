@@ -13,11 +13,14 @@ import type {
 import {
   APPOINTMENT_LOCATION_SOURCES,
   AUSTRALIAN_STATES,
+  DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDate,
   formatBusinessTime,
   formatBusinessTimeRange,
   formatBusinessTimezoneAbbreviation,
+  getBusinessDateParts,
   normaliseBusinessTimezone,
+  zonedTimeToUtc,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -87,24 +90,59 @@ function addMinutes(date: Date, minutes: number) {
   return next;
 }
 
-function nextStart() {
-  const date = new Date();
-  date.setHours(date.getHours() + 1, 0, 0, 0);
-  return date;
+function nextStart(timezone = DEFAULT_BUSINESS_TIMEZONE) {
+  const parts = getBusinessDateParts(new Date(), timezone);
+  const nextHour = parts.hour + 1;
+  if (nextHour < 7) {
+    return zonedTimeToUtc(
+      {
+        day: parts.day,
+        hour: 7,
+        minute: 30,
+        month: parts.month,
+        year: parts.year,
+      },
+      timezone,
+    );
+  }
+  if (nextHour >= 17) {
+    return zonedTimeToUtc(
+      {
+        day: parts.day + 1,
+        hour: 7,
+        minute: 30,
+        month: parts.month,
+        year: parts.year,
+      },
+      timezone,
+    );
+  }
+  return zonedTimeToUtc(
+    {
+      day: parts.day,
+      hour: nextHour,
+      month: parts.month,
+      year: parts.year,
+    },
+    timezone,
+  );
 }
 
-function initialStart(selectedDate?: string) {
-  if (!selectedDate) return nextStart();
+function initialStart(
+  selectedDate?: string,
+  timezone = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  if (!selectedDate) return nextStart(timezone);
   const date = new Date(selectedDate);
-  if (Number.isNaN(date.getTime())) return nextStart();
+  if (Number.isNaN(date.getTime())) return nextStart(timezone);
   return date;
 }
 
-function formatDate(value: Date, timezone = 'Australia/Sydney') {
+function formatDate(value: Date, timezone: string = DEFAULT_BUSINESS_TIMEZONE) {
   return formatBusinessDate(value, timezone);
 }
 
-function formatTime(value: Date, timezone = 'Australia/Sydney') {
+function formatTime(value: Date, timezone: string = DEFAULT_BUSINESS_TIMEZONE) {
   return formatBusinessTime(value, timezone);
 }
 
@@ -162,7 +200,9 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   );
   const [appointmentType, setAppointmentType] =
     useState<AppointmentType>('INSPECTION');
-  const [startAt, setStartAt] = useState(() => initialStart(selectedDate));
+  const [startAt, setStartAt] = useState(() =>
+    initialStart(selectedDate, businessTimezone),
+  );
   const [durationMinutes, setDurationMinutes] = useState(120);
   const [notes, setNotes] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);

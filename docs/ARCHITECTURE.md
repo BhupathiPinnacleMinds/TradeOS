@@ -124,7 +124,14 @@ Database rules:
 - Cross-tenant relations must be prevented with compound relations where practical.
 - Queries must filter by authenticated `businessId`.
 - Business workspaces store an IANA `timezone` such as `Australia/Melbourne`, `Australia/Sydney`, `Australia/Brisbane`, `Australia/Adelaide`, `Australia/Perth`, `Australia/Hobart`, or `Australia/Darwin`.
-- Appointment and job timestamps are stored as UTC instants. Dashboard and Dispatcher business-day ranges are calculated from the business timezone before querying UTC timestamps.
+- New business workspaces default to `Australia/Melbourne`.
+- Appointment, job, invoice, notification and audit timestamps are stored as
+  UTC instants. Dashboard, Calendar, Dispatcher, My Day, Job filters and Tori
+  scheduling ranges are calculated from the business timezone before querying
+  UTC timestamps.
+- Date/time display must use the shared datetime utilities in
+  `packages/shared/src/datetime.ts`. UI code must not format business
+  appointment times with device-local or server-local assumptions.
 
 ## Authentication
 
@@ -199,8 +206,15 @@ Appointment and scheduling architecture:
 - One job can have many appointments for inspections, installations, maintenance, return visits and emergency visits.
 - Calendar, Tori scheduling, notifications and future travel planning should use appointments instead of job schedule fields.
 - Appointment recommendation is deliberately non-AI for now. It checks working hours, active technicians and existing appointment conflicts, then returns a recommendation with a human-readable reason.
-- Calendar is a mobile tab over appointment APIs. It supports day, week, month and agenda ranges, technician/status/search filters, jump-to-date, swipe date movement and appointment detail drill-in.
-- Dispatcher View is an operational read model over the same appointment APIs. It groups today's appointments by technician, derives status from appointment state/time, shows workload and unassigned work, exposes move/reassign hooks for future drag-and-drop, and keeps assignment changes on the existing reassignment endpoint.
+- Calendar is a mobile tab over appointment APIs. It supports day, week, month
+  and agenda ranges, technician/status/search filters, jump-to-date, swipe date
+  movement and appointment detail drill-in. Calendar ranges and grouping are
+  business-timezone based.
+- Dispatcher View is an operational read model over the same appointment APIs.
+  It groups today's appointments by technician using the business timezone,
+  derives status from appointment state/time, shows workload and unassigned
+  work, exposes move/reassign hooks for future drag-and-drop, and keeps
+  assignment changes on the existing reassignment endpoint.
 - Appointment availability checks are exposed as API architecture for Tori prompts such as “show today’s appointments”, “who is available tomorrow?”, “move John’s appointment”, and “schedule this job”. Tori must still draft or recommend changes before user confirmation.
 - Appointment reassignment is a dedicated command path, not a full appointment edit. It updates only `assignedUserId`, keeps the appointment's job, customer, time, notes and location snapshot intact, checks technician availability for the existing time window, writes `APPOINTMENT_REASSIGNED` audit/timeline metadata and calls notification-service stubs for future push/SMS/email delivery.
 - Reassignment options use the existing scheduling recommendation service plus workload/availability data so future Tori scheduling commands can reuse the same API without redesign.

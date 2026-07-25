@@ -1,4 +1,9 @@
 import type { Job, JobFilter } from '@tradieos/shared';
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessDateTime,
+  normaliseBusinessTimezone,
+} from '@tradieos/shared';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useMemo, useState } from 'react';
@@ -32,13 +37,11 @@ const filters: Array<{ label: string; value?: JobFilter }> = [
   { label: 'Unassigned', value: 'unassigned' },
 ];
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-  }).format(new Date(value));
+function formatDateTime(
+  value: string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  return formatBusinessDateTime(value, timezone);
 }
 
 function label(value: string) {
@@ -49,6 +52,7 @@ export function JobsScreen() {
   const { token, user } = useAuth();
   const { showToast } = useToast();
   const navigation = useNavigation<Navigation>();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filter, setFilter] = useState<JobFilter | undefined>();
   const [isLoading, setIsLoading] = useState(true);
@@ -179,6 +183,7 @@ export function JobsScreen() {
 
         {jobs.map((job) => (
           <JobCard
+            businessTimezone={businessTimezone}
             job={job}
             key={job.id}
             onPress={() => navigation.navigate('JobDetails', { jobId: job.id })}
@@ -200,7 +205,15 @@ export function JobsScreen() {
   );
 }
 
-function JobCard({ job, onPress }: { job: Job; onPress(): void }) {
+function JobCard({
+  businessTimezone,
+  job,
+  onPress,
+}: {
+  businessTimezone: string;
+  job: Job;
+  onPress(): void;
+}) {
   const assignee = job.assignedTo
     ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
     : 'Unassigned';
@@ -218,7 +231,9 @@ function JobCard({ job, onPress }: { job: Job; onPress(): void }) {
       <Text style={styles.meta}>
         {[job.addressLine1, job.suburb, job.state].filter(Boolean).join(', ')}
       </Text>
-      <Text style={styles.meta}>{formatDateTime(job.scheduledStart)}</Text>
+      <Text style={styles.meta}>
+        {formatDateTime(job.scheduledStart, businessTimezone)}
+      </Text>
       <View style={styles.footerRow}>
         <Text style={styles.status}>{label(job.status)}</Text>
         <Text style={styles.meta}>{assignee}</Text>

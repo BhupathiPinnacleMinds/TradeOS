@@ -21,13 +21,16 @@ const STATE_TIMEZONE: Record<string, AustralianTimezone> = {
   WA: 'Australia/Perth',
 };
 
-const DEFAULT_TIMEZONE: AustralianTimezone = 'Australia/Sydney';
+export const DEFAULT_BUSINESS_TIMEZONE: AustralianTimezone =
+  'Australia/Melbourne';
 
 export function timezoneForAustralianState(
   state?: string | null,
 ): AustralianTimezone {
-  if (!state) return DEFAULT_TIMEZONE;
-  return STATE_TIMEZONE[state.trim().toUpperCase()] ?? DEFAULT_TIMEZONE;
+  if (!state) return DEFAULT_BUSINESS_TIMEZONE;
+  return (
+    STATE_TIMEZONE[state.trim().toUpperCase()] ?? DEFAULT_BUSINESS_TIMEZONE
+  );
 }
 
 export function normaliseBusinessTimezone(
@@ -35,7 +38,7 @@ export function normaliseBusinessTimezone(
 ): AustralianTimezone {
   return AUSTRALIAN_TIMEZONES.includes(timezone as AustralianTimezone)
     ? (timezone as AustralianTimezone)
-    : DEFAULT_TIMEZONE;
+    : DEFAULT_BUSINESS_TIMEZONE;
 }
 
 function toDate(value: Date | string) {
@@ -44,7 +47,7 @@ function toDate(value: Date | string) {
 
 export function formatBusinessDate(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   return new Intl.DateTimeFormat('en-AU', {
     day: '2-digit',
@@ -56,7 +59,7 @@ export function formatBusinessDate(
 
 export function formatBusinessLongDate(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   return new Intl.DateTimeFormat('en-AU', {
     day: '2-digit',
@@ -69,7 +72,7 @@ export function formatBusinessLongDate(
 
 export function formatBusinessTime(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   return new Intl.DateTimeFormat('en-AU', {
     hour: 'numeric',
@@ -83,7 +86,7 @@ export function formatBusinessTime(
 export function formatBusinessTimeRange(
   start: Date | string,
   end: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   return `${formatBusinessTime(start, timezone)} – ${formatBusinessTime(
     end,
@@ -93,7 +96,7 @@ export function formatBusinessTimeRange(
 
 export function formatBusinessDateTime(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   return `${formatBusinessDate(value, timezone)} at ${formatBusinessTime(
     value,
@@ -103,7 +106,7 @@ export function formatBusinessDateTime(
 
 export function formatBusinessTimezoneAbbreviation(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   const parts = new Intl.DateTimeFormat('en-AU', {
     timeZone: normaliseBusinessTimezone(timezone),
@@ -114,7 +117,7 @@ export function formatBusinessTimezoneAbbreviation(
 
 export function getBusinessDateParts(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   const parts = new Intl.DateTimeFormat('en-AU', {
     day: '2-digit',
@@ -159,7 +162,7 @@ export function zonedTimeToUtc(
     minute?: number;
     second?: number;
   },
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   const normalisedTimezone = normaliseBusinessTimezone(timezone);
   const utcGuess = new Date(
@@ -184,7 +187,7 @@ export function zonedTimeToUtc(
 
 export function getBusinessDayRangeUtc(
   value: Date | string,
-  timezone: string = DEFAULT_TIMEZONE,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   const parts = getBusinessDateParts(value, timezone);
   const start = zonedTimeToUtc(
@@ -204,4 +207,29 @@ export function getBusinessDayRangeUtc(
     timezone,
   );
   return { end, start };
+}
+
+export function formatBusinessRelativeDay(
+  value: Date | string,
+  reference: Date | string = new Date(),
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const valueParts = getBusinessDateParts(value, timezone);
+  const referenceParts = getBusinessDateParts(reference, timezone);
+  const valueDay = Date.UTC(
+    valueParts.year,
+    valueParts.month - 1,
+    valueParts.day,
+  );
+  const referenceDay = Date.UTC(
+    referenceParts.year,
+    referenceParts.month - 1,
+    referenceParts.day,
+  );
+  const diffDays = Math.round((valueDay - referenceDay) / 86_400_000);
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Tomorrow';
+  if (diffDays === -1) return 'Yesterday';
+  return formatBusinessLongDate(value, timezone);
 }

@@ -3,6 +3,10 @@ import type {
   AppointmentAvailabilityResponse,
   AppointmentReassignmentTechnician,
 } from '@tradieos/shared';
+import {
+  formatBusinessDateTime,
+  normaliseBusinessTimezone,
+} from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
@@ -28,14 +32,8 @@ import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentReassign'>;
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    weekday: 'short',
-  }).format(new Date(value));
+function formatDateTime(value: string, timezone: string) {
+  return formatBusinessDateTime(value, timezone);
 }
 
 function technicianName(appointment: Appointment) {
@@ -60,6 +58,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [appointment, setAppointment] = useState<Appointment | null>(null);
   const [technicians, setTechnicians] = useState<
     AppointmentReassignmentTechnician[]
@@ -164,6 +163,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
       'Change technician?',
       `${technicianName(appointment)}\n↓\n${selectedTechnician.name}\n\nAppointment\n${formatDateTime(
         appointment.scheduledStart,
+        businessTimezone,
       )}`,
       [
         { style: 'cancel', text: 'Cancel' },
@@ -238,7 +238,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
           Current technician: {technicianName(appointment)}
         </Text>
         <Text style={styles.meta}>
-          Time: {formatDateTime(appointment.scheduledStart)}
+          Time: {formatDateTime(appointment.scheduledStart, businessTimezone)}
         </Text>
         <Text style={styles.meta}>
           Location: {appointmentAddress(appointment)}

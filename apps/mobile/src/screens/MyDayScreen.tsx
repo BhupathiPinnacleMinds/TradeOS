@@ -37,6 +37,12 @@ import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'MyDay'>;
 type MyDayData = Awaited<ReturnType<typeof myDayRequest>>;
+type MyDayCardAction = {
+  kind: 'primary' | 'secondary';
+  label: string;
+  onPress(): void;
+};
+const CURRENT_STATUSES = ['IN_PROGRESS', 'ARRIVED', 'ON_THE_WAY'];
 
 export function MyDayScreen({ navigation }: Props) {
   const { token, user } = useAuth();
@@ -139,7 +145,14 @@ export function MyDayScreen({ navigation }: Props) {
               <Summary label="Urgent" value={data.urgentCount} />
             </View>
 
-            <Section title="Next appointment">
+            <Section
+              title={
+                data.nextAppointment &&
+                CURRENT_STATUSES.includes(data.nextAppointment.status)
+                  ? 'Current appointment'
+                  : 'Next appointment'
+              }
+            >
               <NextAppointment
                 appointment={data.nextAppointment}
                 busyAppointmentId={busyAppointmentId}
@@ -153,17 +166,53 @@ export function MyDayScreen({ navigation }: Props) {
               />
             </Section>
 
-            <Section title="Today's assigned appointments">
-              {data.appointments.length === 0 ? (
+            <Section title="Later today">
+              {data.laterToday.length === 0 ? (
                 <Text style={styles.meta}>
-                  No appointments assigned to you today.
+                  No other appointments scheduled today.
                 </Text>
               ) : (
-                data.appointments.map((appointment) => (
+                data.laterToday.map((appointment) => (
                   <AppointmentCard
                     appointment={appointment}
                     busy={busyAppointmentId === appointment.id}
                     key={appointment.id}
+                    onCall={() => callCustomer(appointment)}
+                    onNavigate={() => openMaps(appointment)}
+                    onOpen={() =>
+                      navigation.navigate('AppointmentDetails', {
+                        appointmentId: appointment.id,
+                      })
+                    }
+                    onTransition={(action) =>
+                      void runTransition(appointment, action)
+                    }
+                    role={user?.role}
+                    timezone={timezone}
+                    userId={user?.id}
+                  />
+                ))
+              )}
+            </Section>
+
+            <Section title="Completed today">
+              {data.completedToday.length === 0 ? (
+                data.remainingCount === 0 ? (
+                  <Text style={styles.meta}>
+                    All of today's appointments are complete.
+                  </Text>
+                ) : (
+                  <Text style={styles.meta}>
+                    No completed appointments yet.
+                  </Text>
+                )
+              ) : (
+                data.completedToday.map((appointment) => (
+                  <AppointmentCard
+                    appointment={appointment}
+                    busy={busyAppointmentId === appointment.id}
+                    key={appointment.id}
+                    onCall={() => callCustomer(appointment)}
                     onNavigate={() => openMaps(appointment)}
                     onOpen={() =>
                       navigation.navigate('AppointmentDetails', {
@@ -208,16 +257,13 @@ function NextAppointment({
   userId?: string;
 }) {
   if (!appointment) {
-    return (
-      <Text style={styles.meta}>
-        Nothing else assigned today. Nice little pocket of breathing room.
-      </Text>
-    );
+    return <Text style={styles.meta}>You're all clear today.</Text>;
   }
   return (
     <AppointmentCard
       appointment={appointment}
       busy={busyAppointmentId === appointment.id}
+      onCall={() => callCustomer(appointment)}
       onNavigate={() => openMaps(appointment)}
       onOpen={() =>
         navigation.navigate('AppointmentDetails', {
@@ -235,6 +281,7 @@ function NextAppointment({
 function AppointmentCard({
   appointment,
   busy,
+  onCall,
   onNavigate,
   onOpen,
   onTransition,
@@ -244,6 +291,7 @@ function AppointmentCard({
 }: {
   appointment: Appointment;
   busy: boolean;
+  onCall(): void;
   onNavigate(): void;
   onOpen(): void;
   onTransition(action: AppointmentTransitionAction): void;
@@ -257,7 +305,6 @@ function AppointmentCard({
     isAssignedTechnician: appointment.assignedUserId === userId,
     userRole: role,
   });
-  const nextAction = transitions[0];
   const address = [
     appointment.addressLine1,
     appointment.suburb,
@@ -266,6 +313,16 @@ function AppointmentCard({
   ]
     .filter(Boolean)
     .join(', ');
+  const actions = myDayCardActions({
+    appointment,
+    busy,
+    canNavigate: Boolean(address),
+    onCall,
+    onNavigate,
+    onOpen,
+    onTransition,
+    transitions,
+  });
 
   return (
     <Pressable style={styles.card} onPress={onOpen}>
@@ -295,28 +352,111 @@ function AppointmentCard({
         )}
       </Text>
       <View style={styles.actionRow}>
-        {address ? (
-          <Pressable style={styles.secondaryButton} onPress={onNavigate}>
-            <Text style={styles.secondaryButtonText}>Navigate</Text>
-          </Pressable>
-        ) : null}
-        {nextAction ? (
-          <Pressable
-            disabled={busy}
-            style={[styles.primaryButton, busy && styles.disabledButton]}
-            onPress={() => onTransition(nextAction.action)}
-          >
-            {busy ? <ActivityIndicator color="#FFFFFF" /> : null}
-            <Text style={styles.primaryButtonText}>{nextAction.label}</Text>
-          </Pressable>
-        ) : (
-          <Pressable style={styles.secondaryButton} onPress={onOpen}>
-            <Text style={styles.secondaryButtonText}>View details</Text>
-          </Pressable>
+        {actions.map((action) =>
+          action.kind === 'primary' ? (
+            <Pressable
+              disabled={busy}
+              key={action.label}
+              onPress={action.onPress}
+              style={[styles.primaryButton, busy && styles.disabledButton]}
+            >
+              {busy ? <ActivityIndicator color="#FFFFFF" /> : null}
+              <Text style={styles.primaryButtonText}>{action.label}</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              key={action.label}
+              onPress={action.onPress}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>{action.label}</Text>
+            </Pressable>
+          ),
         )}
       </View>
     </Pressable>
   );
+}
+
+function myDayCardActions({
+  appointment,
+  busy,
+  canNavigate,
+  onCall,
+  onNavigate,
+  onOpen,
+  onTransition,
+  transitions,
+}: {
+  appointment: Appointment;
+  busy: boolean;
+  canNavigate: boolean;
+  onCall(): void;
+  onNavigate(): void;
+  onOpen(): void;
+  onTransition(action: AppointmentTransitionAction): void;
+  transitions: ReturnType<typeof getAllowedAppointmentTransitions>;
+}): MyDayCardAction[] {
+  const transition = (action: AppointmentTransitionAction) =>
+    transitions.find((option) => option.action === action);
+  const transitionAction = (
+    action: AppointmentTransitionAction,
+    label: string,
+  ) => {
+    const option = transition(action);
+    return option
+      ? {
+          kind: 'primary' as const,
+          label,
+          onPress: () => {
+            if (!busy) onTransition(option.action);
+          },
+        }
+      : null;
+  };
+  const navigateAction = canNavigate
+    ? { kind: 'secondary' as const, label: 'Navigate', onPress: onNavigate }
+    : null;
+  const callAction = appointment.job.customer.phone
+    ? { kind: 'secondary' as const, label: 'Call', onPress: onCall }
+    : null;
+  const detailAction = {
+    kind: 'secondary' as const,
+    label: appointment.status === 'COMPLETED' ? 'View summary' : 'Details',
+    onPress: onOpen,
+  };
+
+  if (['SCHEDULED', 'CONFIRMED'].includes(appointment.status)) {
+    return [navigateAction, transitionAction('start-travel', 'Start travel')]
+      .filter(isMyDayCardAction)
+      .slice(0, 2);
+  }
+  if (appointment.status === 'ON_THE_WAY') {
+    return [navigateAction, transitionAction('arrive', 'Arrived')]
+      .filter(isMyDayCardAction)
+      .slice(0, 2);
+  }
+  if (appointment.status === 'ARRIVED') {
+    return [transitionAction('start', 'Start work'), callAction]
+      .filter(isMyDayCardAction)
+      .slice(0, 2);
+  }
+  if (appointment.status === 'IN_PROGRESS') {
+    return [transitionAction('complete', 'Complete'), detailAction]
+      .filter(isMyDayCardAction)
+      .slice(0, 2);
+  }
+  if (appointment.status === 'COMPLETED') {
+    return [detailAction];
+  }
+  return [detailAction];
+}
+
+function isMyDayCardAction(
+  action: MyDayCardAction | null,
+): action is MyDayCardAction {
+  return Boolean(action);
 }
 
 function Section({
@@ -365,6 +505,12 @@ function openMaps(appointment: Appointment) {
   void Linking.openURL(
     `https://maps.apple.com/?q=${encodeURIComponent(address)}`,
   );
+}
+
+function callCustomer(appointment: Appointment) {
+  const phone = appointment.job.customer.phone;
+  if (!phone) return;
+  void Linking.openURL(`tel:${phone}`);
 }
 
 function friendlyError(error: unknown) {

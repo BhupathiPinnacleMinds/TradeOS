@@ -1,5 +1,6 @@
 import type { DashboardSummaryResponse } from '@tradieos/shared';
 import {
+  DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
@@ -26,7 +27,10 @@ function formatCurrency(cents: number) {
   }).format(cents / 100);
 }
 
-function formatAppointmentTime(value: string, timezone = 'Australia/Sydney') {
+function formatAppointmentTime(
+  value: string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
   return formatBusinessDateTime(value, timezone);
 }
 

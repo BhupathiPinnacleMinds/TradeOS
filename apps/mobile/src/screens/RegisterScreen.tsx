@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   AUSTRALIAN_TIMEZONES,
+  DEFAULT_BUSINESS_TIMEZONE,
   timezoneForAustralianState,
 } from '@tradieos/shared';
 import { useAuth } from '../auth/AuthContext';
@@ -39,9 +40,9 @@ export function RegisterScreen({ navigation }: Props) {
     businessEmail: '',
     address: '',
     suburb: '',
-    state: 'NSW',
+    state: 'VIC',
     postcode: '',
-    timezone: timezoneForAustralianState('NSW'),
+    timezone: DEFAULT_BUSINESS_TIMEZONE,
   });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);

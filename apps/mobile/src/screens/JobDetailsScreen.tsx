@@ -1,6 +1,8 @@
 import type { Appointment, Job, JobStatus } from '@tradieos/shared';
 import {
+  DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
+  formatBusinessTimeRange,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -38,7 +40,10 @@ function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
-function formatDateTime(value: string | null, timezone = 'Australia/Sydney') {
+function formatDateTime(
+  value: string | null,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
   if (!value) return 'Not recorded';
   return formatBusinessDateTime(value, timezone);
 }
@@ -305,8 +310,12 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               {label(appointment.appointmentType)}
             </Text>
             <Text style={styles.meta}>
-              {formatDateTime(appointment.scheduledStart, businessTimezone)} –{' '}
-              {formatDateTime(appointment.scheduledEnd, businessTimezone)}
+              {formatDateTime(appointment.scheduledStart, businessTimezone)} ·{' '}
+              {formatBusinessTimeRange(
+                appointment.scheduledStart,
+                appointment.scheduledEnd,
+                businessTimezone,
+              )}
             </Text>
             <Text style={styles.meta}>Status: {label(appointment.status)}</Text>
             <Text style={styles.meta}>

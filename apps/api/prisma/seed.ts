@@ -13,6 +13,7 @@ const salesId = 'demo-sales-user';
 const readOnlyId = 'demo-readonly-user';
 const databaseUrl = process.env.DATABASE_URL;
 const scrypt = promisify(scryptCallback);
+const demoBusinessTimezone = 'Australia/Sydney';
 
 if (!databaseUrl) {
   throw new Error('DATABASE_URL is required to seed TradieOS demo data');
@@ -20,10 +21,78 @@ if (!databaseUrl) {
 
 const client = new Client({ connectionString: databaseUrl });
 
-function hoursFromStartOfToday(hours: number) {
-  const date = new Date();
-  date.setHours(hours, 0, 0, 0);
-  return date;
+function zonedDateParts(value: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+    minute: '2-digit',
+    month: '2-digit',
+    second: '2-digit',
+    timeZone: timezone,
+    year: 'numeric',
+  }).formatToParts(value);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    day: Number(map.day),
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+    month: Number(map.month),
+    second: Number(map.second),
+    year: Number(map.year),
+  };
+}
+
+function timezoneOffsetMilliseconds(value: Date, timezone: string) {
+  const parts = zonedDateParts(value, timezone);
+  const asUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  return asUtc - value.getTime();
+}
+
+function zonedTimeToUtc(parts: {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute?: number;
+  second?: number;
+}) {
+  const utcGuess = new Date(
+    Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute ?? 0,
+      parts.second ?? 0,
+    ),
+  );
+  const firstPass = new Date(
+    utcGuess.getTime() -
+      timezoneOffsetMilliseconds(utcGuess, demoBusinessTimezone),
+  );
+  return new Date(
+    utcGuess.getTime() -
+      timezoneOffsetMilliseconds(firstPass, demoBusinessTimezone),
+  );
+}
+
+function businessTimeToday(hour: number, minute = 0, dayOffset = 0) {
+  const today = zonedDateParts(new Date(), demoBusinessTimezone);
+  return zonedTimeToUtc({
+    day: today.day + dayOffset,
+    hour,
+    minute,
+    month: today.month,
+    year: today.year,
+  });
 }
 
 async function query(sql: string, values: unknown[] = []) {
@@ -353,8 +422,8 @@ async function main() {
         'Electrical',
         'SCHEDULED',
         'HIGH',
-        hoursFromStartOfToday(9),
-        hoursFromStartOfToday(11),
+        businessTimeToday(9),
+        businessTimeToday(11),
         120,
         null,
         null,
@@ -383,10 +452,10 @@ async function main() {
         'Plumbing',
         'IN_PROGRESS',
         'URGENT',
-        hoursFromStartOfToday(13),
-        hoursFromStartOfToday(15),
+        businessTimeToday(11, 30),
+        businessTimeToday(12, 30),
         120,
-        hoursFromStartOfToday(13),
+        businessTimeToday(11, 30),
         null,
         null,
         '8 Industrial Drive',
@@ -413,8 +482,8 @@ async function main() {
         'Electrical',
         'NEW',
         'NORMAL',
-        hoursFromStartOfToday(16),
-        hoursFromStartOfToday(17),
+        businessTimeToday(13),
+        businessTimeToday(15),
         60,
         null,
         null,
@@ -443,8 +512,8 @@ async function main() {
         'Electrical',
         'SCHEDULED',
         'NORMAL',
-        hoursFromStartOfToday(34),
-        hoursFromStartOfToday(36),
+        businessTimeToday(7, 30, 1),
+        businessTimeToday(8, 30, 1),
         120,
         null,
         null,
@@ -473,12 +542,12 @@ async function main() {
         'Electrical',
         'COMPLETED',
         'LOW',
-        hoursFromStartOfToday(-16),
-        hoursFromStartOfToday(-14),
+        businessTimeToday(15, 30, -1),
+        businessTimeToday(17, 0, -1),
         120,
-        hoursFromStartOfToday(-16),
-        hoursFromStartOfToday(-14),
-        hoursFromStartOfToday(-14),
+        businessTimeToday(15, 30, -1),
+        businessTimeToday(17, 0, -1),
+        businessTimeToday(17, 0, -1),
         '55 Crown Street',
         null,
         'Surry Hills',
@@ -503,8 +572,8 @@ async function main() {
         'Electrical',
         'SCHEDULED',
         'NORMAL',
-        hoursFromStartOfToday(8),
-        hoursFromStartOfToday(9),
+        businessTimeToday(7, 30),
+        businessTimeToday(8, 30),
         60,
         null,
         null,
@@ -553,8 +622,8 @@ async function main() {
         'APT-2026-000001',
         'INSTALLATION',
         'CONFIRMED',
-        hoursFromStartOfToday(9),
-        hoursFromStartOfToday(11),
+        businessTimeToday(9),
+        businessTimeToday(11),
         null,
         null,
         120,
@@ -570,9 +639,9 @@ async function main() {
         'APT-2026-000002',
         'INSPECTION',
         'IN_PROGRESS',
-        hoursFromStartOfToday(13),
-        hoursFromStartOfToday(15),
-        hoursFromStartOfToday(13),
+        businessTimeToday(11, 30),
+        businessTimeToday(12, 30),
+        businessTimeToday(11, 30),
         null,
         120,
         25,
@@ -587,8 +656,8 @@ async function main() {
         'APT-2026-000003',
         'INSPECTION',
         'SCHEDULED',
-        hoursFromStartOfToday(16),
-        hoursFromStartOfToday(17),
+        businessTimeToday(13),
+        businessTimeToday(15),
         null,
         null,
         60,
@@ -604,8 +673,8 @@ async function main() {
         'APT-2026-000004',
         'INSTALLATION',
         'SCHEDULED',
-        hoursFromStartOfToday(34),
-        hoursFromStartOfToday(36),
+        businessTimeToday(7, 30, 1),
+        businessTimeToday(8, 30, 1),
         null,
         null,
         120,
@@ -621,10 +690,10 @@ async function main() {
         'APT-2026-000005',
         'MAINTENANCE',
         'COMPLETED',
-        hoursFromStartOfToday(-16),
-        hoursFromStartOfToday(-14),
-        hoursFromStartOfToday(-16),
-        hoursFromStartOfToday(-14),
+        businessTimeToday(15, 30, -1),
+        businessTimeToday(17, 0, -1),
+        businessTimeToday(15, 30, -1),
+        businessTimeToday(17, 0, -1),
         120,
         20,
         '11.1',
@@ -638,8 +707,8 @@ async function main() {
         'APT-2026-000006',
         'RETURN_VISIT',
         'SCHEDULED',
-        hoursFromStartOfToday(58),
-        hoursFromStartOfToday(59),
+        businessTimeToday(15, 30, 2),
+        businessTimeToday(17, 0, 2),
         null,
         null,
         60,
@@ -655,8 +724,8 @@ async function main() {
         'APT-2026-000007',
         'MAINTENANCE',
         'CONFIRMED',
-        hoursFromStartOfToday(8),
-        hoursFromStartOfToday(9),
+        businessTimeToday(7, 30),
+        businessTimeToday(8, 30),
         null,
         null,
         60,
@@ -747,7 +816,7 @@ async function main() {
         'demo-job-5',
         'INV-2001',
         'SENT',
-        hoursFromStartOfToday(168),
+        businessTimeToday(17, 0, 7),
         '800.00',
         '80.00',
         '880.00',
@@ -760,7 +829,7 @@ async function main() {
         'demo-job-1',
         'INV-2002',
         'PARTIALLY_PAID',
-        hoursFromStartOfToday(72),
+        businessTimeToday(17, 0, 3),
         '650.00',
         '65.00',
         '715.00',

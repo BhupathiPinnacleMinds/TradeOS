@@ -55,6 +55,17 @@ Important fields:
 - createdAt
 - updatedAt
 
+Timezone rules:
+
+- `Business.timezone` stores an IANA timezone and defaults to
+  `Australia/Melbourne`.
+- Business timestamps are stored as UTC instants in PostgreSQL.
+- UI display and business-day querying convert UTC values through the business
+  timezone, never through hardcoded UTC offsets.
+- Seed data may choose a realistic demo timezone, such as `Australia/Sydney`
+  for the NSW demo company, but generated appointment slots must still be
+  created as business-local times converted to UTC.
+
 Relationships:
 
 - users
@@ -301,7 +312,9 @@ Scheduling rules:
 - Manual one-off appointment addresses do not create a permanent customer service site unless the user explicitly chooses to save the address as a site.
 - The current reschedule model keeps one active appointment row and records `APPOINTMENT_RESCHEDULED` in audit/timeline metadata. Active appointments remain `SCHEDULED` or `CONFIRMED` after date/time changes.
 - Calendar conflict detection compares assigned technician, scheduled start/end, closed statuses and business working hours.
-- Business working hours, technician working hours, lunch breaks and public holidays are future extension points; the current implementation enforces default business hours in the appointment service.
+- Business working-hour validation uses the business timezone and current
+  default hours of 07:00-18:00 local business time. Technician working hours,
+  lunch breaks and public holidays are future extension points.
 
 ### Quote
 
@@ -562,3 +575,8 @@ Database security rules:
 ## Migration rule
 
 All schema changes must include Prisma migrations and updated documentation when they change product concepts or access rules.
+
+Timezone default migration:
+
+- `20260724123000_business_timezone_default_melbourne` updates the Prisma
+  default for new business workspaces from Sydney to Melbourne.

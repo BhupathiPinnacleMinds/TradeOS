@@ -199,19 +199,40 @@ Only Customer Details, Job Details, Schedule Now and future explicit actions may
 prefill a customer. Changing or clearing customer must clear dependent site, job
 and location state.
 
-Appointment date/time copy must use business timezone utilities. Display dates
-as `DD/MM/YYYY`, times as `h:mm am/pm`, time ranges as `8:00 pm – 10:00 pm`, and
-timezone abbreviations from `Intl` so Melbourne/Sydney/Hobart switch between
-AEST/AEDT, Adelaide switches between ACST/ACDT, Brisbane remains AEST and Perth
-remains AWST.
+Appointment date/time copy must use the shared business timezone utilities.
+Display examples:
+
+- `Fri, 24 Jul 2026`
+- `7:30 AM`
+- `7:30 AM – 9:00 AM`
+- `Today`
+- `Tomorrow`
+- `Yesterday`
+
+Avoid ISO strings anywhere in the UI. Calendar, Dispatcher, Dashboard, My Day,
+Appointment Details, Job Details, Notifications, Tori scheduling surfaces and
+Reports must all use the same helper layer so a business sees one consistent
+local time. Timezone handling must use IANA timezone names and `Intl` so
+Melbourne/Sydney/Hobart switch between AEST/AEDT, Adelaide switches between
+ACST/ACDT, Brisbane remains AEST and Perth remains AWST.
+
+Seed and demo appointment examples should look like realistic tradie working
+hours: `7:30 AM – 8:30 AM`, `9:00 AM – 11:00 AM`, `11:30 AM – 12:30 PM`,
+`1:00 PM – 3:00 PM`, and `3:30 PM – 5:00 PM`.
 
 Technician field workflow UI:
 
 - Technician users should land on My Day instead of the owner dashboard.
 - My Day should show only assigned appointment counts and field actions, not
   owner-only business metrics.
-- Keep 2-3 primary actions visible on appointment cards. Put secondary work in
-  Appointment Details or More menus.
+- My Day is organised as summary metrics, Current/Next appointment, Later today
+  and Completed today. The Current/Next appointment must not be repeated in
+  Later today.
+- My Day appointment cards should be compact and show suburb instead of the full
+  address, with time, job title, customer, priority and status visible.
+- Keep no more than two actions visible on My Day appointment cards. Use short
+  labels such as `Start travel`, `Arrived`, `Start work` and `Complete`. Put
+  secondary work in Appointment Details or More menus.
 - Completing an appointment must open a review flow with work completed,
   technician notes and follow-up fields before submitting.
 - Use large touch targets, pull-to-refresh, centred mutation loaders and friendly
