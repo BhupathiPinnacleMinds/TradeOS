@@ -22,6 +22,12 @@ const technician: AuthenticatedUser = {
   role: 'TECHNICIAN',
 };
 
+const BUSINESS_HOURS_START = '2026-07-15T01:30:00.000Z'; // 11:30 AM Australia/Sydney
+const BUSINESS_HOURS_END = '2026-07-15T02:30:00.000Z'; // 12:30 PM Australia/Sydney
+const BUSINESS_HOURS_RESCHEDULE_END = '2026-07-15T03:00:00.000Z'; // 1:00 PM Australia/Sydney
+const OVERLAPPING_START = '2026-07-15T00:30:00.000Z'; // 10:30 AM Australia/Sydney
+const OVERLAPPING_END = '2026-07-15T00:45:00.000Z'; // 10:45 AM Australia/Sydney
+
 function userForRole(role: BusinessRole): AuthenticatedUser {
   return {
     businessId: 'business-1',
@@ -247,8 +253,8 @@ describe('AppointmentsService', () => {
       appointmentType: 'INSPECTION',
       assignedUserId: 'tech-1',
       jobId: 'job-1',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
     });
 
     expect(prisma.appointmentSequence.update).toHaveBeenCalledWith(
@@ -266,8 +272,8 @@ describe('AppointmentsService', () => {
       assignedUserId: 'tech-1',
       jobId: 'job-1',
       locationSource: 'CUSTOMER_DEFAULT',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
     });
 
     const createCalls = prisma.appointment.create.mock
@@ -287,8 +293,8 @@ describe('AppointmentsService', () => {
       customerSiteId: 'site-1',
       jobId: 'job-1',
       locationSource: 'CUSTOMER_SITE',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
     });
 
     const siteCalls = prisma.customerSite.findFirst.mock
@@ -314,8 +320,8 @@ describe('AppointmentsService', () => {
         jobId: 'job-1',
         locationSource: 'MANUAL',
         postcode: '300',
-        scheduledEnd: '2026-07-15T10:00:00',
-        scheduledStart: '2026-07-15T09:00:00',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
         state: 'VIC',
         suburb: 'Melbourne',
       })
@@ -335,8 +341,8 @@ describe('AppointmentsService', () => {
       jobId: 'job-1',
       locationSource: 'MANUAL',
       postcode: '3000',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
       state: 'VIC',
       suburb: 'Melbourne',
     });
@@ -361,8 +367,8 @@ describe('AppointmentsService', () => {
       locationSource: 'MANUAL',
       postcode: '3000',
       saveAddressAsCustomerSite: true,
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
       state: 'VIC',
       suburb: 'Melbourne',
     });
@@ -420,8 +426,8 @@ describe('AppointmentsService', () => {
     prisma.appointment.findMany.mockResolvedValueOnce([]);
     prisma.appointment.update.mockResolvedValue(
       appointment({
-        scheduledEnd: new Date('2026-07-15T11:00:00.000Z'),
-        scheduledStart: new Date('2026-07-15T09:00:00.000Z'),
+        scheduledEnd: new Date(BUSINESS_HOURS_RESCHEDULE_END),
+        scheduledStart: new Date(BUSINESS_HOURS_START),
         status: 'SCHEDULED',
       }),
     );
@@ -430,8 +436,8 @@ describe('AppointmentsService', () => {
       appointmentType: 'INSPECTION',
       assignedUserId: 'tech-1',
       jobId: 'job-1',
-      scheduledEnd: '2026-07-15T11:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_RESCHEDULE_END,
+      scheduledStart: BUSINESS_HOURS_START,
       status: 'RESCHEDULED',
     });
 
@@ -454,8 +460,8 @@ describe('AppointmentsService', () => {
 
     const recommendation = await service.recommend(owner, {
       jobId: 'job-1',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
     });
 
     expect(recommendation.recommendedTechnicianId).toBe('tech-1');
@@ -469,8 +475,8 @@ describe('AppointmentsService', () => {
         appointmentType: 'INSPECTION',
         assignedUserId: 'tech-1',
         jobId: 'job-1',
-        scheduledEnd: '2026-07-15T10:00:00',
-        scheduledStart: '2026-07-15T09:00:00',
+        scheduledEnd: OVERLAPPING_END,
+        scheduledStart: OVERLAPPING_START,
       })
       .catch((error) => {
         expectDomainError(error, 'APPOINTMENT_CONFLICT');
@@ -485,8 +491,8 @@ describe('AppointmentsService', () => {
       appointmentType: 'INSPECTION',
       assignedUserId: 'tech-1',
       jobId: 'job-1',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: OVERLAPPING_END,
+      scheduledStart: OVERLAPPING_START,
     });
 
     expect(prisma.appointment.create).toHaveBeenCalled();
@@ -497,8 +503,8 @@ describe('AppointmentsService', () => {
 
     const availability = await service.availability(owner, {
       assignedUserId: 'tech-1',
-      scheduledEnd: '2026-07-15T10:00:00',
-      scheduledStart: '2026-07-15T09:00:00',
+      scheduledEnd: OVERLAPPING_END,
+      scheduledStart: OVERLAPPING_START,
     });
 
     expect(availability.hasConflict).toBe(true);
@@ -950,8 +956,8 @@ describe('AppointmentsService', () => {
           appointmentType: 'INSPECTION',
           assignedUserId: 'tech-1',
           jobId: 'job-1',
-          scheduledEnd: '2026-07-15T10:00:00',
-          scheduledStart: '2026-07-15T09:00:00',
+          scheduledEnd: BUSINESS_HOURS_END,
+          scheduledStart: BUSINESS_HOURS_START,
         }),
       ).resolves.toMatchObject({ appointment: { id: 'appointment-1' } });
     },
@@ -967,8 +973,8 @@ describe('AppointmentsService', () => {
           appointmentType: 'INSPECTION',
           assignedUserId: 'tech-1',
           jobId: 'job-1',
-          scheduledEnd: '2026-07-15T10:00:00',
-          scheduledStart: '2026-07-15T09:00:00',
+          scheduledEnd: BUSINESS_HOURS_END,
+          scheduledStart: BUSINESS_HOURS_START,
         })
         .catch((error) => {
           expectDomainError(error, 'INSUFFICIENT_PERMISSION');
