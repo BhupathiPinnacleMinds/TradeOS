@@ -246,3 +246,7 @@ Current implementation supports the full role model documented in [Roles and Per
   view over assigned appointments. It supports navigate, start travel, arrived,
   start work, completion review, technician notes, work-completed notes and
   follow-up flags while keeping job and appointment status separate.
+- Media evidence capture lets authorised users take photos, choose photo-library
+  images and attach supported documents to customers, jobs and appointments
+  through the tenant-scoped Media API. Users review files before upload; picker
+  selection alone never sends or publishes evidence.

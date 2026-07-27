@@ -23,6 +23,12 @@
 - Upload validation rejects path traversal filenames, unsupported MIME types,
   mismatched media types, oversize files and video/audio uploads until those
   modules are implemented.
+- Native picker uploads validate MIME type and size in the mobile app before
+  creating an upload target, then the API repeats validation before any
+  `MediaAsset` can be completed.
+- Cancelled or failed native uploads attempt to cancel the pending media record
+  through the authenticated API so incomplete evidence is not mistaken for
+  completed job history.
 - User-facing screens must not display raw storage object keys, internal API
   URLs, signed tokens, local filesystem paths or raw API error JSON.
 

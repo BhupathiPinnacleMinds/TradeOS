@@ -45,6 +45,9 @@ describe('mobile media API client path helpers', () => {
     expect(buildMediaLocalUploadPath('media-1')).toBe(
       '/media/media-1/local-upload',
     );
+    expect(buildApiRequestUrl('/media/media-1/cancel')).toBe(
+      'http://localhost:3000/api/media/media-1/cancel',
+    );
     expect(
       buildMediaAccessUrl(
         '/api/media/media-1/file',

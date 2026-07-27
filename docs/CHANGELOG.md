@@ -10,6 +10,9 @@
   S3-compatible adapter seam.
 - Media API endpoints for upload targets, local uploads, completion, listing,
   preview/download, metadata update, archive and restore.
+- Native mobile evidence capture with camera photos, photo-library selection,
+  document picker uploads, pre-upload review, per-file categories, progress,
+  retry and cancel handling through the existing Media API.
 - Demo seed media including before/after photos, compliance certificate,
   customer plan and receipt placeholders.
 - Mobile media evidence flow, secure file preview screen and media sections on

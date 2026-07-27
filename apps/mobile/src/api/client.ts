@@ -678,6 +678,13 @@ export function uploadLocalMediaRequest(
   });
 }
 
+export function cancelMediaUploadRequest(token: string, mediaId: string) {
+  return apiRequest<MediaDetailResponse>(`/media/${mediaId}/cancel`, {
+    method: 'POST',
+    token,
+  });
+}
+
 export function mediaPreviewRequest(token: string, mediaId: string) {
   return apiRequest<MediaAccessResponse>(buildMediaPreviewPath(mediaId), {
     token,

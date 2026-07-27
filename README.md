@@ -88,6 +88,16 @@ Expo SecureStore on device, and sends that token with dashboard requests. The
 dashboard reads `GET /api/dashboard/summary` from PostgreSQL and derives
 `businessId` from the logged-in user's JWT.
 
+Mobile evidence capture uses Expo-compatible native modules:
+
+- camera/photo library: `expo-image-picker`
+- PDFs, Word, Excel and text files: `expo-document-picker`
+- authenticated cached reads/uploads: `expo-file-system`
+
+Open evidence from My Day, Appointment Details, Job Details or Customer Details
+so the upload is attached to an existing tenant-scoped appointment, job or
+customer.
+
 Local media/document storage defaults to:
 
 ```bash

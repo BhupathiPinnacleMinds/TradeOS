@@ -30,6 +30,16 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-secure-store"]
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "TradieOS uses the camera so tradies can capture job evidence photos.",
+          "photosPermission": "TradieOS uses your photo library so you can attach job evidence photos."
+        }
+      ],
+      "expo-document-picker"
+    ]
   }
 }

@@ -83,6 +83,17 @@ Expo supports:
 - EAS Build for native builds
 - EAS Submit for app store submission
 
+The mobile app uses Expo SDK-compatible native modules for field evidence:
+
+- `expo-image-picker` for camera and photo-library selection.
+- `expo-document-picker` for PDFs, Word, Excel and text documents.
+- `expo-file-system` for authenticated cached file reads/downloads and local
+  upload byte transfer.
+
+Camera and photo-library permission copy lives in `apps/mobile/app.json`.
+Re-run `expo install --check` after Expo SDK upgrades to verify the bundled
+native module versions remain compatible with Expo Go and EAS builds.
+
 Future production mobile builds should use EAS.
 
 ## Future CI/CD

@@ -18,6 +18,22 @@ Mobile screens consume the API through shared types and role-aware navigation:
 Job Details, Appointment Details, Customer Details and My Day can show or add
 media according to the existing role/permission model.
 
+The mobile evidence capture flow uses Expo-compatible native pickers inside the
+existing Media API pipeline:
+
+1. `expo-image-picker` captures camera photos or selects photo-library images.
+2. `expo-document-picker` selects PDFs, Word, Excel or text files copied to the
+   app cache.
+3. The user reviews selected files, categories, caption, notes and visibility.
+4. The app creates a tenant-scoped upload target with `POST /api/media/upload-target`.
+5. Local development uploads file bytes through `POST /api/media/:id/local-upload`,
+   which completes the existing `MediaAsset`.
+6. Failed or cancelled pending uploads call `POST /api/media/:id/cancel` where
+   possible, then refresh through the normal media list APIs.
+
+Temporary cache files may be deleted after success or cancellation. Original
+device photos are never deleted.
+
 ## Overview
 
 TradieOS is a TypeScript monorepo with a mobile frontend, API backend, shared types, and PostgreSQL database. The architecture is designed for a multi-tenant SaaS product where every business workspace is isolated.

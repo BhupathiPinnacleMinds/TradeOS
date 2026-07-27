@@ -16,6 +16,14 @@
   text centred horizontally and vertically with accessible touch targets.
 - My Day keeps field cards uncluttered and surfaces evidence capture only during
   active field workflow states.
+- Add Evidence opens a concise native action menu: Take photo, Choose photos,
+  Choose document and Cancel. Selected files are reviewed before upload with
+  thumbnail/icon, filename, size, category, shared caption/notes and per-file
+  status. The app must not auto-upload immediately after a picker returns.
+- Upload progress should be visible per file and overall. Failed files should
+  offer Retry, pending/uploading files should support Cancel where the API can
+  cancel the upload target, and picker cancellation should be silent rather than
+  shown as an error.
 - Customer Details should show customer-level and linked job media from the
   same secured media list API.
 - Tori may later summarise media metadata, but must never send customer-facing
