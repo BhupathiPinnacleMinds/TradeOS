@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location 'C:\Users\bhupa\WorkSpace\TradeOS\apps\mobile'
 
 $env:EXPO_PUBLIC_API_URL = 'http://192.168.0.234:3000/api'
+$env:CI = 'true'
 $env:EXPO_NO_TELEMETRY = '1'
 
 Remove-Item Env:\EXPO_OFFLINE -ErrorAction SilentlyContinue

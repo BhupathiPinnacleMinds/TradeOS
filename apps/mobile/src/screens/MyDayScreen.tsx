@@ -184,6 +184,13 @@ export function MyDayScreen({ navigation }: Props) {
                         appointmentId: appointment.id,
                       })
                     }
+                    onEvidence={() =>
+                      navigation.navigate('MediaEvidence', {
+                        appointmentId: appointment.id,
+                        customerId: appointment.job.customer.id,
+                        jobId: appointment.jobId,
+                      })
+                    }
                     onTransition={(action) =>
                       void runTransition(appointment, action)
                     }
@@ -217,6 +224,13 @@ export function MyDayScreen({ navigation }: Props) {
                     onOpen={() =>
                       navigation.navigate('AppointmentDetails', {
                         appointmentId: appointment.id,
+                      })
+                    }
+                    onEvidence={() =>
+                      navigation.navigate('MediaEvidence', {
+                        appointmentId: appointment.id,
+                        customerId: appointment.job.customer.id,
+                        jobId: appointment.jobId,
                       })
                     }
                     onTransition={(action) =>
@@ -270,6 +284,13 @@ function NextAppointment({
           appointmentId: appointment.id,
         })
       }
+      onEvidence={() =>
+        navigation.navigate('MediaEvidence', {
+          appointmentId: appointment.id,
+          customerId: appointment.job.customer.id,
+          jobId: appointment.jobId,
+        })
+      }
       onTransition={(action) => onTransition(appointment, action)}
       role={role}
       timezone={timezone}
@@ -283,6 +304,7 @@ function AppointmentCard({
   busy,
   onCall,
   onNavigate,
+  onEvidence,
   onOpen,
   onTransition,
   role,
@@ -293,6 +315,7 @@ function AppointmentCard({
   busy: boolean;
   onCall(): void;
   onNavigate(): void;
+  onEvidence(): void;
   onOpen(): void;
   onTransition(action: AppointmentTransitionAction): void;
   role?: Parameters<typeof getAllowedAppointmentTransitions>[0]['userRole'];
@@ -318,6 +341,7 @@ function AppointmentCard({
     busy,
     canNavigate: Boolean(address),
     onCall,
+    onEvidence,
     onNavigate,
     onOpen,
     onTransition,
@@ -384,6 +408,7 @@ function myDayCardActions({
   busy,
   canNavigate,
   onCall,
+  onEvidence,
   onNavigate,
   onOpen,
   onTransition,
@@ -393,6 +418,7 @@ function myDayCardActions({
   busy: boolean;
   canNavigate: boolean;
   onCall(): void;
+  onEvidence(): void;
   onNavigate(): void;
   onOpen(): void;
   onTransition(action: AppointmentTransitionAction): void;
@@ -421,6 +447,11 @@ function myDayCardActions({
   const callAction = appointment.job.customer.phone
     ? { kind: 'secondary' as const, label: 'Call', onPress: onCall }
     : null;
+  const evidenceAction = ['ARRIVED', 'IN_PROGRESS', 'ON_THE_WAY'].includes(
+    appointment.status,
+  )
+    ? { kind: 'secondary' as const, label: 'Evidence', onPress: onEvidence }
+    : null;
   const detailAction = {
     kind: 'secondary' as const,
     label: appointment.status === 'COMPLETED' ? 'View summary' : 'Details',
@@ -433,22 +464,26 @@ function myDayCardActions({
       .slice(0, 2);
   }
   if (appointment.status === 'ON_THE_WAY') {
-    return [navigateAction, transitionAction('arrive', 'Arrived')]
+    return [transitionAction('arrive', 'Arrived'), evidenceAction]
       .filter(isMyDayCardAction)
       .slice(0, 2);
   }
   if (appointment.status === 'ARRIVED') {
-    return [transitionAction('start', 'Start work'), callAction]
+    return [transitionAction('start', 'Start work'), evidenceAction]
       .filter(isMyDayCardAction)
       .slice(0, 2);
   }
   if (appointment.status === 'IN_PROGRESS') {
-    return [transitionAction('complete', 'Complete'), detailAction]
+    return [transitionAction('complete', 'Complete'), evidenceAction]
       .filter(isMyDayCardAction)
       .slice(0, 2);
   }
   if (appointment.status === 'COMPLETED') {
-    return [detailAction];
+    const completedActions: Array<MyDayCardAction | null> = [
+      detailAction,
+      callAction,
+    ];
+    return completedActions.filter(isMyDayCardAction).slice(0, 2);
   }
   return [detailAction];
 }

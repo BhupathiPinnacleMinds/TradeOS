@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-07-27
+
+### Added
+
+- Media & Document Management foundation with tenant-scoped `MediaAsset`
+  records for job photos, appointment evidence and customer/job documents.
+- Storage provider abstraction with local development storage and a production
+  S3-compatible adapter seam.
+- Media API endpoints for upload targets, local uploads, completion, listing,
+  preview/download, metadata update, archive and restore.
+- Demo seed media including before/after photos, compliance certificate,
+  customer plan and receipt placeholders.
+- Mobile media evidence flow, secure file preview screen and media sections on
+  Job Details, Appointment Details, Customer Details and My Day.
+
+### Security
+
+- Media API responses do not expose raw object keys.
+- Technician, accountant, read-only and management role permissions are enforced
+  on media upload/view/update/archive operations.
+- Protected media files now open through authenticated in-app cache downloads
+  rather than direct Safari/browser API URLs.
+
+### Fixed
+
+- Normalised media access paths so local upload, preview, file and download URLs
+  never duplicate the `/api` prefix.
+- Media Viewer no longer renders raw internal URLs and now shows real secured
+  image previews when available.
+- Appointment Details media cards now show thumbnails, compact metadata and
+  shared category/type labels instead of generic placeholders.
+- Centred media action button labels and removed internal future-scheduling copy
+  from user-facing appointment screens.
+- Corrected demo seed timestamp insertion so Sydney demo appointments display
+  during business hours instead of evening times.
+
 ## 2026-07-24
 
 ### Added

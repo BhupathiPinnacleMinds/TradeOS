@@ -1,4 +1,4 @@
-import {
+﻿import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDate,
   formatBusinessRelativeDay,
@@ -95,6 +95,23 @@ describe('business datetime utilities', () => {
     expect(end.toISOString()).toBe('2026-07-23T23:00:00.000Z');
     expect(formatBusinessTimeRange(start, end, 'Australia/Sydney')).toBe(
       '7:30 am – 9:00 am',
+    );
+  });
+
+  it('keeps demo appointment APT-2026-000002 inside Sydney business hours', () => {
+    const start = zonedTimeToUtc(
+      { day: 27, hour: 11, minute: 30, month: 7, year: 2026 },
+      'Australia/Sydney',
+    );
+    const end = zonedTimeToUtc(
+      { day: 27, hour: 12, minute: 30, month: 7, year: 2026 },
+      'Australia/Sydney',
+    );
+
+    expect(start.toISOString()).toBe('2026-07-27T01:30:00.000Z');
+    expect(end.toISOString()).toBe('2026-07-27T02:30:00.000Z');
+    expect(formatBusinessTimeRange(start, end, 'Australia/Sydney')).toBe(
+      '11:30 am – 12:30 pm',
     );
   });
 

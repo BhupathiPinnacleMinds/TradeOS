@@ -1,5 +1,31 @@
 # Security
 
+## Media security
+
+- Media metadata and access are always filtered by the authenticated user
+  `businessId`.
+- Raw object keys are never returned to the mobile app.
+- Local file access goes through `GET /api/media/:id/file` after JWT, tenant and
+  role checks.
+- Mobile clients must not open protected API media URLs directly in Safari or
+  the system browser. They first download through the authenticated API client
+  with the bearer token into the app cache, then open the local cached file or a
+  short-lived blob URI.
+- Media API access responses use API-relative paths such as
+  `/media/:id/file`; clients normalise them against the configured API base URL
+  and must never create or render `/api/api/...` URLs.
+- Technicians can only access media for their assigned appointments/jobs or
+  files they uploaded.
+- Accountants are restricted to financial media categories such as receipts and
+  material invoices.
+- Read-only users can view permitted media metadata but cannot upload, edit or
+  archive files.
+- Upload validation rejects path traversal filenames, unsupported MIME types,
+  mismatched media types, oversize files and video/audio uploads until those
+  modules are implemented.
+- User-facing screens must not display raw storage object keys, internal API
+  URLs, signed tokens, local filesystem paths or raw API error JSON.
+
 ## Security overview
 
 TradieOS is a multi-tenant SaaS app. Security must protect customer data, business data, financial records, communications, and AI context.

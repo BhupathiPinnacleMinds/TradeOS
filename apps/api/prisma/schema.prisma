@@ -172,6 +172,47 @@ enum AiMessageRole {
   TOOL
 }
 
+enum MediaCategory {
+  BEFORE_PHOTO
+  PROGRESS_PHOTO
+  AFTER_PHOTO
+  DAMAGE_EVIDENCE
+  CUSTOMER_SUPPLIED
+  COMPLIANCE_CERTIFICATE
+  WARRANTY
+  PLAN_DRAWING
+  PERMIT
+  RECEIPT
+  MATERIAL_INVOICE
+  GENERAL_DOCUMENT
+  OTHER
+}
+
+enum MediaType {
+  IMAGE
+  PDF
+  DOCUMENT
+  VIDEO
+  AUDIO
+  OTHER
+}
+
+enum UploadStatus {
+  PENDING
+  UPLOADING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ProcessingStatus {
+  NOT_REQUIRED
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model Business {
   id              String           @id @default(cuid())
   name            String
@@ -205,6 +246,7 @@ model Business {
   aiMessages      AiMessage[]
   aiActions       AiAction[]
   documents       Document[]
+  mediaAssets     MediaAsset[]
   integrations    Integration[]
   auditLogs       AuditLog[]
 }
@@ -228,6 +270,7 @@ model User {
   assignedJobs     Job[]            @relation("JobAssignee")
   assignedAppointments Appointment[] @relation("AppointmentAssignee")
   appointmentWorkLogs AppointmentWorkLog[] @relation("AppointmentWorkLogTechnician")
+  uploadedMediaAssets MediaAsset[]  @relation("MediaAssetUploader")
   createdJobs      Job[]            @relation("JobCreator")
   updatedJobs      Job[]            @relation("JobUpdater")
   createdAppointments Appointment[] @relation("AppointmentCreator")
@@ -324,6 +367,7 @@ model Customer {
   quotes            Quote[]
   invoices          Invoice[]
   messages          Message[]
+  mediaAssets       MediaAsset[]
 
   @@unique([id, businessId])
   @@index([businessId, isArchived])
@@ -404,6 +448,7 @@ model Job {
   invoices                 Invoice[]
   messages                 Message[]
   documents                Document[]
+  mediaAssets              MediaAsset[]
   appointments             Appointment[]
   workLogs                 AppointmentWorkLog[]
 
@@ -458,6 +503,7 @@ model Appointment {
   creator                  User?             @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater                  User?             @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   workLogs                 AppointmentWorkLog[]
+  mediaAssets              MediaAsset[]
 
   @@unique([businessId, appointmentNumber])
   @@unique([id, businessId])
@@ -699,6 +745,50 @@ model Document {
 
   @@unique([businessId, storageKey])
   @@index([businessId, jobId])
+}
+
+model MediaAsset {
+  id                  String           @id @default(cuid())
+  businessId          String
+  customerId          String?
+  jobId               String?
+  appointmentId       String?
+  uploadedByUserId    String
+  category            MediaCategory
+  mediaType           MediaType
+  originalFileName    String
+  objectKey           String
+  storageProvider     String
+  mimeType            String
+  fileSizeBytes       Int
+  width               Int?
+  height              Int?
+  durationSeconds     Int?
+  checksum            String?
+  caption             String?
+  notes               String?
+  isCustomerVisible   Boolean          @default(false)
+  uploadStatus        UploadStatus     @default(PENDING)
+  processingStatus    ProcessingStatus @default(NOT_REQUIRED)
+  thumbnailObjectKey  String?
+  archivedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  business            Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer            Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: SetNull)
+  job                 Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  appointment         Appointment?     @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: SetNull)
+  uploadedBy          User             @relation("MediaAssetUploader", fields: [uploadedByUserId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([businessId, objectKey])
+  @@index([businessId, customerId, createdAt])
+  @@index([businessId, jobId, createdAt])
+  @@index([businessId, appointmentId, createdAt])
+  @@index([businessId, category, createdAt])
+  @@index([businessId, mediaType, createdAt])
+  @@index([businessId, uploadedByUserId, createdAt])
+  @@index([businessId, uploadStatus, createdAt])
+  @@index([businessId, archivedAt])
 }
 
 model Integration {

@@ -1,21 +1,25 @@
-import type {
+﻿import type {
   Appointment,
   AppointmentQuickAction,
   AppointmentTransitionAction,
+  MediaAsset,
 } from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_COLOURS,
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   getAppointmentQuickActions,
+  mediaCategoryLabel,
+  mediaTypeLabel,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import type React from 'react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Linking,
   Modal,
   Pressable,
@@ -27,14 +31,20 @@ import {
   View,
 } from 'react-native';
 import {
+  ApiRequestError,
   appointmentDetailRequest,
+  mediaRequest,
   transitionAppointmentRequest,
   updateAppointmentRequest,
 } from '../api/client';
+import { downloadAuthenticatedMediaFile } from '../api/mediaFiles';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
-import { canCreateAppointment } from '../permissions/roleVisibility';
+import {
+  canAccessStackRoute,
+  canCreateAppointment,
+} from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
@@ -75,13 +85,47 @@ function durationMinutes(appointment: Appointment) {
   );
 }
 
+function friendlyAppointmentError(error: unknown) {
+  if (
+    error instanceof ApiRequestError &&
+    (error.status === 404 || error.code === 'APPOINTMENT_NOT_FOUND')
+  ) {
+    return 'This appointment is no longer available. Refresh My Day and try again.';
+  }
+  return error instanceof Error
+    ? error.message
+    : "We couldn't load this appointment.";
+}
+
+function friendlyMediaError(error: unknown) {
+  if (
+    error instanceof ApiRequestError &&
+    error.code === 'APPOINTMENT_NOT_FOUND'
+  ) {
+    return 'This appointment is no longer available. Refresh My Day and try again.';
+  }
+  if (
+    error instanceof ApiRequestError &&
+    error.code === 'MEDIA_ACCESS_DENIED'
+  ) {
+    return 'You can only view media for appointments assigned to you.';
+  }
+  return error instanceof Error
+    ? error.message
+    : "We couldn't load appointment media.";
+}
+
 export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [media, setMedia] = useState<MediaAsset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [unavailableMessage, setUnavailableMessage] = useState<string | null>(
+    null,
+  );
   const [busyText, setBusyText] = useState<string | null>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isCompletionOpen, setIsCompletionOpen] = useState(false);
@@ -93,6 +137,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   async function loadAppointment() {
     if (!token) return;
     setIsLoading(true);
+    setUnavailableMessage(null);
     try {
       const response = await appointmentDetailRequest(token, appointmentId);
       setAppointment(response.appointment);
@@ -103,14 +148,24 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       );
       setFollowUpNotes(response.appointment.workLog?.followUpNotes ?? '');
       navigation.setOptions({ title: response.appointment.appointmentNumber });
+      try {
+        const mediaResponse = await mediaRequest(token, {
+          appointmentId: response.appointment.id,
+        });
+        setMedia(mediaResponse.records);
+      } catch (mediaError) {
+        setMedia([]);
+        showToast({
+          message: friendlyMediaError(mediaError),
+          tone: 'error',
+        });
+      }
     } catch (error) {
-      showToast({
-        message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't load this appointment.",
-        tone: 'error',
-      });
+      setAppointment(null);
+      setMedia([]);
+      const message = friendlyAppointmentError(error);
+      setUnavailableMessage(message);
+      showToast({ message, tone: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -228,7 +283,18 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   if (!appointment) {
     return (
       <View style={styles.loadingPage}>
-        <Text style={styles.title}>Appointment not found</Text>
+        <Text style={styles.title}>Appointment unavailable</Text>
+        <Text style={styles.meta}>
+          {unavailableMessage ??
+            'This appointment is no longer available. Refresh My Day and try again.'}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => navigation.navigate('MyDay')}
+          style={styles.primaryRecoveryButton}
+        >
+          <Text style={styles.primaryRecoveryText}>Back to My Day</Text>
+        </Pressable>
       </View>
     );
   }
@@ -269,6 +335,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     (action) => action.id === 'reschedule',
   );
   const canEditAppointment = canCreateAppointment(user?.role);
+  const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const primaryActions = [
     navigateAction,
     workflowAction,
@@ -421,14 +488,47 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         ) : null}
       </Card>
 
-      <Card title="Future scheduling">
-        <Text style={styles.meta}>
-          Drag-and-drop calendar movement, technician working hours, lunch
-          breaks and route planning are prepared at the API architecture level
-          and can be expanded without replacing appointments.
-        </Text>
+      <Card title="Photos & documents">
+        {media.length === 0 ? (
+          <Text style={styles.meta}>
+            No evidence uploaded for this appointment.
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.mediaSummary}>
+              {media.filter((item) => item.mediaType === 'IMAGE').length} photos
+              · {media.filter((item) => item.mediaType !== 'IMAGE').length}{' '}
+              documents
+            </Text>
+            <View style={styles.mediaGrid}>
+              {media.map((item) => (
+                <AppointmentMediaTile
+                  item={item}
+                  key={item.id}
+                  onPress={() =>
+                    navigation.navigate('MediaViewer', { mediaId: item.id })
+                  }
+                  timezone={businessTimezone}
+                  token={token}
+                />
+              ))}
+            </View>
+          </>
+        )}
+        {canAddMedia ? (
+          <QuickAction
+            label="Add evidence"
+            onPress={() =>
+              navigation.navigate('MediaEvidence', {
+                appointmentId: appointment.id,
+                customerId: appointment.job.customer.id,
+                jobId: appointment.jobId,
+              })
+            }
+            primary
+          />
+        ) : null}
       </Card>
-
       <BlockingLoader text={busyText} />
       <MoreActionsMenu
         actions={secondaryActions}
@@ -526,6 +626,97 @@ function QuickAction({
   );
 }
 
+function AppointmentMediaTile({
+  item,
+  onPress,
+  timezone,
+  token,
+}: {
+  item: MediaAsset;
+  onPress(): void;
+  timezone: string;
+  token: string | null;
+}) {
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(
+    item.mediaType === 'IMAGE',
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    if (
+      !token ||
+      item.mediaType !== 'IMAGE' ||
+      item.uploadStatus !== 'COMPLETED'
+    ) {
+      setIsPreviewLoading(false);
+      return;
+    }
+
+    setIsPreviewLoading(true);
+    downloadAuthenticatedMediaFile(token, item, 'inline')
+      .then((uri) => {
+        if (isMounted) setThumbnailUri(uri);
+      })
+      .catch(() => {
+        if (isMounted) setThumbnailUri(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsPreviewLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item, token]);
+
+  return (
+    <Pressable
+      accessibilityLabel={`Open ${item.originalFileName}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.mediaTile}
+    >
+      <View style={styles.mediaThumb}>
+        {item.mediaType === 'IMAGE' ? (
+          isPreviewLoading ? (
+            <ActivityIndicator color={colours.primary} />
+          ) : thumbnailUri ? (
+            <Image
+              resizeMode="cover"
+              source={{ uri: thumbnailUri }}
+              style={styles.mediaThumbImage}
+            />
+          ) : (
+            <Text style={styles.mediaThumbText}>IMG</Text>
+          )
+        ) : (
+          <Text style={styles.mediaThumbText}>
+            {item.mediaType === 'PDF' ? 'PDF' : 'DOC'}
+          </Text>
+        )}
+      </View>
+      <View style={styles.mediaDetails}>
+        <Text numberOfLines={1} style={styles.mediaName}>
+          {item.caption ?? item.originalFileName}
+        </Text>
+        <Text numberOfLines={1} style={styles.mediaMeta}>
+          {mediaCategoryLabel(item.category)} · {mediaTypeLabel(item.mediaType)}
+        </Text>
+        <Text numberOfLines={1} style={styles.mediaMeta}>
+          {Math.ceil(item.fileSizeBytes / 1024)} KB ·{' '}
+          {formatBusinessDateTime(item.createdAt, timezone)}
+        </Text>
+        <Text numberOfLines={1} style={styles.mediaMeta}>
+          {item.uploadedBy
+            ? `${item.uploadedBy.firstName} ${item.uploadedBy.lastName}`
+            : 'Unknown uploader'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function CompletionModal({
   appointment,
   busy,
@@ -568,7 +759,7 @@ function CompletionModal({
           <Text style={styles.meta}>
             {appointment.job.customer.companyName ??
               appointment.job.customer.displayName}{' '}
-            · {appointment.job.title}
+            Â· {appointment.job.title}
           </Text>
 
           <Text style={styles.inputLabel}>Work completed</Text>
@@ -779,6 +970,33 @@ const styles = StyleSheet.create({
   },
   loaderText: { color: colours.ink, fontWeight: '900', textAlign: 'center' },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
+  mediaDetails: { flex: 1, gap: 3, minWidth: 0 },
+  mediaGrid: { gap: 10, marginTop: 12 },
+  mediaMeta: { color: colours.muted, fontSize: 12, fontWeight: '700' },
+  mediaName: { color: colours.ink, fontWeight: '900' },
+  mediaSummary: { color: colours.muted, fontWeight: '800', marginTop: 10 },
+  mediaThumb: {
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 14,
+    height: 64,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: 64,
+  },
+  mediaThumbImage: { height: '100%', width: '100%' },
+  mediaThumbText: { color: colours.primary, fontWeight: '900' },
+  mediaTile: {
+    alignItems: 'center',
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 92,
+    padding: 12,
+  },
   disabledAction: { opacity: 0.55 },
   inputLabel: {
     color: colours.ink,
@@ -825,16 +1043,27 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginBottom: 10,
   },
+  primaryRecoveryButton: {
+    backgroundColor: colours.primary,
+    borderRadius: 999,
+    marginTop: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  primaryRecoveryText: { color: '#FFFFFF', fontWeight: '900' },
   quickAction: {
+    alignItems: 'center',
     backgroundColor: '#EEF2FF',
     borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   quickActionPrimary: { backgroundColor: colours.primary },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
-  quickText: { color: colours.primary, fontWeight: '900' },
-  quickTextPrimary: { color: '#FFFFFF' },
+  quickText: { color: colours.primary, fontWeight: '900', textAlign: 'center' },
+  quickTextPrimary: { color: '#FFFFFF', textAlign: 'center' },
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',

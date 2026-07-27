@@ -1,4 +1,9 @@
-import type { Customer, CustomerSitePayload, Job } from '@tradieos/shared';
+import type {
+  Customer,
+  CustomerSitePayload,
+  Job,
+  MediaAsset,
+} from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
@@ -17,6 +22,7 @@ import {
   archiveCustomerSiteRequest,
   createCustomerSiteRequest,
   customerDetailRequest,
+  mediaRequest,
   restoreCustomerRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -53,6 +59,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
     Array<{ action: string; createdAt: string }>
   >([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [media, setMedia] = useState<MediaAsset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -74,10 +81,14 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
     if (!token) return;
     setIsLoading(true);
     try {
-      const response = await customerDetailRequest(token, customerId);
+      const [response, mediaResponse] = await Promise.all([
+        customerDetailRequest(token, customerId),
+        mediaRequest(token, { customerId }),
+      ]);
       setCustomer(response.customer);
       setActivity(response.activity);
       setJobs(response.jobs);
+      setMedia(mediaResponse.records);
       navigation.setOptions({ title: response.customer.displayName });
     } catch {
       showToast({ message: "We couldn't load this customer.", tone: 'error' });
@@ -358,7 +369,33 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
           ) : null}
           <Text style={styles.muted}>No quotes created yet.</Text>
           <Text style={styles.muted}>No invoices recorded yet.</Text>
-          <Text style={styles.muted}>No documents uploaded yet.</Text>
+        </Card>
+
+        <Card title="Photos & documents">
+          {media.length === 0 ? (
+            <Text style={styles.muted}>No customer files uploaded yet.</Text>
+          ) : (
+            <View style={styles.mediaGrid}>
+              {media.map((item) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={item.id}
+                  onPress={() =>
+                    navigation.navigate('MediaViewer', { mediaId: item.id })
+                  }
+                  style={styles.mediaTile}
+                >
+                  <Text style={styles.mediaIcon}>
+                    {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.mediaName}>
+                    {item.caption ?? item.originalFileName}
+                  </Text>
+                  <Text style={styles.meta}>{label(item.category)}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
         </Card>
 
         <Card title="Activity">
@@ -674,6 +711,18 @@ const styles = StyleSheet.create({
   },
   modalTitle: { color: colours.ink, fontSize: 22, fontWeight: '900' },
   muted: { color: colours.muted, lineHeight: 21, marginTop: 8 },
+  mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  mediaIcon: { fontSize: 28 },
+  mediaName: { color: colours.ink, fontWeight: '900' },
+  mediaTile: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+    minWidth: 132,
+    padding: 12,
+  },
   quickAction: {
     backgroundColor: colours.primary,
     borderRadius: 999,

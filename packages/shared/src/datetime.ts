@@ -1,4 +1,4 @@
-export const AUSTRALIAN_TIMEZONES = [
+﻿export const AUSTRALIAN_TIMEZONES = [
   'Australia/Melbourne',
   'Australia/Sydney',
   'Australia/Brisbane',

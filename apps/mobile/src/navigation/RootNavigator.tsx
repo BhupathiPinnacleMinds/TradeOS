@@ -16,6 +16,8 @@ import { JobDetailsScreen } from '../screens/JobDetailsScreen';
 import { JobFormScreen } from '../screens/JobFormScreen';
 import { JobsScreen } from '../screens/JobsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { MediaEvidenceScreen } from '../screens/MediaEvidenceScreen';
+import { MediaViewerScreen } from '../screens/MediaViewerScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { MyDayScreen } from '../screens/MyDayScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
@@ -171,6 +173,20 @@ export function RootNavigator() {
               name="AppointmentReassign"
               component={AppointmentReassignScreen}
               options={{ title: 'Reassign appointment' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'MediaEvidence') ? (
+            <Stack.Screen
+              name="MediaEvidence"
+              component={MediaEvidenceScreen}
+              options={{ title: 'Add evidence' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'MediaViewer') ? (
+            <Stack.Screen
+              name="MediaViewer"
+              component={MediaViewerScreen}
+              options={{ title: 'File preview' }}
             />
           ) : null}
           {canAccessStackRoute(user?.role, 'CustomerDetails') ? (

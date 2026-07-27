@@ -1,5 +1,28 @@
 # UI/UX Guidelines
 
+## Media & document UX
+
+- Job Details must show photos and documents as real sections, not future
+  placeholders.
+- Appointment Details must provide a clear evidence area for before/progress/
+  after photos, compliance documents and receipts.
+- Appointment Details media cards show real authenticated thumbnails for image
+  assets, compact document cards for PDFs/documents, category badges, uploader,
+  upload time and truncated filenames/captions.
+- Media Viewer must never display raw API URLs, storage paths, object keys or
+  signed tokens. It should show only user-facing metadata and open files through
+  an authenticated in-app cache download.
+- Buttons such as Add evidence, Open file, Retry and upload actions must keep
+  text centred horizontally and vertically with accessible touch targets.
+- My Day keeps field cards uncluttered and surfaces evidence capture only during
+  active field workflow states.
+- Customer Details should show customer-level and linked job media from the
+  same secured media list API.
+- Tori may later summarise media metadata, but must never send customer-facing
+  messages or documents without explicit user confirmation.
+- Future architecture notes belong in documentation, not technician-facing
+  appointment screens.
+
 ## Product feel
 
 TradieOS should feel modern, calm, and practical. It should reduce cognitive load for busy tradies who may be using the app one-handed between jobs.

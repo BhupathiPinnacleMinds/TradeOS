@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import type { HealthResponse } from '@tradieos/shared';
+import { JwtService } from '@nestjs/jwt';
+import type { HealthResponse, MediaListResponse } from '@tradieos/shared';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -8,6 +9,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Health endpoint (e2e)', () => {
   let app: INestApplication<App>;
+  let token: string;
 
   beforeAll(async () => {
     process.env.DATABASE_URL =
@@ -19,13 +21,31 @@ describe('Health endpoint (e2e)', () => {
     })
       .overrideProvider(PrismaService)
       .useValue({
-        user: { findFirst: jest.fn() },
+        $transaction: jest.fn((input: unknown[]) => Promise.all(input)),
+        businessMember: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+        },
+        mediaAsset: {
+          count: jest.fn().mockResolvedValue(0),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        user: {
+          findFirst: jest.fn().mockResolvedValue({
+            businessId: 'business-1',
+            email: 'owner@example.test',
+            id: 'user-1',
+            role: 'OWNER',
+          }),
+        },
       })
       .compile();
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
+    token = new JwtService({
+      secret: process.env.JWT_SECRET,
+    }).sign({ businessId: 'business-1', sub: 'user-1' });
   });
 
   afterAll(async () => {
@@ -40,5 +60,16 @@ describe('Health endpoint (e2e)', () => {
     const body = response.body as HealthResponse;
     expect(body.status).toBe('ok');
     expect(body.service).toBe('tradieos-api');
+  });
+
+  it('GET /api/media is registered and returns an authorised empty list', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/media')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as MediaListResponse;
+    expect(body.records).toEqual([]);
+    expect(body.total).toBe(0);
   });
 });

@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { randomBytes, scrypt as scryptCallback } from 'crypto';
+import { mkdirSync, writeFileSync } from 'fs';
+import { dirname, resolve, sep } from 'path';
 import { Client } from 'pg';
 import { promisify } from 'util';
 
@@ -20,6 +22,27 @@ if (!databaseUrl) {
 }
 
 const client = new Client({ connectionString: databaseUrl });
+const isApiWorkspace = process.cwd().endsWith(`${sep}apps${sep}api`);
+const localStorageRoot = resolve(
+  process.env.STORAGE_LOCAL_PATH ??
+    (isApiWorkspace ? '.local-storage' : 'apps/api/.local-storage'),
+);
+const tinyPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
+const tinyPdf = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 120 80]/Contents 4 0 R>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 12 Tf 10 40 Td (TradieOS demo media) Tj ET\nendstream endobj\ntrailer<</Root 1 0 R>>\n%%EOF',
+);
+
+function writeSeedObject(objectKey: string, content: Buffer) {
+  const path = resolve(localStorageRoot, objectKey);
+  if (!path.startsWith(localStorageRoot)) {
+    throw new Error('Seed media object key escaped local storage root');
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content);
+}
 
 function zonedDateParts(value: Date, timezone: string) {
   const parts = new Intl.DateTimeFormat('en-AU', {
@@ -86,13 +109,37 @@ function zonedTimeToUtc(parts: {
 
 function businessTimeToday(hour: number, minute = 0, dayOffset = 0) {
   const today = zonedDateParts(new Date(), demoBusinessTimezone);
-  return zonedTimeToUtc({
-    day: today.day + dayOffset,
-    hour,
-    minute,
-    month: today.month,
-    year: today.year,
-  });
+  return utcTimestampLiteral(
+    zonedTimeToUtc({
+      day: today.day + dayOffset,
+      hour,
+      minute,
+      month: today.month,
+      year: today.year,
+    }),
+  );
+}
+
+function utcTimestampLiteral(value: Date) {
+  return value.toISOString().replace('Z', '');
+}
+
+function businessDateTime(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute = 0,
+) {
+  return utcTimestampLiteral(
+    zonedTimeToUtc({
+      day,
+      hour,
+      minute,
+      month,
+      year,
+    }),
+  );
 }
 
 async function query(sql: string, values: unknown[] = []) {
@@ -928,6 +975,167 @@ async function main() {
         `INSERT INTO "AiMessage" (id, "businessId", "conversationId", role, content, "createdAt")
          VALUES ($1, $2, 'demo-ai-conversation-1', $3, $4, NOW())`,
         [message[0], businessId, message[1], message[2]],
+      );
+    }
+
+    const mediaAssets = [
+      [
+        'demo-media-before-gpo',
+        'demo-customer-1',
+        'demo-job-1',
+        'demo-appointment-1',
+        staffIds[1],
+        'BEFORE_PHOTO',
+        'IMAGE',
+        'before-kitchen-gpo.png',
+        `${businessId}/image/demo-before-kitchen-gpo.png`,
+        'image/png',
+        tinyPng,
+        'Existing kitchen power point before replacement.',
+        'Captured before work started.',
+      ],
+      [
+        'demo-media-after-gpo',
+        'demo-customer-1',
+        'demo-job-1',
+        'demo-appointment-1',
+        staffIds[1],
+        'AFTER_PHOTO',
+        'IMAGE',
+        'after-kitchen-gpo.png',
+        `${businessId}/image/demo-after-kitchen-gpo.png`,
+        'image/png',
+        tinyPng,
+        'Finished double GPO installation.',
+        'Ready for customer review.',
+      ],
+      [
+        'demo-media-switchboard-before',
+        'demo-customer-3',
+        'demo-job-3',
+        'demo-appointment-3',
+        staffIds[0],
+        'DAMAGE_EVIDENCE',
+        'IMAGE',
+        'switchboard-existing-condition.png',
+        `${businessId}/image/demo-switchboard-existing-condition.png`,
+        'image/png',
+        tinyPng,
+        'Existing switchboard condition.',
+        'Evidence for quote scope.',
+      ],
+      [
+        'demo-media-owner-after',
+        'demo-customer-1',
+        'demo-job-6',
+        'demo-appointment-7',
+        ownerId,
+        'PROGRESS_PHOTO',
+        'IMAGE',
+        'owner-demo-progress.png',
+        `${businessId}/image/demo-owner-progress.png`,
+        'image/png',
+        tinyPng,
+        'Owner demo workflow progress photo.',
+        'Use for My Day evidence testing.',
+      ],
+      [
+        'demo-media-compliance-cert',
+        'demo-customer-1',
+        'demo-job-1',
+        'demo-appointment-1',
+        ownerId,
+        'COMPLIANCE_CERTIFICATE',
+        'PDF',
+        'certificate-of-compliance-demo.pdf',
+        `${businessId}/pdf/demo-certificate-of-compliance.pdf`,
+        'application/pdf',
+        tinyPdf,
+        'Certificate of compliance placeholder.',
+        'Demo compliance document.',
+      ],
+      [
+        'demo-media-material-receipt',
+        'demo-customer-5',
+        'demo-job-5',
+        'demo-appointment-5',
+        accountantId,
+        'RECEIPT',
+        'PDF',
+        'materials-receipt-demo.pdf',
+        `${businessId}/pdf/demo-materials-receipt.pdf`,
+        'application/pdf',
+        tinyPdf,
+        'Materials receipt for cafe lighting.',
+        'Visible to accounting demo role.',
+      ],
+      [
+        'demo-media-customer-plan',
+        'demo-customer-4',
+        'demo-job-4',
+        'demo-appointment-4',
+        salesId,
+        'PLAN_DRAWING',
+        'PDF',
+        'ceiling-fan-location-plan.pdf',
+        `${businessId}/pdf/demo-ceiling-fan-location-plan.pdf`,
+        'application/pdf',
+        tinyPdf,
+        'Customer supplied fan location plan.',
+        'Useful for scheduler and technician context.',
+      ],
+    ];
+
+    for (const media of mediaAssets) {
+      const content = media[10] as Buffer;
+      writeSeedObject(media[8] as string, content);
+      await query(
+        `INSERT INTO "MediaAsset" (
+          id, "businessId", "customerId", "jobId", "appointmentId", "uploadedByUserId",
+          category, "mediaType", "originalFileName", "objectKey", "storageProvider",
+          "mimeType", "fileSizeBytes", width, height, checksum, caption, notes,
+          "isCustomerVisible", "uploadStatus", "processingStatus", "createdAt", "updatedAt"
+        )
+         VALUES (
+          $1, $2, $3, $4, $5, $6, $7::"MediaCategory", $8::"MediaType", $9, $10,
+          'local', $11, $12, $13, $14, NULL, $15, $16, false, 'COMPLETED'::"UploadStatus",
+          $17::"ProcessingStatus", NOW(), NOW()
+        )`,
+        [
+          media[0],
+          businessId,
+          media[1],
+          media[2],
+          media[3],
+          media[4],
+          media[5],
+          media[6],
+          media[7],
+          media[8],
+          media[9],
+          content.length,
+          media[6] === 'IMAGE' ? 1 : null,
+          media[6] === 'IMAGE' ? 1 : null,
+          media[11],
+          media[12],
+          media[6] === 'IMAGE' ? 'COMPLETED' : 'NOT_REQUIRED',
+        ],
+      );
+      await query(
+        `INSERT INTO "AuditLog" (id, "businessId", "actorUserId", action, "entityType", "entityId", metadata, "createdAt")
+         VALUES ($1, $2, $3, 'MEDIA_UPLOADED', 'MediaAsset', $4, $5, NOW())`,
+        [
+          `${media[0]}-audit`,
+          businessId,
+          media[4],
+          media[0],
+          JSON.stringify({
+            category: media[5],
+            fileName: media[7],
+            jobId: media[2],
+            source: 'demo_seed',
+          }),
+        ],
       );
     }
 

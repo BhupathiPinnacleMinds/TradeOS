@@ -1,4 +1,4 @@
-import type { Appointment, Job, JobStatus } from '@tradieos/shared';
+import type { Appointment, Job, JobStatus, MediaAsset } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
@@ -20,6 +20,7 @@ import {
 import {
   archiveJobRequest,
   jobDetailRequest,
+  mediaRequest,
   restoreJobRequest,
   transitionAppointmentRequest,
   updateJobStatusRequest,
@@ -28,6 +29,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import {
+  canAccessStackRoute,
   canArchiveJob,
   canCreateAppointment,
   canManageJob,
@@ -55,6 +57,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [job, setJob] = useState<Job | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [media, setMedia] = useState<MediaAsset[]>([]);
   const [timeline, setTimeline] = useState<
     Array<{ action: string; createdAt: string; entityType: string }>
   >([]);
@@ -65,15 +68,20 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canArchive = canArchiveJob(user?.role);
   const canScheduleAppointment = canCreateAppointment(user?.role);
   const canUpdateStatus = canEdit;
+  const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
 
   async function loadJob() {
     if (!token) return;
     setIsLoading(true);
     try {
-      const response = await jobDetailRequest(token, jobId);
+      const [response, mediaResponse] = await Promise.all([
+        jobDetailRequest(token, jobId),
+        mediaRequest(token, { jobId }),
+      ]);
       setJob(response.job);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
+      setMedia(mediaResponse.records);
       navigation.setOptions({ title: response.job.jobNumber });
     } catch {
       showToast({ message: "We couldn't load this job.", tone: 'error' });
@@ -299,6 +307,44 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
+      <Card title="Photos">
+        <MediaList
+          emptyText="No photos captured yet."
+          media={media.filter((item) => item.mediaType === 'IMAGE')}
+          navigation={navigation}
+        />
+        {canAddMedia ? (
+          <ActionButton
+            label="Add photo evidence"
+            onPress={() =>
+              navigation.navigate('MediaEvidence', {
+                customerId: job.customerId,
+                jobId: job.id,
+              })
+            }
+          />
+        ) : null}
+      </Card>
+
+      <Card title="Documents">
+        <MediaList
+          emptyText="No job documents yet."
+          media={media.filter((item) => item.mediaType !== 'IMAGE')}
+          navigation={navigation}
+        />
+        {canAddMedia ? (
+          <ActionButton
+            label="Add document"
+            onPress={() =>
+              navigation.navigate('MediaEvidence', {
+                customerId: job.customerId,
+                jobId: job.id,
+              })
+            }
+          />
+        ) : null}
+      </Card>
+
       <Card title="Appointments">
         {appointments.length === 0 ? (
           <Text style={styles.meta}>No appointments booked yet.</Text>
@@ -379,8 +425,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.meta}>
           Invoices: {job.invoiceCreated ? 'Created' : 'Not created yet'}
         </Text>
-        <Text style={styles.meta}>Photos: Coming later.</Text>
-        <Text style={styles.meta}>Documents: Coming later.</Text>
       </Card>
 
       <Card title="Timeline">
@@ -464,6 +508,41 @@ function ActionButton({
   );
 }
 
+function MediaList({
+  emptyText,
+  media,
+  navigation,
+}: {
+  emptyText: string;
+  media: MediaAsset[];
+  navigation: Props['navigation'];
+}) {
+  if (media.length === 0) {
+    return <Text style={styles.meta}>{emptyText}</Text>;
+  }
+  return (
+    <View style={styles.mediaGrid}>
+      {media.map((item) => (
+        <Pressable
+          key={item.id}
+          onPress={() =>
+            navigation.navigate('MediaViewer', { mediaId: item.id })
+          }
+          style={styles.mediaTile}
+        >
+          <Text style={styles.mediaIcon}>
+            {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+          </Text>
+          <Text numberOfLines={1} style={styles.mediaName}>
+            {item.caption ?? item.originalFileName}
+          </Text>
+          <Text style={styles.meta}>{label(item.category)}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function Card({
   children,
   title,
@@ -537,6 +616,16 @@ const styles = StyleSheet.create({
   },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   muted: { color: colours.muted },
+  mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  mediaIcon: { fontSize: 28 },
+  mediaName: { color: colours.ink, fontWeight: '900' },
+  mediaTile: {
+    backgroundColor: colours.card,
+    borderRadius: 16,
+    gap: 4,
+    minWidth: 132,
+    padding: 12,
+  },
   quickAction: {
     backgroundColor: colours.primary,
     borderRadius: 999,

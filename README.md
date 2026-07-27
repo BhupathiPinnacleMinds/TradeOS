@@ -76,6 +76,8 @@ The local seed creates:
 - 2 invoices
 - 5 notifications
 - 3 Tori AI messages
+- demo media/document metadata and tiny local placeholder files under
+  `apps/api/.local-storage`
 
 See [Local Test Accounts](./docs/LOCAL_TEST_ACCOUNTS.md) for local-only demo
 emails, the shared local password, landing screens, permitted modules, blocked
@@ -85,6 +87,17 @@ The mobile app logs in through `POST /api/auth/login`, stores the JWT with
 Expo SecureStore on device, and sends that token with dashboard requests. The
 dashboard reads `GET /api/dashboard/summary` from PostgreSQL and derives
 `businessId` from the logged-in user's JWT.
+
+Local media/document storage defaults to:
+
+```bash
+STORAGE_PROVIDER=local
+STORAGE_LOCAL_PATH=.local-storage
+```
+
+For production, use an S3-compatible object store by setting
+`STORAGE_PROVIDER=s3` and the S3 variables listed in `apps/api/.env.example`.
+Do not commit uploaded files or secret keys.
 
 For Expo Go on a physical phone, `localhost` means the phone itself, not your
 computer. Set `apps/mobile/.env` like this before starting Expo:
@@ -142,6 +155,39 @@ Invoke-WebRequest -UseBasicParsing http://192.168.0.234:8081/status
 If Expo Go shows “Could not connect to development server,” tap **Reload JS**
 first. If it still fails, close Expo Go, restart the Expo script, and scan the
 new QR code.
+
+When schema, API routes or seeded demo records change, use this local startup
+order so the phone/browser does not hold stale route or appointment state:
+
+```powershell
+pnpm db:generate
+pnpm db:migrate
+pnpm db:seed
+powershell -ExecutionPolicy Bypass -File C:\Users\bhupa\WorkSpace\TradeOS\scripts\start-api-dev.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\bhupa\WorkSpace\TradeOS\scripts\start-mobile-lan-fast.ps1
+```
+
+If Expo still shows stale appointment screens after reseeding, log out and log
+back in, then open **My Day** and pull to refresh. The app should use the current
+appointment IDs returned by `/api/appointments/my-day`, not old seed IDs from a
+previous navigation state.
+
+Media route smoke checks:
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/health
+
+$login = Invoke-RestMethod http://localhost:3000/api/auth/login `
+  -Method POST `
+  -ContentType 'application/json' `
+  -Body '{"email":"mia@demo-tradieos.com","password":"password123"}'
+
+$headers = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod http://localhost:3000/api/media -Headers $headers
+$myDay = Invoke-RestMethod http://localhost:3000/api/appointments/my-day -Headers $headers
+$appointmentId = $myDay.nextAppointment.id
+Invoke-RestMethod "http://localhost:3000/api/media?appointmentId=$appointmentId" -Headers $headers
+```
 
 ## Common commands
 

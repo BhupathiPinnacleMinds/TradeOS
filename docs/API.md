@@ -31,6 +31,38 @@ utilities in `packages/shared`. API date range filters remain UTC ISO strings,
 but ranges for Dashboard, Calendar, Dispatcher, My Day, Jobs and Tori scheduling
 must be derived from the business timezone before querying UTC fields.
 
+### Media & documents
+
+Media assets are scoped by `businessId` and are attached to a customer, job or
+appointment. API responses never expose raw storage object keys.
+
+```http
+POST /api/media/upload-target
+POST /api/media/:id/local-upload
+POST /api/media/:id/complete
+POST /api/media/:id/cancel
+GET /api/media
+GET /api/media/:id
+GET /api/media/:id/preview
+GET /api/media/:id/download
+GET /api/media/:id/file
+PATCH /api/media/:id
+POST /api/media/:id/archive
+POST /api/media/:id/restore
+```
+
+Supported filters for `GET /api/media` include `customerId`, `jobId`,
+`appointmentId`, `category`, `mediaType`, `uploadedBy`, `uploadStatus`,
+`processingStatus`, `dateFrom`, `dateTo`, `search`, `page` and `pageSize`.
+
+The current milestone supports images, PDFs and office/text documents. Video
+and audio are schema-ready for future use but rejected at upload time.
+
+Media upload, preview and download access responses return API-relative paths
+such as `/media/:id/file`, not absolute browser URLs. Clients must join those
+paths with the configured API base URL exactly once and include JWT
+authentication when fetching protected file bytes.
+
 ### Health
 
 ```http

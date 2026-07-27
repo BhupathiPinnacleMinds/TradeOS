@@ -1,5 +1,27 @@
 # Database
 
+## MediaAsset
+
+`MediaAsset` is the tenant-scoped foundation for job photos, appointment
+evidence and customer/job documents.
+
+Key rules:
+
+- Every row includes `businessId`.
+- Media can be linked to `customerId`, `jobId` and/or `appointmentId`.
+- `objectKey` is stored only server-side and is unique per business.
+- API responses return metadata and authorised access URLs, never raw object
+  keys.
+- Files are soft-archived with `archivedAt`; physical deletion is reserved for a
+  future retention/purge policy.
+- Supported categories include before/progress/after photos, damage evidence,
+  customer supplied files, compliance certificates, warranties, plans, permits,
+  receipts, material invoices and general documents.
+
+Local development stores small files under `STORAGE_LOCAL_PATH`. Production is
+prepared for S3-compatible storage through `STORAGE_PROVIDER=s3` and the S3 env
+vars documented in `apps/api/.env.example`.
+
 ## Overview
 
 TradieOS uses PostgreSQL with Prisma. The database is multi-tenant: business-owned data is scoped to a `Business` workspace through `businessId`.

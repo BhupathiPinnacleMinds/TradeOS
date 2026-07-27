@@ -1,5 +1,17 @@
 # Roles and Permissions
 
+## Media & document permissions
+
+- `OWNER`, `ADMIN` and `OFFICE_MANAGER` can upload, edit metadata, archive and
+  restore media.
+- `SCHEDULER` can upload operational photos/documents but cannot upload
+  financial categories.
+- `TECHNICIAN` can upload and view media for assigned appointments/jobs and can
+  edit their own recent uploads.
+- `ACCOUNTANT` can view financial media categories only.
+- `SALES` can upload customer/sales context documents.
+- `READ_ONLY` can view permitted media but cannot mutate it.
+
 ## Overview
 
 Roles define what a user can see and do inside a business workspace.

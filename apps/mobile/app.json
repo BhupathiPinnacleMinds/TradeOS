@@ -9,10 +9,16 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "au.com.tradieos.mobile"
+      "bundleIdentifier": "au.com.tradieos.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "TradieOS uses the camera so tradies can capture job evidence photos after confirmation.",
+        "NSPhotoLibraryAddUsageDescription": "TradieOS can save selected job evidence photos to your library when you choose to export them.",
+        "NSPhotoLibraryUsageDescription": "TradieOS uses your photo library so you can attach job evidence photos and documents after confirmation."
+      }
     },
     "android": {
       "package": "au.com.tradieos.mobile",
+      "permissions": ["CAMERA", "READ_MEDIA_IMAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#F8FAFC",
         "foregroundImage": "./assets/android-icon-foreground.png",

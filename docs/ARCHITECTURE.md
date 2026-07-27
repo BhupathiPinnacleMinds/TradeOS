@@ -1,5 +1,23 @@
 # Architecture
 
+## Media & document management
+
+The media module extends the existing multi-tenant API rather than introducing a
+separate file service. `MediaModule` owns upload-target creation, local
+development uploads, metadata, archive/restore and authorised preview/download
+URLs.
+
+Storage is abstracted behind `StorageProvider`:
+
+- `LocalDevelopmentStorageProvider` writes files to `STORAGE_LOCAL_PATH` and
+  serves them through authenticated API routes.
+- `S3CompatibleStorageProvider` is the production adapter seam for AWS S3,
+  Cloudflare R2, MinIO or compatible object stores.
+
+Mobile screens consume the API through shared types and role-aware navigation:
+Job Details, Appointment Details, Customer Details and My Day can show or add
+media according to the existing role/permission model.
+
 ## Overview
 
 TradieOS is a TypeScript monorepo with a mobile frontend, API backend, shared types, and PostgreSQL database. The architecture is designed for a multi-tenant SaaS product where every business workspace is isolated.

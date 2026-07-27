@@ -18,6 +18,14 @@ export type RootStackParamList = {
   Jobs: undefined;
   AppointmentDetails: { appointmentId: string };
   AppointmentReassign: { appointmentId: string };
+  MediaEvidence:
+    | {
+        appointmentId?: string;
+        customerId?: string;
+        jobId?: string;
+      }
+    | undefined;
+  MediaViewer: { mediaId: string };
   AppointmentForm:
     | {
         customerId?: string;

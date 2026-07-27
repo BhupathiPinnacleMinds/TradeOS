@@ -27,6 +27,12 @@ import type {
   JobStatus,
   InvitationPreviewResponse,
   InviteMemberResponse,
+  LocalMediaUploadRequest,
+  MediaAccessResponse,
+  MediaDetailResponse,
+  MediaListResponse,
+  MediaUploadTargetRequest,
+  MediaUploadTargetResponse,
   MyDayResponse,
   ResendInvitationResponse,
   TeamMemberDetailResponse,
@@ -41,6 +47,61 @@ declare const process: {
 
 export const apiUrl =
   process.env?.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api';
+
+export function buildApiUrl(path: string, baseUrl = apiUrl) {
+  const base = baseUrl.replace(/\/+$/, '');
+  const baseIncludesApiPrefix = /\/api$/i.test(base);
+  let normalisedPath = path.trim().replace(/^\/+/, '');
+
+  if (baseIncludesApiPrefix) {
+    while (
+      normalisedPath === 'api' ||
+      normalisedPath.toLowerCase().startsWith('api/')
+    ) {
+      normalisedPath = normalisedPath.slice(3).replace(/^\/+/, '');
+    }
+  }
+
+  const slashPath = normalisedPath.startsWith('/')
+    ? normalisedPath
+    : `/${normalisedPath}`;
+  return `${base}${slashPath}`;
+}
+
+export const buildApiRequestUrl = buildApiUrl;
+
+export function buildMediaListPath(
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return `/media${queryString(params)}`;
+}
+
+export function buildMediaFilePath(
+  mediaId: string,
+  disposition: 'attachment' | 'inline' = 'inline',
+) {
+  return `/media/${mediaId}/file?disposition=${disposition}`;
+}
+
+export function buildMediaPreviewPath(mediaId: string) {
+  return `/media/${mediaId}/preview`;
+}
+
+export function buildMediaDownloadPath(mediaId: string) {
+  return `/media/${mediaId}/download`;
+}
+
+export function buildMediaLocalUploadPath(mediaId: string) {
+  return `/media/${mediaId}/local-upload`;
+}
+
+export function buildMediaAccessUrl(urlOrPath: string, baseUrl = apiUrl) {
+  return buildApiUrl(urlOrPath, baseUrl);
+}
+
+export function buildAuthenticatedHeaders(token: string) {
+  return { Authorization: `Bearer ${token}` };
+}
 
 export class ApiRequestError extends Error {
   constructor(
@@ -62,7 +123,7 @@ export async function apiRequest<T>(
   let response: Response;
 
   try {
-    response = await fetch(`${apiUrl}${path}`, {
+    response = await fetch(buildApiRequestUrl(path), {
       ...requestOptions,
       headers: {
         Accept: 'application/json',
@@ -579,4 +640,52 @@ export function updateAppointmentWorkLogRequest(
       token,
     },
   );
+}
+
+export function mediaRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<MediaListResponse>(buildMediaListPath(params), {
+    token,
+  });
+}
+
+export function mediaDetailRequest(token: string, mediaId: string) {
+  return apiRequest<MediaDetailResponse>(`/media/${mediaId}`, { token });
+}
+
+export function createMediaUploadTargetRequest(
+  token: string,
+  input: MediaUploadTargetRequest,
+) {
+  return apiRequest<MediaUploadTargetResponse>('/media/upload-target', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function uploadLocalMediaRequest(
+  token: string,
+  mediaId: string,
+  input: LocalMediaUploadRequest,
+) {
+  return apiRequest<MediaDetailResponse>(buildMediaLocalUploadPath(mediaId), {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function mediaPreviewRequest(token: string, mediaId: string) {
+  return apiRequest<MediaAccessResponse>(buildMediaPreviewPath(mediaId), {
+    token,
+  });
+}
+
+export function mediaDownloadRequest(token: string, mediaId: string) {
+  return apiRequest<MediaAccessResponse>(buildMediaDownloadPath(mediaId), {
+    token,
+  });
 }
