@@ -20,10 +20,21 @@
   Choose document and Cancel. Selected files are reviewed before upload with
   thumbnail/icon, filename, size, category, shared caption/notes and per-file
   status. The app must not auto-upload immediately after a picker returns.
+- Native camera, photo-library and document pickers must launch only after the
+  Add Evidence action menu has fully dismissed. Keep option handlers separate,
+  reset pending picker state after success, cancellation, permission denial,
+  error or navigation away, and never leave an invisible backdrop blocking
+  future taps.
+- On iOS, Add Evidence should use the native `ActionSheetIOS` selector before
+  launching Expo camera, photo-library or document pickers. The launch flow must
+  use a ref-based lock, a fallback launch attempt and a watchdog reset so Expo
+  Go cannot leave the button stuck in an opening state.
 - Upload progress should be visible per file and overall. Failed files should
-  offer Retry, pending/uploading files should support Cancel where the API can
-  cancel the upload target, and picker cancellation should be silent rather than
-  shown as an error.
+  offer Retry with friendly error text, pending/uploading files should support
+  Cancel where the API can cancel the upload target, and picker cancellation
+  should be silent rather than shown as an error. Raw backend phrases such as
+  `request entity too large`, Multer errors or stack traces must never appear in
+  the mobile UI.
 - Customer Details should show customer-level and linked job media from the
   same secured media list API.
 - Tori may later summarise media metadata, but must never send customer-facing

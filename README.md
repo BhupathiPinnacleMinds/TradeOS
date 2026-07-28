@@ -96,7 +96,8 @@ Mobile evidence capture uses Expo-compatible native modules:
 
 Open evidence from My Day, Appointment Details, Job Details or Customer Details
 so the upload is attached to an existing tenant-scoped appointment, job or
-customer.
+customer. Real photos and documents upload as multipart binary data through the
+authenticated Media API; only the development demo file uses tiny Base64 JSON.
 
 Local media/document storage defaults to:
 

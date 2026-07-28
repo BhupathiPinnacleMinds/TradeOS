@@ -48,7 +48,12 @@ const extensionToMimeType = new Map<string, string>([
 ]);
 
 export type MediaSelectionErrorCode =
-  'UNSUPPORTED_FILE_TYPE' | 'FILE_TOO_LARGE' | 'LOCAL_FILE_UNAVAILABLE';
+  | 'DOCUMENT_PICKER_FAILED'
+  | 'DOCUMENT_PICKER_UNAVAILABLE'
+  | 'FILE_TOO_LARGE'
+  | 'LOCAL_FILE_UNAVAILABLE'
+  | 'MEDIA_UPLOAD_FAILED'
+  | 'UNSUPPORTED_FILE_TYPE';
 
 export type MediaSelectionValidation =
   | {
@@ -151,6 +156,48 @@ export function validateMediaSelection(input: {
     mimeType,
     ok: true,
   };
+}
+
+export function friendlyUploadError(input: {
+  code?: string | null;
+  mediaType?: MediaType | null;
+  message?: string | null;
+}) {
+  if (input.code === 'FILE_TOO_LARGE') {
+    if (input.mediaType === 'IMAGE') {
+      return 'This image is larger than the 15 MB limit.';
+    }
+    if (input.mediaType === 'PDF' || input.mediaType === 'DOCUMENT') {
+      return 'This document is larger than the 25 MB limit.';
+    }
+    return 'This file could not be uploaded. It may exceed the allowed size.';
+  }
+  if (input.code === 'UNSUPPORTED_FILE_TYPE') {
+    return 'This file type is not supported yet. Use photos, PDFs, Word, Excel or text files.';
+  }
+  if (input.code === 'LOCAL_FILE_UNAVAILABLE') {
+    return 'This local file is not available. Please choose it again.';
+  }
+  if (input.code === 'NETWORK_ERROR') {
+    return 'Network error. Check the API is running and try again.';
+  }
+  if (
+    input.message &&
+    !/request entity too large|payloadtoolarge|multer|exception|stack/i.test(
+      input.message,
+    )
+  ) {
+    return input.message;
+  }
+  return 'This file could not be uploaded. Please try again.';
+}
+
+export function isPickerCancelled(result: {
+  canceled?: boolean;
+  type?: string;
+  assets?: unknown[] | null;
+}) {
+  return result.canceled === true || result.type === 'cancel';
 }
 
 export function formatFileSize(bytes: number) {

@@ -94,6 +94,10 @@ Camera and photo-library permission copy lives in `apps/mobile/app.json`.
 Re-run `expo install --check` after Expo SDK upgrades to verify the bundled
 native module versions remain compatible with Expo Go and EAS builds.
 
+Local development media uploads use endpoint-scoped multipart handling. Do not
+increase global JSON body limits for real photos or documents; keep large file
+handling on the media upload route or direct object-storage upload path.
+
 Future production mobile builds should use EAS.
 
 ## Future CI/CD

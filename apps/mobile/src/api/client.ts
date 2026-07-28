@@ -184,6 +184,7 @@ function statusCodeToErrorCode(status: number) {
   if (status === 403) return 'INSUFFICIENT_PERMISSION';
   if (status === 404) return 'NOT_FOUND';
   if (status === 409) return 'CONFLICT';
+  if (status === 413) return 'FILE_TOO_LARGE';
   if (status === 429) return 'TOO_MANY_REQUESTS';
   if (status >= 500) return 'SERVICE_UNAVAILABLE';
   return 'REQUEST_FAILED';
@@ -676,6 +677,72 @@ export function uploadLocalMediaRequest(
     method: 'POST',
     token,
   });
+}
+
+export async function uploadLocalMediaFileRequest(
+  token: string,
+  mediaId: string,
+  file: {
+    name: string;
+    type: string;
+    uri: string;
+  },
+) {
+  const form = new FormData();
+  form.append('file', file as unknown as Blob);
+  let response: Response;
+
+  try {
+    response = await fetch(
+      buildApiRequestUrl(buildMediaLocalUploadPath(mediaId)),
+      {
+        body: form,
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        method: 'POST',
+      },
+    );
+  } catch (error) {
+    throw new ApiRequestError(
+      error instanceof Error && error.message
+        ? error.message
+        : 'Network request failed',
+      null,
+      'NETWORK_ERROR',
+    );
+  }
+
+  if (!response.ok) {
+    let message =
+      response.status === 413
+        ? 'This file could not be uploaded. It may exceed the allowed size.'
+        : `Request failed with ${response.status}`;
+    let code = statusCodeToErrorCode(response.status);
+    let details: Record<string, unknown> = {};
+
+    try {
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string | string[];
+        details?: Record<string, unknown>;
+      };
+      if (body.code) code = body.code;
+      if (Array.isArray(body.message)) {
+        message = body.message.join('\n');
+      } else if (body.message) {
+        message = body.message;
+      }
+      if (body.details) details = body.details;
+    } catch {
+      // Keep the friendly fallback above.
+    }
+
+    throw new ApiRequestError(message, response.status, code, details);
+  }
+
+  return (await response.json()) as MediaDetailResponse;
 }
 
 export function cancelMediaUploadRequest(token: string, mediaId: string) {

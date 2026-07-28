@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/unbound-method */
 import { HttpException } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
-import { MediaService } from './media.service';
+import { IMAGE_LIMIT, MediaService } from './media.service';
 import type { StorageProvider } from './storage-provider';
 
 jest.mock('../prisma/prisma.service', () => ({
@@ -70,7 +70,16 @@ function createHarness() {
   const createdMedia = media();
   const tx = {
     auditLog: { create: jest.fn().mockResolvedValue({}) },
-    mediaAsset: { create: jest.fn().mockResolvedValue(createdMedia) },
+    mediaAsset: {
+      create: jest.fn().mockResolvedValue(createdMedia),
+      update: jest
+        .fn()
+        .mockImplementation(({ data }) =>
+          Promise.resolve(
+            media({ ...data, uploadStatus: data.uploadStatus ?? 'COMPLETED' }),
+          ),
+        ),
+    },
   };
   const prisma = {
     $transaction: jest.fn(async (input) =>
@@ -277,6 +286,56 @@ describe('MediaService', () => {
         code: 'APPOINTMENT_NOT_FOUND',
       }),
       status: 404,
+    });
+  });
+
+  it('uploads multipart binary files without Base64 JSON encoding', async () => {
+    const { service, storage } = createHarness();
+    const file = {
+      buffer: Buffer.from('demo'),
+      mimetype: 'image/png',
+      originalname: 'demo.png',
+      size: 4,
+    };
+
+    const response = await service.localMultipartUpload(
+      technician,
+      'media-1',
+      file,
+    );
+
+    expect(storage.uploadFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: Buffer.from('demo'),
+        mimeType: 'image/png',
+      }),
+    );
+    expect(response.media.uploadStatus).toBe('COMPLETED');
+  });
+
+  it('rejects multipart uploads above the expected target size with FILE_TOO_LARGE', async () => {
+    const { prisma, service } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        fileSizeBytes: IMAGE_LIMIT,
+        mediaType: 'IMAGE',
+        mimeType: 'image/jpeg',
+        originalFileName: 'large.jpg',
+      }),
+    );
+
+    await expect(
+      service.localMultipartUpload(technician, 'media-1', {
+        buffer: Buffer.alloc(IMAGE_LIMIT + 1),
+        mimetype: 'image/jpeg',
+        originalname: 'large.jpg',
+        size: IMAGE_LIMIT + 1,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'FILE_TOO_LARGE',
+      }),
+      status: 413,
     });
   });
 });

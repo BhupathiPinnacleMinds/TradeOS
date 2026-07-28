@@ -26,8 +26,10 @@ existing Media API pipeline:
    app cache.
 3. The user reviews selected files, categories, caption, notes and visibility.
 4. The app creates a tenant-scoped upload target with `POST /api/media/upload-target`.
-5. Local development uploads file bytes through `POST /api/media/:id/local-upload`,
-   which completes the existing `MediaAsset`.
+5. Local development uploads real device files as binary `multipart/form-data`
+   through `POST /api/media/:id/local-upload`, which completes the existing
+   `MediaAsset`. The tiny development-only demo upload may still use JSON
+   Base64, but camera, library and document files must not.
 6. Failed or cancelled pending uploads call `POST /api/media/:id/cancel` where
    possible, then refresh through the normal media list APIs.
 

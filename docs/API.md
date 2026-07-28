@@ -65,8 +65,11 @@ authentication when fetching protected file bytes.
 
 Mobile native camera, photo library and document uploads use the same endpoint
 sequence. The app first validates selected file type/size locally, then creates
-an upload target, uploads through `local-upload` in development, and calls the
-cancel endpoint for failed or user-cancelled pending uploads where possible.
+an upload target, uploads real files through binary `multipart/form-data` to
+`local-upload` in development, and calls the cancel endpoint for removed or
+user-cancelled pending uploads where possible. Real files must not be
+Base64-encoded inside JSON because that inflates payload size and can hit normal
+JSON body limits before the media endpoint handles the request.
 
 ### Health
 

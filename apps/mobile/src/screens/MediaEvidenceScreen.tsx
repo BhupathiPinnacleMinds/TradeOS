@@ -4,12 +4,16 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
+  AppState,
   Image,
+  InteractionManager,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,14 +23,34 @@ import {
   View,
 } from 'react-native';
 import {
+  ApiRequestError,
   cancelMediaUploadRequest,
   createMediaUploadTargetRequest,
   uploadLocalMediaRequest,
+  uploadLocalMediaFileRequest,
 } from '../api/client';
+import type {
+  EvidenceSource,
+  MediaPickerControllerState,
+} from '../api/mediaPickerController';
+import {
+  closeEvidenceSourceMenu,
+  initialMediaPickerControllerState,
+  openEvidenceSourceMenu,
+  openingLabelForSource,
+  pickerLaunchFinished,
+  pickerLaunchStarted,
+  pickerNativeCallStarted,
+  pickerPermissionStarted,
+  resetMediaPickerController,
+  selectEvidenceSource as selectEvidenceSourceState,
+} from '../api/mediaPickerController';
 import {
   MAX_PHOTO_SELECTION,
   categoriesForMediaType,
   formatFileSize,
+  friendlyUploadError,
+  isPickerCancelled,
   isCategoryValidForMediaType,
   normaliseMimeType,
   uploadButtonLabel,
@@ -74,6 +98,9 @@ const supportedDocumentMimeTypes = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'text/plain',
 ];
+
+const documentPickerType =
+  Platform.OS === 'ios' ? '*/*' : supportedDocumentMimeTypes;
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -125,9 +152,44 @@ function statusBadgeStyle(status: EvidenceStatus) {
 
 async function fileSizeForUri(uri: string, fallback?: number | null) {
   if (fallback && fallback > 0) return fallback;
-  const info = await FileSystem.getInfoAsync(uri);
-  if (!info.exists) return null;
-  return 'size' in info ? info.size : null;
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (!info.exists) return null;
+    return 'size' in info ? info.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function developmentMediaLog(event: string, details: Record<string, unknown>) {
+  if (!__DEV__) return;
+  console.info(`[TradieOS media:${event}]`, details);
+}
+
+function developmentPickerError(error: unknown, result?: unknown) {
+  if (!__DEV__) return;
+  const err = error as { message?: string; name?: string; stack?: string };
+  console.info('[TradieOS media:document-picker-error]', {
+    errorMessage: err?.message,
+    errorName: err?.name,
+    platform: Platform.OS,
+    resultShape: result
+      ? {
+          hasAssets: Array.isArray((result as { assets?: unknown }).assets),
+          keys: Object.keys(result as Record<string, unknown>),
+        }
+      : null,
+    sdk: '54.0.0',
+    stack: err?.stack,
+  });
+}
+
+function developmentPickerLog(event: string, details: Record<string, unknown>) {
+  if (!__DEV__) return;
+  console.info(`[TradieOS media:picker:${event}]`, {
+    at: new Date().toISOString(),
+    ...details,
+  });
 }
 
 export function MediaEvidenceScreen({ navigation, route }: Props) {
@@ -139,9 +201,26 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
   const [caption, setCaption] = useState('');
   const [notes, setNotes] = useState('');
   const [isCustomerVisible, setIsCustomerVisible] = useState(false);
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [isPicking, setIsPicking] = useState(false);
+  const [pickerState, setPickerState] = useState<MediaPickerControllerState>(
+    initialMediaPickerControllerState,
+  );
   const [isUploading, setIsUploading] = useState(false);
+  const pickerStateRef = useRef(pickerState);
+  const isMountedRef = useRef(true);
+  const pendingSourceRef = useRef<EvidenceSource | null>(null);
+  const launchInProgressRef = useRef(false);
+  const nativePickerCalledRef = useRef(false);
+  const launchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackLaunchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isActionMenuOpen = pickerState.isSourceMenuOpen;
+  const isLaunchingPicker = pickerState.isLaunchingPicker;
+  const openingPickerLabel = isLaunchingPicker
+    ? openingLabelForSource(pickerState.activePicker)
+    : '+ Add evidence';
 
   const canSetCustomerVisible = ['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(
     user?.role ?? '',
@@ -165,6 +244,109 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
     [activeFiles],
   );
 
+  useEffect(() => {
+    pickerStateRef.current = pickerState;
+  }, [pickerState]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('blur', () => {
+      resetPickerState('navigation-blur');
+    });
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      if (
+        !launchInProgressRef.current &&
+        pickerStateRef.current.isLaunchingPicker
+      ) {
+        resetPickerState('navigation-focus-stale');
+      }
+    });
+    const appStateSubscription = AppState.addEventListener(
+      'change',
+      (state) => {
+        if (
+          state === 'active' &&
+          !launchInProgressRef.current &&
+          pickerStateRef.current.isLaunchingPicker
+        ) {
+          resetPickerState('app-active-stale');
+        }
+      },
+    );
+
+    return () => {
+      unsubscribe();
+      unsubscribeFocus();
+      appStateSubscription.remove();
+      isMountedRef.current = false;
+      resetPickerState('unmount', false);
+    };
+  }, [navigation]);
+
+  function updatePickerState(
+    next:
+      | MediaPickerControllerState
+      | ((current: MediaPickerControllerState) => MediaPickerControllerState),
+  ) {
+    if (typeof next !== 'function') {
+      pickerStateRef.current = next;
+      setPickerState(next);
+      return;
+    }
+
+    setPickerState((current) => {
+      const resolved = next(current);
+      pickerStateRef.current = resolved;
+      return resolved;
+    });
+  }
+
+  function pickerLogState(extra: Record<string, unknown> = {}) {
+    const state = pickerStateRef.current;
+    return {
+      activePicker: state.activePicker,
+      isLaunchingPicker: state.isLaunchingPicker,
+      pendingSource: pendingSourceRef.current ?? state.pendingSource,
+      phase: state.phase,
+      sourceSheetVisible: state.isSourceMenuOpen,
+      ...extra,
+    };
+  }
+
+  function clearLaunchTimer() {
+    if (!launchTimerRef.current) return;
+    clearTimeout(launchTimerRef.current);
+    launchTimerRef.current = null;
+  }
+
+  function clearFallbackLaunchTimer() {
+    if (!fallbackLaunchTimerRef.current) return;
+    clearTimeout(fallbackLaunchTimerRef.current);
+    fallbackLaunchTimerRef.current = null;
+  }
+
+  function clearWatchdogTimer() {
+    if (!watchdogTimerRef.current) return;
+    clearTimeout(watchdogTimerRef.current);
+    watchdogTimerRef.current = null;
+  }
+
+  function resetPickerState(reason: string, shouldCommit = true) {
+    clearLaunchTimer();
+    clearFallbackLaunchTimer();
+    clearWatchdogTimer();
+    pendingSourceRef.current = null;
+    launchInProgressRef.current = false;
+    nativePickerCalledRef.current = false;
+    pickerStateRef.current = resetMediaPickerController();
+    if (shouldCommit) {
+      setPickerState(resetMediaPickerController());
+    }
+    developmentPickerLog(
+      reason.startsWith('watchdog') ? 'WATCHDOG_RESET' : 'PICKER_STATE_RESET',
+      pickerLogState({ reason }),
+    );
+  }
+
   function syncCategory(nextFiles: EvidenceFile[]) {
     const nextCategory = firstCategoryForFiles(nextFiles);
     const firstFile = nextFiles[0];
@@ -182,7 +364,11 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
       syncCategory(merged);
       return merged;
     });
-    setIsActionMenuOpen(false);
+    updatePickerState((current) => ({
+      ...current,
+      isSourceMenuOpen: false,
+      pendingSource: null,
+    }));
   }
 
   async function createEvidenceFile(input: {
@@ -222,11 +408,196 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
     };
   }
 
-  async function takePhoto() {
-    setIsActionMenuOpen(false);
-    setIsPicking(true);
+  function openActionMenu() {
+    developmentPickerLog('ADD_EVIDENCE_PRESSED', pickerLogState());
+    if (Platform.OS === 'ios') {
+      openIosActionSheet();
+      return;
+    }
+
+    updatePickerState((current) => {
+      const next = openEvidenceSourceMenu(current);
+      developmentPickerLog(
+        'SOURCE_SHEET_OPEN_REQUESTED',
+        pickerLogState({
+          blocked: next === current,
+          isLaunchingPicker: current.isLaunchingPicker,
+        }),
+      );
+      return next;
+    });
+  }
+
+  function openIosActionSheet() {
+    if (launchInProgressRef.current) return;
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        cancelButtonIndex: 3,
+        options: ['Take photo', 'Choose photos', 'Choose document', 'Cancel'],
+        title: 'Add evidence',
+      },
+      (buttonIndex) => {
+        if (buttonIndex === 0) {
+          selectEvidenceSource('CAMERA');
+        } else if (buttonIndex === 1) {
+          selectEvidenceSource('PHOTO_LIBRARY');
+        } else if (buttonIndex === 2) {
+          selectEvidenceSource('DOCUMENT');
+        } else {
+          closeActionMenu();
+        }
+      },
+    );
+  }
+
+  function closeActionMenu() {
+    updatePickerState((current) => {
+      pendingSourceRef.current = null;
+      developmentPickerLog('SHEET_CLOSE_REQUESTED', pickerLogState());
+      return closeEvidenceSourceMenu(current);
+    });
+  }
+
+  function selectEvidenceSource(source: EvidenceSource) {
+    if (launchInProgressRef.current) {
+      developmentPickerLog(
+        'SOURCE_SELECTED',
+        pickerLogState({ blocked: true, source }),
+      );
+      return;
+    }
+
+    const current = pickerStateRef.current;
+    const next = selectEvidenceSourceState(current, source);
+    pendingSourceRef.current = source;
+    pickerStateRef.current = next;
+    setPickerState(next);
+    developmentPickerLog('SOURCE_SELECTED', pickerLogState({ source }));
+    developmentPickerLog('SHEET_CLOSE_REQUESTED', pickerLogState({ source }));
+    developmentPickerLog('SHEET_VISIBLE_FALSE', pickerLogState({ source }));
+    if (Platform.OS === 'ios') {
+      developmentPickerLog('MODAL_ON_DISMISS', {
+        ...pickerLogState({ source }),
+        implementation: 'ActionSheetIOS',
+      });
+    }
+    developmentPickerLog('SOURCE_SELECTED_RESULT', {
+      blocked: next === current,
+      source,
+    });
+    schedulePendingPickerLaunch('option-pressed');
+  }
+
+  function schedulePendingPickerLaunch(reason: string) {
+    clearLaunchTimer();
+    clearFallbackLaunchTimer();
+    developmentPickerLog(
+      'PICKER_LAUNCH_SCHEDULED',
+      pickerLogState({ path: 'primary', reason }),
+    );
+
+    requestAnimationFrame(() => {
+      InteractionManager.runAfterInteractions(() => {
+        launchTimerRef.current = setTimeout(() => {
+          launchTimerRef.current = null;
+          launchPendingSource(`primary:${reason}`);
+        }, 0);
+      });
+    });
+
+    fallbackLaunchTimerRef.current = setTimeout(() => {
+      fallbackLaunchTimerRef.current = null;
+      developmentPickerLog(
+        'PICKER_LAUNCH_SCHEDULED',
+        pickerLogState({ path: 'fallback', reason }),
+      );
+      launchPendingSource(`fallback:${reason}`);
+    }, 400);
+  }
+
+  function handleActionMenuDismissed() {
+    developmentPickerLog('MODAL_ON_DISMISS', pickerLogState());
+    if (pendingSourceRef.current) {
+      schedulePendingPickerLaunch('modal-dismissed');
+    }
+  }
+
+  function launchPendingSource(reason: string) {
+    const source = pendingSourceRef.current;
+    if (!source || launchInProgressRef.current || !isMountedRef.current) {
+      developmentPickerLog(
+        'PICKER_LAUNCH_SKIPPED',
+        pickerLogState({
+          hasSource: Boolean(source),
+          isMounted: isMountedRef.current,
+          launchInProgress: launchInProgressRef.current,
+          reason,
+        }),
+      );
+      return;
+    }
+
+    pendingSourceRef.current = null;
+    clearLaunchTimer();
+    clearFallbackLaunchTimer();
+    launchInProgressRef.current = true;
+    nativePickerCalledRef.current = false;
+
+    const current = pickerStateRef.current;
+    updatePickerState(pickerLaunchStarted(current, source));
+    startPickerWatchdog(source);
+    developmentPickerLog(
+      'PICKER_LAUNCH_STARTED',
+      pickerLogState({ reason, source }),
+    );
+    void launchEvidencePicker(source);
+  }
+
+  async function launchEvidencePicker(source: EvidenceSource) {
     try {
+      if (source === 'CAMERA') {
+        await takePhoto();
+      } else if (source === 'PHOTO_LIBRARY') {
+        await choosePhotos();
+      } else {
+        await chooseDocument();
+      }
+    } finally {
+      clearWatchdogTimer();
+      launchInProgressRef.current = false;
+      nativePickerCalledRef.current = false;
+      updatePickerState((state) => pickerLaunchFinished(state));
+      developmentPickerLog('PICKER_FINALLY', pickerLogState({ source }));
+    }
+  }
+
+  function startPickerWatchdog(source: EvidenceSource) {
+    clearWatchdogTimer();
+    watchdogTimerRef.current = setTimeout(() => {
+      if (!launchInProgressRef.current || nativePickerCalledRef.current) return;
+      showToast({
+        message: "We couldn't open the picker. Please try again.",
+        tone: 'error',
+      });
+      resetPickerState(`watchdog:${source}`);
+    }, 9000);
+  }
+
+  async function takePhoto() {
+    try {
+      updatePickerState((state) => pickerPermissionStarted(state));
+      developmentPickerLog('PERMISSION_REQUEST_STARTED', {
+        ...pickerLogState({ source: 'CAMERA' }),
+        permission: 'camera',
+      });
       const permission = await ImagePicker.requestCameraPermissionsAsync();
+      developmentPickerLog('PERMISSION_REQUEST_FINISHED', {
+        ...pickerLogState({
+          granted: permission.granted,
+          source: 'CAMERA',
+        }),
+        permission: 'camera',
+      });
       if (!permission.granted) {
         showToast({
           message:
@@ -235,13 +606,33 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         });
         return;
       }
+      nativePickerCalledRef.current = true;
+      clearWatchdogTimer();
+      updatePickerState((state) => pickerNativeCallStarted(state, 'CAMERA'));
+      developmentPickerLog('NATIVE_PICKER_CALLED', {
+        ...pickerLogState({ source: 'CAMERA' }),
+        picker: 'camera',
+      });
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         exif: false,
         mediaTypes: ['images'],
         quality: 0.9,
       });
-      if (result.canceled || !result.assets?.length) return;
+      developmentPickerLog('NATIVE_PICKER_RETURNED', {
+        ...pickerLogState({ source: 'CAMERA' }),
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+        picker: 'camera',
+      });
+      developmentPickerLog('camera-result', {
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+      });
+      if (result.canceled || !result.assets?.length) {
+        developmentPickerLog('native-cancelled', { source: 'CAMERA' });
+        return;
+      }
       const asset = result.assets[0];
       if (!asset) return;
       const file = await createEvidenceFile({
@@ -254,22 +645,35 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         width: asset.width,
       });
       if (file) addFiles([file]);
-    } catch {
+    } catch (error) {
+      developmentPickerLog('PICKER_ERROR', {
+        ...pickerLogState({ source: 'CAMERA' }),
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        picker: 'camera',
+      });
       showToast({
         message: "We couldn't open the camera. Please try again.",
         tone: 'error',
       });
-    } finally {
-      setIsPicking(false);
     }
   }
 
   async function choosePhotos() {
-    setIsActionMenuOpen(false);
-    setIsPicking(true);
     try {
+      updatePickerState((state) => pickerPermissionStarted(state));
+      developmentPickerLog('PERMISSION_REQUEST_STARTED', {
+        ...pickerLogState({ source: 'PHOTO_LIBRARY' }),
+        permission: 'photo-library',
+      });
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
+      developmentPickerLog('PERMISSION_REQUEST_FINISHED', {
+        ...pickerLogState({
+          granted: permission.granted,
+          source: 'PHOTO_LIBRARY',
+        }),
+        permission: 'photo-library',
+      });
       if (!permission.granted) {
         showToast({
           message:
@@ -278,13 +682,35 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         });
         return;
       }
+      nativePickerCalledRef.current = true;
+      clearWatchdogTimer();
+      updatePickerState((state) =>
+        pickerNativeCallStarted(state, 'PHOTO_LIBRARY'),
+      );
+      developmentPickerLog('NATIVE_PICKER_CALLED', {
+        ...pickerLogState({ source: 'PHOTO_LIBRARY' }),
+        picker: 'photo-library',
+      });
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsMultipleSelection: true,
         mediaTypes: ['images'],
         quality: 0.9,
         selectionLimit: MAX_PHOTO_SELECTION,
       });
-      if (result.canceled || !result.assets?.length) return;
+      developmentPickerLog('NATIVE_PICKER_RETURNED', {
+        ...pickerLogState({ source: 'PHOTO_LIBRARY' }),
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+        picker: 'photo-library',
+      });
+      developmentPickerLog('photo-library-result', {
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+      });
+      if (result.canceled || !result.assets?.length) {
+        developmentPickerLog('native-cancelled', { source: 'PHOTO_LIBRARY' });
+        return;
+      }
       const nextFiles = await Promise.all(
         result.assets.slice(0, MAX_PHOTO_SELECTION).map((asset) =>
           createEvidenceFile({
@@ -299,26 +725,48 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         ),
       );
       addFiles(nextFiles.filter((file): file is EvidenceFile => Boolean(file)));
-    } catch {
+    } catch (error) {
+      developmentPickerLog('PICKER_ERROR', {
+        ...pickerLogState({ source: 'PHOTO_LIBRARY' }),
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        picker: 'photo-library',
+      });
       showToast({
         message: "We couldn't open your photo library. Please try again.",
         tone: 'error',
       });
-    } finally {
-      setIsPicking(false);
     }
   }
 
   async function chooseDocument() {
-    setIsActionMenuOpen(false);
-    setIsPicking(true);
     try {
+      nativePickerCalledRef.current = true;
+      clearWatchdogTimer();
+      updatePickerState((state) => pickerNativeCallStarted(state, 'DOCUMENT'));
+      developmentPickerLog('NATIVE_PICKER_CALLED', {
+        ...pickerLogState({ source: 'DOCUMENT' }),
+        picker: 'document',
+      });
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: false,
-        type: supportedDocumentMimeTypes,
+        type: documentPickerType,
       });
-      if (result.canceled || !result.assets?.length) return;
+      developmentPickerLog('NATIVE_PICKER_RETURNED', {
+        ...pickerLogState({ source: 'DOCUMENT' }),
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+        picker: 'document',
+      });
+      developmentMediaLog('document-picker-result', {
+        assetCount: result.assets?.length ?? 0,
+        canceled: result.canceled,
+        platform: Platform.OS,
+      });
+      if (isPickerCancelled(result) || !result.assets?.length) {
+        developmentPickerLog('native-cancelled', { source: 'DOCUMENT' });
+        return;
+      }
       const asset = result.assets[0];
       if (!asset) return;
       const file = await createEvidenceFile({
@@ -329,13 +777,17 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         uri: asset.uri,
       });
       if (file) addFiles([file]);
-    } catch {
+    } catch (error) {
+      developmentPickerError(error);
+      developmentPickerLog('PICKER_ERROR', {
+        ...pickerLogState({ source: 'DOCUMENT' }),
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        picker: 'document',
+      });
       showToast({
         message: "We couldn't open the document picker. Please try again.",
         tone: 'error',
       });
-    } finally {
-      setIsPicking(false);
     }
   }
 
@@ -364,6 +816,11 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
   function removeFile(fileId: string) {
     const file = files.find((item) => item.id === fileId);
     if (file) {
+      if (token && file.mediaId && file.status !== 'uploaded') {
+        void cancelMediaUploadRequest(token, file.mediaId).catch(
+          () => undefined,
+        );
+      }
       void safeDeleteTemporaryFile(file.uri);
     }
     setFiles((current) => {
@@ -422,55 +879,65 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
     if (!token) return false;
     if (cancelledIds.current.has(file.id)) return false;
     updateFile(file.id, { error: undefined, progress: 8, status: 'uploading' });
-    let mediaId: string | undefined;
+    let mediaId = file.mediaId;
     try {
-      const target = await createMediaUploadTargetRequest(token, {
-        appointmentId: route.params?.appointmentId,
-        caption,
-        category: file.category,
-        customerId: route.params?.customerId,
-        fileSizeBytes: file.fileSizeBytes,
-        height: file.height,
-        isCustomerVisible,
-        jobId: route.params?.jobId,
-        mediaType: file.mediaType,
-        mimeType: file.mimeType,
-        notes,
-        originalFileName: file.fileName,
-        width: file.width,
-      });
-      mediaId = target.media.id;
+      if (!mediaId) {
+        const target = await createMediaUploadTargetRequest(token, {
+          appointmentId: route.params?.appointmentId,
+          caption,
+          category: file.category,
+          customerId: route.params?.customerId,
+          fileSizeBytes: file.fileSizeBytes,
+          height: file.height,
+          isCustomerVisible,
+          jobId: route.params?.jobId,
+          mediaType: file.mediaType,
+          mimeType: file.mimeType,
+          notes,
+          originalFileName: file.fileName,
+          width: file.width,
+        });
+        mediaId = target.media.id;
+      }
       updateFile(file.id, { mediaId, progress: 28 });
       if (cancelledIds.current.has(file.id)) {
         await cancelMediaUploadRequest(token, mediaId).catch(() => undefined);
         return false;
       }
       const contentBase64 =
-        file.source === 'demo'
-          ? file.mediaType === 'IMAGE'
-            ? demoPhotoBase64
-            : demoPdfBase64
-          : await FileSystem.readAsStringAsync(file.uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
+        file.mediaType === 'IMAGE' ? demoPhotoBase64 : demoPdfBase64;
       updateFile(file.id, { progress: 72 });
       if (cancelledIds.current.has(file.id)) {
         await cancelMediaUploadRequest(token, mediaId).catch(() => undefined);
         return false;
       }
-      await uploadLocalMediaRequest(token, mediaId, { contentBase64 });
+      if (file.source === 'demo') {
+        await uploadLocalMediaRequest(token, mediaId, { contentBase64 });
+      } else {
+        developmentMediaLog('upload-prepared-file', {
+          fileName: file.fileName,
+          mediaType: file.mediaType,
+          mimeType: file.mimeType,
+          preparedByteSize: file.fileSizeBytes,
+          preparedUriScheme: file.uri.split(':')[0],
+          uploadMethod: 'multipart/form-data',
+        });
+        await uploadLocalMediaFileRequest(token, mediaId, {
+          name: file.fileName,
+          type: file.mimeType,
+          uri: file.uri,
+        });
+      }
       updateFile(file.id, { progress: 100, status: 'uploaded' });
       await safeDeleteTemporaryFile(file.uri);
       return true;
     } catch (error) {
-      if (mediaId) {
-        await cancelMediaUploadRequest(token, mediaId).catch(() => undefined);
-      }
       updateFile(file.id, {
-        error:
-          error instanceof Error && error.message
-            ? error.message
-            : "We couldn't upload this evidence.",
+        error: friendlyUploadError({
+          code: error instanceof ApiRequestError ? error.code : null,
+          mediaType: file.mediaType,
+          message: error instanceof Error ? error.message : null,
+        }),
         mediaId,
         progress: 0,
         status: 'failed',
@@ -533,16 +1000,21 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
         <View style={styles.actionRow}>
           <Pressable
             accessibilityRole="button"
-            disabled={isPicking || isUploading}
-            onPress={() => setIsActionMenuOpen(true)}
+            disabled={isLaunchingPicker || isUploading}
+            onPress={openActionMenu}
             style={styles.primaryButton}
           >
-            <Text style={styles.primaryText}>+ Add evidence</Text>
+            <Text style={styles.primaryText}>{openingPickerLabel}</Text>
           </Pressable>
           <Pressable onPress={openSettings} style={styles.secondaryButton}>
             <Text style={styles.secondaryText}>Permissions</Text>
           </Pressable>
         </View>
+        {__DEV__ && isLaunchingPicker ? (
+          <Text style={styles.diagnosticText}>
+            Picker state: {pickerState.phase.toLowerCase().replace(/_/g, ' ')}
+          </Text>
+        ) : null}
 
         {!hasMediaContext ? (
           <View style={styles.warningCard}>
@@ -784,18 +1256,26 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
 
       <Modal
         animationType="fade"
-        onRequestClose={() => setIsActionMenuOpen(false)}
+        onDismiss={handleActionMenuDismissed}
+        onRequestClose={closeActionMenu}
         transparent
         visible={isActionMenuOpen}
       >
         <Pressable
           accessibilityRole="button"
-          onPress={() => setIsActionMenuOpen(false)}
+          onPress={closeActionMenu}
           style={styles.modalBackdrop}
         >
-          <Pressable style={styles.menuCard}>
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
+            style={styles.menuCard}
+          >
             <Text style={styles.menuTitle}>Add evidence</Text>
-            <Pressable onPress={takePhoto} style={styles.menuItem}>
+            <Pressable
+              disabled={isLaunchingPicker}
+              onPress={() => selectEvidenceSource('CAMERA')}
+              style={styles.menuItem}
+            >
               <Text style={styles.menuIcon}>📷</Text>
               <View>
                 <Text style={styles.menuLabel}>Take photo</Text>
@@ -804,7 +1284,11 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
                 </Text>
               </View>
             </Pressable>
-            <Pressable onPress={choosePhotos} style={styles.menuItem}>
+            <Pressable
+              disabled={isLaunchingPicker}
+              onPress={() => selectEvidenceSource('PHOTO_LIBRARY')}
+              style={styles.menuItem}
+            >
               <Text style={styles.menuIcon}>🖼️</Text>
               <View>
                 <Text style={styles.menuLabel}>Choose photos</Text>
@@ -813,7 +1297,11 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
                 </Text>
               </View>
             </Pressable>
-            <Pressable onPress={chooseDocument} style={styles.menuItem}>
+            <Pressable
+              disabled={isLaunchingPicker}
+              onPress={() => selectEvidenceSource('DOCUMENT')}
+              style={styles.menuItem}
+            >
               <Text style={styles.menuIcon}>📄</Text>
               <View>
                 <Text style={styles.menuLabel}>Choose document</Text>
@@ -822,10 +1310,7 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
                 </Text>
               </View>
             </Pressable>
-            <Pressable
-              onPress={() => setIsActionMenuOpen(false)}
-              style={styles.cancelButton}
-            >
+            <Pressable onPress={closeActionMenu} style={styles.cancelButton}>
               <Text style={styles.secondaryText}>Cancel</Text>
             </Pressable>
           </Pressable>
@@ -871,6 +1356,11 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   disabled: { opacity: 0.6 },
+  diagnosticText: {
+    color: colours.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   emptyCard: {
     alignItems: 'center',
     backgroundColor: colours.card,

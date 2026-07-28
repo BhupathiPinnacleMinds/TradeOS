@@ -89,8 +89,9 @@ export class CreateUploadTargetDto {
 }
 
 export class LocalUploadDto {
+  @IsOptional()
   @IsString()
-  contentBase64!: string;
+  contentBase64?: string;
 
   @IsOptional()
   @IsString()

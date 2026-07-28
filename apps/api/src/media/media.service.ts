@@ -26,8 +26,9 @@ import { STORAGE_PROVIDER } from './storage-provider';
 import type { StorageProvider } from './storage-provider';
 
 const DEFAULT_PAGE_SIZE = 20;
-const IMAGE_LIMIT = 15 * 1024 * 1024;
-const DOCUMENT_LIMIT = 25 * 1024 * 1024;
+export const IMAGE_LIMIT = 15 * 1024 * 1024;
+export const DOCUMENT_LIMIT = 25 * 1024 * 1024;
+export const MEDIA_MULTIPART_FILE_LIMIT = DOCUMENT_LIMIT + 1024 * 1024;
 const SUPPORTED_MIME_TYPES = new Map<string, MediaType>([
   ['image/jpeg', 'IMAGE'],
   ['image/png', 'IMAGE'],
@@ -137,6 +138,12 @@ export class MediaService {
     id: string,
     dto: LocalUploadDto,
   ) {
+    if (!dto.contentBase64) {
+      throw this.domainError(
+        'INVALID_UPLOAD_PAYLOAD',
+        'Choose a file before uploading evidence.',
+      );
+    }
     const media = await this.getMedia(currentUser, id);
     this.assertOwnPendingUpload(currentUser, media);
     const content = Buffer.from(dto.contentBase64, 'base64');
@@ -152,6 +159,56 @@ export class MediaService {
       objectKey: media.objectKey,
     });
     return this.complete(currentUser, id, { checksum: dto.checksum });
+  }
+
+  async localMultipartUpload(
+    currentUser: AuthenticatedUser,
+    id: string,
+    file?: {
+      buffer: Buffer;
+      mimetype?: string;
+      originalname?: string;
+      size: number;
+    },
+  ) {
+    if (!file?.buffer?.length) {
+      throw this.domainError(
+        'INVALID_UPLOAD_PAYLOAD',
+        'Choose a file before uploading evidence.',
+      );
+    }
+    const media = await this.getMedia(currentUser, id);
+    this.assertOwnPendingUpload(currentUser, media);
+    if (file.size !== media.fileSizeBytes) {
+      throw this.domainError(
+        file.size > media.fileSizeBytes
+          ? 'FILE_TOO_LARGE'
+          : 'FILE_SIZE_MISMATCH',
+        file.size > media.fileSizeBytes
+          ? this.fileTooLargeMessage(media.mediaType)
+          : 'Uploaded file size does not match the requested upload target.',
+        file.size > media.fileSizeBytes
+          ? HttpStatus.PAYLOAD_TOO_LARGE
+          : HttpStatus.BAD_REQUEST,
+        {
+          actualBytes: file.size,
+          expectedBytes: media.fileSizeBytes,
+          maximumBytes: this.limitForMediaType(media.mediaType),
+        },
+      );
+    }
+    if (file.mimetype && file.mimetype.toLowerCase() !== media.mimeType) {
+      throw this.domainError(
+        'UNSUPPORTED_FILE_TYPE',
+        'This file type is not supported yet.',
+      );
+    }
+    await this.storage.uploadFile({
+      content: file.buffer,
+      mimeType: media.mimeType,
+      objectKey: media.objectKey,
+    });
+    return this.complete(currentUser, id, {});
   }
 
   async complete(
@@ -877,6 +934,16 @@ export class MediaService {
 
   private canSetCustomerVisible(currentUser: AuthenticatedUser) {
     return ['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(currentUser.role);
+  }
+
+  private limitForMediaType(mediaType: MediaType) {
+    return mediaType === 'IMAGE' ? IMAGE_LIMIT : DOCUMENT_LIMIT;
+  }
+
+  private fileTooLargeMessage(mediaType: MediaType) {
+    return mediaType === 'IMAGE'
+      ? 'The selected image exceeds the 15 MB limit.'
+      : 'The selected document exceeds the 25 MB limit.';
   }
 
   private clean(value?: string | null) {

@@ -1,13 +1,22 @@
 import {
+  ArgumentsHost,
   Body,
+  Catch,
   Controller,
+  ExceptionFilter,
   Get,
+  HttpException,
+  HttpStatus,
   Param,
   Patch,
   Post,
   Query,
   Res,
+  UploadedFile,
+  UseFilters,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -18,7 +27,65 @@ import {
   LocalUploadDto,
   UpdateMediaDto,
 } from './dto/media.dto';
-import { MediaService } from './media.service';
+import {
+  DOCUMENT_LIMIT,
+  MEDIA_MULTIPART_FILE_LIMIT,
+  MediaService,
+} from './media.service';
+
+@Catch()
+class MediaUploadExceptionFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const response = host.switchToHttp().getResponse<Response>();
+    const code = this.errorCode(exception);
+    if (!code) {
+      if (exception instanceof HttpException) {
+        const status = exception.getStatus();
+        const body = exception.getResponse();
+        response.status(status).json(
+          typeof body === 'string'
+            ? {
+                code: status === 413 ? 'FILE_TOO_LARGE' : 'REQUEST_FAILED',
+                message: body,
+              }
+            : body,
+        );
+        return;
+      }
+      response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        code: 'MEDIA_UPLOAD_FAILED',
+        message: "We couldn't upload this file.",
+      });
+      return;
+    }
+    response.status(HttpStatus.PAYLOAD_TOO_LARGE).json({
+      code,
+      details: {
+        maximumBytes: DOCUMENT_LIMIT,
+      },
+      message: 'The selected file exceeds the upload limit.',
+    });
+  }
+
+  private errorCode(exception: unknown) {
+    const error = exception as {
+      code?: string;
+      message?: string;
+      name?: string;
+      status?: number;
+      statusCode?: number;
+    };
+    if (error?.code === 'LIMIT_FILE_SIZE') return 'FILE_TOO_LARGE';
+    if (
+      error?.status === HttpStatus.PAYLOAD_TOO_LARGE ||
+      error?.statusCode === HttpStatus.PAYLOAD_TOO_LARGE ||
+      error?.name === 'PayloadTooLargeError'
+    ) {
+      return 'FILE_TOO_LARGE';
+    }
+    return null;
+  }
+}
 
 @Controller('media')
 export class MediaController {
@@ -33,11 +100,31 @@ export class MediaController {
   }
 
   @Post(':id/local-upload')
+  @UseFilters(MediaUploadExceptionFilter)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fieldSize: 512 * 1024,
+        fileSize: MEDIA_MULTIPART_FILE_LIMIT,
+        files: 1,
+      },
+    }),
+  )
   localUpload(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: LocalUploadDto,
+    @UploadedFile()
+    file?: {
+      buffer: Buffer;
+      mimetype?: string;
+      originalname?: string;
+      size: number;
+    },
   ) {
+    if (file) {
+      return this.media.localMultipartUpload(currentUser, id, file);
+    }
     return this.media.localUpload(currentUser, id, dto);
   }
 

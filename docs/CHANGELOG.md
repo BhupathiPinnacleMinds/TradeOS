@@ -28,6 +28,17 @@
 
 ### Fixed
 
+- Add Evidence now dismisses its action menu before launching the native
+  camera, photo library or document picker, preventing iOS modal timing from
+  swallowing picker launches or leaving the screen unresponsive.
+- Real camera, photo-library and document uploads now use binary multipart
+  upload instead of Base64 JSON, so normal evidence photos do not hit JSON body
+  parser limits.
+- Media upload size failures now map to friendly `FILE_TOO_LARGE` UI/API
+  messages, and retry reuses the pending media row instead of creating
+  duplicate upload records.
+- Document picker handling now follows the installed Expo result shape and uses
+  stricter post-selection validation with development-only diagnostics.
 - Normalised media access paths so local upload, preview, file and download URLs
   never duplicate the `/api` prefix.
 - Media Viewer no longer renders raw internal URLs and now shows real secured

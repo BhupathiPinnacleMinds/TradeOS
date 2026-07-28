@@ -8,6 +8,7 @@ import {
   buildMediaListPath,
   buildMediaLocalUploadPath,
   buildMediaPreviewPath,
+  uploadLocalMediaFileRequest,
 } from '../../../mobile/src/api/client';
 import {
   mediaCategoryLabel,
@@ -15,6 +16,13 @@ import {
 } from '../../../../packages/shared/src/media';
 
 describe('mobile media API client path helpers', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
   it('builds /media under the shared /api base URL exactly once', () => {
     expect(buildApiRequestUrl('/media')).toBe(
       'http://localhost:3000/api/media',
@@ -80,5 +88,32 @@ describe('mobile media API client path helpers', () => {
     expect(mediaCategoryLabel('RECEIPT')).toBe('Receipt');
     expect(mediaTypeLabel('IMAGE')).toBe('Image');
     expect(mediaTypeLabel('PDF')).toBe('PDF');
+  });
+
+  it('uploads real local files as multipart form-data instead of Base64 JSON', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      json: jest.fn().mockResolvedValue({
+        media: { id: 'media-1', uploadStatus: 'COMPLETED' },
+      }),
+      ok: true,
+      status: 200,
+    });
+    global.fetch = fetchMock as never;
+
+    await uploadLocalMediaFileRequest('token-123', 'media-1', {
+      name: 'switchboard.jpg',
+      type: 'image/jpeg',
+      uri: 'file:///cache/switchboard.jpg',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit & { headers: Record<string, string> },
+    ];
+    expect(url).toBe('http://localhost:3000/api/media/media-1/local-upload');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.headers.Authorization).toBe('Bearer token-123');
+    expect(init.headers['Content-Type']).toBeUndefined();
+    expect(init.method).toBe('POST');
   });
 });
