@@ -20,6 +20,13 @@
   material invoices.
 - Read-only users can view permitted media metadata but cannot upload, edit or
   archive files.
+- Media removal is soft archive only. The API enforces business scope, role,
+  uploader ownership and context assignment before setting `archivedAt`.
+  Technicians may archive only their own recent ordinary photos within the
+  24-hour correction window on assigned work. Protected categories
+  (`COMPLIANCE_CERTIFICATE`, `WARRANTY`, `PERMIT`, `MATERIAL_INVOICE`,
+  `RECEIPT`) require Owner/Admin authority except for explicitly permitted
+  accountant financial-document handling.
 - Upload validation rejects path traversal filenames, unsupported MIME types,
   mismatched media types, oversize files and video/audio uploads until those
   modules are implemented.

@@ -8,8 +8,10 @@ import {
   APPOINTMENT_STATUS_COLOURS,
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
+  formatMediaSummary,
   getAppointmentQuickActions,
   mediaCategoryLabel,
+  mediaDisplayTitle,
   mediaTypeLabel,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
@@ -33,12 +35,25 @@ import {
 import {
   ApiRequestError,
   appointmentDetailRequest,
+  archiveMediaRequest,
   mediaRequest,
+  restoreMediaRequest,
   transitionAppointmentRequest,
   updateAppointmentRequest,
 } from '../api/client';
+import {
+  canArchiveMediaInUi,
+  canRestoreMediaInUi,
+  friendlyMediaArchiveError,
+  mediaRemovedMessage,
+  mediaRestoredMessage,
+} from '../api/mediaActions';
 import { downloadAuthenticatedMediaFile } from '../api/mediaFiles';
 import { useAuth } from '../auth/AuthContext';
+import {
+  MediaOverflowMenu,
+  MediaRemovalConfirmation,
+} from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import {
@@ -128,6 +143,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   );
   const [busyText, setBusyText] = useState<string | null>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [mediaToRemove, setMediaToRemove] = useState<MediaAsset | null>(null);
+  const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
+  const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [isCompletionOpen, setIsCompletionOpen] = useState(false);
   const [technicianNotes, setTechnicianNotes] = useState('');
   const [workCompleted, setWorkCompleted] = useState('');
@@ -150,6 +168,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       navigation.setOptions({ title: response.appointment.appointmentNumber });
       try {
         const mediaResponse = await mediaRequest(token, {
+          archived: showArchivedMedia ? 'true' : undefined,
           appointmentId: response.appointment.id,
         });
         setMedia(mediaResponse.records);
@@ -174,7 +193,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   useFocusEffect(
     useCallback(() => {
       void loadAppointment();
-    }, [appointmentId, token]),
+    }, [appointmentId, showArchivedMedia, token]),
   );
 
   async function transition(action: AppointmentTransitionAction | 'cancel') {
@@ -268,6 +287,50 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       });
     } finally {
       setBusyText(null);
+    }
+  }
+
+  async function archiveMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    const previousMedia = media;
+    setBusyMediaId(mediaItem.id);
+    setMediaToRemove(null);
+    setMedia((current) => current.filter((item) => item.id !== mediaItem.id));
+    try {
+      await archiveMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRemovedMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadAppointment();
+    } catch (error) {
+      setMedia(previousMedia);
+      showToast({
+        message: friendlyMediaArchiveError(error),
+        tone: 'error',
+      });
+    } finally {
+      setBusyMediaId(null);
+    }
+  }
+
+  async function restoreMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    setBusyMediaId(mediaItem.id);
+    try {
+      await restoreMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRestoredMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadAppointment();
+    } catch {
+      showToast({
+        message: "We couldn't restore this file. Please try again.",
+        tone: 'error',
+      });
+    } finally {
+      setBusyMediaId(null);
     }
   }
 
@@ -489,6 +552,17 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       </Card>
 
       <Card title="Photos & documents">
+        {['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(user?.role ?? '') ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowArchivedMedia((value) => !value)}
+            style={styles.archiveFilter}
+          >
+            <Text style={styles.archiveFilterText}>
+              {showArchivedMedia ? 'Showing archived' : 'Showing active'}
+            </Text>
+          </Pressable>
+        ) : null}
         {media.length === 0 ? (
           <Text style={styles.meta}>
             No evidence uploaded for this appointment.
@@ -496,9 +570,12 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         ) : (
           <>
             <Text style={styles.mediaSummary}>
-              {media.filter((item) => item.mediaType === 'IMAGE').length} photos
-              · {media.filter((item) => item.mediaType !== 'IMAGE').length}{' '}
-              documents
+              {formatMediaSummary({
+                documents: media.filter((item) => item.mediaType !== 'IMAGE')
+                  .length,
+                photos: media.filter((item) => item.mediaType === 'IMAGE')
+                  .length,
+              })}
             </Text>
             <View style={styles.mediaGrid}>
               {media.map((item) => (
@@ -508,6 +585,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
                   onPress={() =>
                     navigation.navigate('MediaViewer', { mediaId: item.id })
                   }
+                  onRemove={() => setMediaToRemove(item)}
+                  onRestore={() => void restoreMedia(item)}
+                  user={user}
+                  busy={busyMediaId === item.id}
                   timezone={businessTimezone}
                   token={token}
                 />
@@ -554,6 +635,13 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         technicianNotes={technicianNotes}
         visible={isCompletionOpen}
         workCompleted={workCompleted}
+      />
+      <MediaRemovalConfirmation
+        busy={Boolean(busyMediaId)}
+        media={mediaToRemove}
+        onCancel={() => setMediaToRemove(null)}
+        onConfirm={() => mediaToRemove && void archiveMedia(mediaToRemove)}
+        visible={Boolean(mediaToRemove)}
       />
     </ScrollView>
   );
@@ -627,20 +715,29 @@ function QuickAction({
 }
 
 function AppointmentMediaTile({
+  busy,
   item,
+  onRemove,
   onPress,
+  onRestore,
   timezone,
   token,
+  user,
 }: {
+  busy?: boolean;
   item: MediaAsset;
+  onRemove(): void;
   onPress(): void;
+  onRestore(): void;
   timezone: string;
   token: string | null;
+  user: ReturnType<typeof useAuth>['user'];
 }) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(
     item.mediaType === 'IMAGE',
   );
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -671,16 +768,26 @@ function AppointmentMediaTile({
   }, [item, token]);
 
   return (
-    <Pressable
-      accessibilityLabel={`Open ${item.originalFileName}`}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={styles.mediaTile}
-    >
-      <View style={styles.mediaThumb}>
-        {item.mediaType === 'IMAGE' ? (
-          isPreviewLoading ? (
-            <ActivityIndicator color={colours.primary} />
+    <View style={styles.mediaTileShell}>
+      <Pressable
+        accessibilityLabel={`Open ${item.originalFileName}`}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={styles.mediaTile}
+      >
+        <View style={styles.mediaThumb}>
+          {item.mediaType === 'IMAGE' ? (
+            isPreviewLoading ? (
+              <ActivityIndicator color={colours.primary} />
+            ) : thumbnailUri ? (
+              <Image
+                resizeMode="cover"
+                source={{ uri: thumbnailUri }}
+                style={styles.mediaThumbImage}
+              />
+            ) : (
+              <Text style={styles.mediaThumbText}>IMG</Text>
+            )
           ) : thumbnailUri ? (
             <Image
               resizeMode="cover"
@@ -688,32 +795,52 @@ function AppointmentMediaTile({
               style={styles.mediaThumbImage}
             />
           ) : (
-            <Text style={styles.mediaThumbText}>IMG</Text>
-          )
-        ) : (
-          <Text style={styles.mediaThumbText}>
-            {item.mediaType === 'PDF' ? 'PDF' : 'DOC'}
+            <Text style={styles.mediaThumbText}>
+              {item.mediaType === 'PDF' ? 'PDF' : 'DOC'}
+            </Text>
+          )}
+        </View>
+        <View style={styles.mediaDetails}>
+          <Text numberOfLines={2} style={styles.mediaName}>
+            {mediaDisplayTitle(item)}
           </Text>
-        )}
-      </View>
-      <View style={styles.mediaDetails}>
-        <Text numberOfLines={1} style={styles.mediaName}>
-          {item.caption ?? item.originalFileName}
-        </Text>
-        <Text numberOfLines={1} style={styles.mediaMeta}>
-          {mediaCategoryLabel(item.category)} · {mediaTypeLabel(item.mediaType)}
-        </Text>
-        <Text numberOfLines={1} style={styles.mediaMeta}>
-          {Math.ceil(item.fileSizeBytes / 1024)} KB ·{' '}
-          {formatBusinessDateTime(item.createdAt, timezone)}
-        </Text>
-        <Text numberOfLines={1} style={styles.mediaMeta}>
-          {item.uploadedBy
-            ? `${item.uploadedBy.firstName} ${item.uploadedBy.lastName}`
-            : 'Unknown uploader'}
-        </Text>
-      </View>
-    </Pressable>
+          <Text numberOfLines={1} style={styles.mediaMeta}>
+            {mediaCategoryLabel(item.category)} ·{' '}
+            {mediaTypeLabel(item.mediaType)}
+          </Text>
+          <Text numberOfLines={1} style={styles.mediaMeta}>
+            {Math.ceil(item.fileSizeBytes / 1024)} KB ·{' '}
+            {formatBusinessDateTime(item.createdAt, timezone)}
+          </Text>
+          <Text numberOfLines={1} style={styles.mediaMeta}>
+            {item.uploadedBy
+              ? `${item.uploadedBy.firstName} ${item.uploadedBy.lastName}`
+              : 'Unknown uploader'}
+          </Text>
+        </View>
+      </Pressable>
+      <MediaOverflowMenu
+        busy={busy}
+        canArchive={canArchiveMediaInUi(user, item)}
+        canRestore={canRestoreMediaInUi(user, item)}
+        media={item}
+        onArchive={() => {
+          setIsMenuOpen(false);
+          onRemove();
+        }}
+        onClose={() => setIsMenuOpen(false)}
+        onOpen={() => setIsMenuOpen(true)}
+        onRestore={() => {
+          setIsMenuOpen(false);
+          onRestore();
+        }}
+        onView={() => {
+          setIsMenuOpen(false);
+          onPress();
+        }}
+        open={isMenuOpen}
+      />
+    </View>
   );
 }
 
@@ -916,6 +1043,17 @@ function BlockingLoader({ text }: { text: string | null }) {
 }
 
 const styles = StyleSheet.create({
+  archiveFilter: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  archiveFilterText: { color: colours.primary, fontWeight: '900' },
   card: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -975,6 +1113,7 @@ const styles = StyleSheet.create({
   mediaMeta: { color: colours.muted, fontSize: 12, fontWeight: '700' },
   mediaName: { color: colours.ink, fontWeight: '900' },
   mediaSummary: { color: colours.muted, fontWeight: '800', marginTop: 10 },
+  mediaTileShell: { position: 'relative' },
   mediaThumb: {
     alignItems: 'center',
     backgroundColor: '#EEF2FF',
@@ -996,6 +1135,7 @@ const styles = StyleSheet.create({
     gap: 4,
     minHeight: 92,
     padding: 12,
+    paddingRight: 60,
   },
   disabledAction: { opacity: 0.55 },
   inputLabel: {

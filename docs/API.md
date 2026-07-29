@@ -54,6 +54,15 @@ POST /api/media/:id/restore
 Supported filters for `GET /api/media` include `customerId`, `jobId`,
 `appointmentId`, `category`, `mediaType`, `uploadedBy`, `uploadStatus`,
 `processingStatus`, `dateFrom`, `dateTo`, `search`, `page` and `pageSize`.
+Default media lists exclude archived files. Manager roles can request
+`archived=true` to review archived media.
+
+`POST /api/media/:id/archive` is the safe removal operation. It sets
+`archivedAt`, keeps metadata and the storage object, writes audit/timeline
+events and hides the file from normal media lists. `POST /api/media/:id/restore`
+clears `archivedAt` for permitted elevated roles. Structured archive errors
+include `MEDIA_NOT_FOUND`, `MEDIA_ACCESS_DENIED`, `MEDIA_ALREADY_ARCHIVED`,
+`MEDIA_ARCHIVE_WINDOW_EXPIRED` and `PROTECTED_MEDIA_REQUIRES_ADMIN`.
 
 The current milestone supports images, PDFs and office/text documents. Video
 and audio are schema-ready for future use but rejected at upload time.

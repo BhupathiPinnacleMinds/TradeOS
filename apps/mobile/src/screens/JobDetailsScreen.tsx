@@ -2,7 +2,9 @@ import type { Appointment, Job, JobStatus, MediaAsset } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
+  formatMediaCount,
   formatBusinessTimeRange,
+  mediaDisplayTitle,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -18,14 +20,27 @@ import {
   View,
 } from 'react-native';
 import {
+  archiveMediaRequest,
   archiveJobRequest,
   jobDetailRequest,
   mediaRequest,
   restoreJobRequest,
+  restoreMediaRequest,
   transitionAppointmentRequest,
   updateJobStatusRequest,
 } from '../api/client';
+import {
+  canArchiveMediaInUi,
+  canRestoreMediaInUi,
+  friendlyMediaArchiveError,
+  mediaRemovedMessage,
+  mediaRestoredMessage,
+} from '../api/mediaActions';
 import { useAuth } from '../auth/AuthContext';
+import {
+  MediaOverflowMenu,
+  MediaRemovalConfirmation,
+} from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import {
@@ -63,6 +78,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
+  const [mediaToRemove, setMediaToRemove] = useState<MediaAsset | null>(null);
+  const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
+  const [showArchivedMedia, setShowArchivedMedia] = useState(false);
 
   const canEdit = canManageJob(user?.role);
   const canArchive = canArchiveJob(user?.role);
@@ -76,7 +94,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     try {
       const [response, mediaResponse] = await Promise.all([
         jobDetailRequest(token, jobId),
-        mediaRequest(token, { jobId }),
+        mediaRequest(token, {
+          archived: showArchivedMedia ? 'true' : undefined,
+          jobId,
+        }),
       ]);
       setJob(response.job);
       setAppointments(response.appointments);
@@ -93,7 +114,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   useFocusEffect(
     useCallback(() => {
       void loadJob();
-    }, [jobId, token]),
+    }, [jobId, showArchivedMedia, token]),
   );
 
   async function changeStatus(status: JobStatus) {
@@ -145,6 +166,47 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       });
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function archiveMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    const previousMedia = media;
+    setBusyMediaId(mediaItem.id);
+    setMediaToRemove(null);
+    setMedia((current) => current.filter((item) => item.id !== mediaItem.id));
+    try {
+      await archiveMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRemovedMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadJob();
+    } catch (error) {
+      setMedia(previousMedia);
+      showToast({ message: friendlyMediaArchiveError(error), tone: 'error' });
+    } finally {
+      setBusyMediaId(null);
+    }
+  }
+
+  async function restoreMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    setBusyMediaId(mediaItem.id);
+    try {
+      await restoreMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRestoredMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadJob();
+    } catch {
+      showToast({
+        message: "We couldn't restore this file. Please try again.",
+        tone: 'error',
+      });
+    } finally {
+      setBusyMediaId(null);
     }
   }
 
@@ -307,11 +369,29 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
+      {['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(user?.role ?? '') ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setShowArchivedMedia((value) => !value)}
+          style={styles.archiveFilter}
+        >
+          <Text style={styles.archiveFilterText}>
+            {showArchivedMedia
+              ? 'Showing archived media'
+              : 'Showing active media'}
+          </Text>
+        </Pressable>
+      ) : null}
+
       <Card title="Photos">
         <MediaList
+          busyMediaId={busyMediaId}
           emptyText="No photos captured yet."
           media={media.filter((item) => item.mediaType === 'IMAGE')}
           navigation={navigation}
+          onRemove={setMediaToRemove}
+          onRestore={restoreMedia}
+          user={user}
         />
         {canAddMedia ? (
           <ActionButton
@@ -328,9 +408,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
       <Card title="Documents">
         <MediaList
+          busyMediaId={busyMediaId}
           emptyText="No job documents yet."
           media={media.filter((item) => item.mediaType !== 'IMAGE')}
           navigation={navigation}
+          onRemove={setMediaToRemove}
+          onRestore={restoreMedia}
+          user={user}
         />
         {canAddMedia ? (
           <ActionButton
@@ -461,6 +545,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           <Text style={styles.muted}>Updating job...</Text>
         </View>
       ) : null}
+      <MediaRemovalConfirmation
+        busy={Boolean(busyMediaId)}
+        media={mediaToRemove}
+        onCancel={() => setMediaToRemove(null)}
+        onConfirm={() => mediaToRemove && void archiveMedia(mediaToRemove)}
+        visible={Boolean(mediaToRemove)}
+      />
     </ScrollView>
   );
 }
@@ -509,36 +600,115 @@ function ActionButton({
 }
 
 function MediaList({
+  busyMediaId,
   emptyText,
   media,
   navigation,
+  onRemove,
+  onRestore,
+  user,
 }: {
+  busyMediaId: string | null;
   emptyText: string;
   media: MediaAsset[];
   navigation: Props['navigation'];
+  onRemove(media: MediaAsset): void;
+  onRestore(media: MediaAsset): void;
+  user: ReturnType<typeof useAuth>['user'];
 }) {
   if (media.length === 0) {
     return <Text style={styles.meta}>{emptyText}</Text>;
   }
+  const countNoun = media.every((item) => item.mediaType === 'IMAGE')
+    ? 'photo'
+    : 'document';
   return (
     <View style={styles.mediaGrid}>
+      <Text style={styles.mediaSummary}>
+        {formatMediaCount(media.length, countNoun)}
+      </Text>
       {media.map((item) => (
-        <Pressable
+        <MediaTile
+          busy={busyMediaId === item.id}
+          item={item}
           key={item.id}
-          onPress={() =>
-            navigation.navigate('MediaViewer', { mediaId: item.id })
-          }
-          style={styles.mediaTile}
-        >
-          <Text style={styles.mediaIcon}>
-            {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
-          </Text>
-          <Text numberOfLines={1} style={styles.mediaName}>
-            {item.caption ?? item.originalFileName}
-          </Text>
-          <Text style={styles.meta}>{label(item.category)}</Text>
-        </Pressable>
+          navigation={navigation}
+          onRemove={() => onRemove(item)}
+          onRestore={() => onRestore(item)}
+          user={user}
+        />
       ))}
+      {false &&
+        media.map((item) => (
+          <Pressable
+            key={item.id}
+            onPress={() =>
+              navigation.navigate('MediaViewer', { mediaId: item.id })
+            }
+            style={styles.mediaTile}
+          >
+            <Text style={styles.mediaIcon}>
+              {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+            </Text>
+            <Text numberOfLines={1} style={styles.mediaName}>
+              {item.caption ?? item.originalFileName}
+            </Text>
+            <Text style={styles.meta}>{label(item.category)}</Text>
+          </Pressable>
+        ))}
+    </View>
+  );
+}
+
+function MediaTile({
+  busy,
+  item,
+  navigation,
+  onRemove,
+  onRestore,
+  user,
+}: {
+  busy: boolean;
+  item: MediaAsset;
+  navigation: Props['navigation'];
+  onRemove(): void;
+  onRestore(): void;
+  user: ReturnType<typeof useAuth>['user'];
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const view = () => navigation.navigate('MediaViewer', { mediaId: item.id });
+  return (
+    <View style={styles.mediaTileShell}>
+      <Pressable onPress={view} style={styles.mediaTile}>
+        <Text style={styles.mediaIcon}>
+          {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+        </Text>
+        <Text numberOfLines={2} style={styles.mediaName}>
+          {mediaDisplayTitle(item)}
+        </Text>
+        <Text style={styles.meta}>{label(item.category)}</Text>
+      </Pressable>
+      <MediaOverflowMenu
+        busy={busy}
+        canArchive={canArchiveMediaInUi(user, item)}
+        canRestore={canRestoreMediaInUi(user, item)}
+        media={item}
+        onArchive={() => {
+          setIsMenuOpen(false);
+          onRemove();
+        }}
+        onClose={() => setIsMenuOpen(false)}
+        onOpen={() => setIsMenuOpen(true)}
+        onRestore={() => {
+          setIsMenuOpen(false);
+          onRestore();
+        }}
+        onView={() => {
+          setIsMenuOpen(false);
+          view();
+        }}
+        open={isMenuOpen}
+      />
     </View>
   );
 }
@@ -577,6 +747,17 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   appointmentTitle: { color: colours.ink, fontWeight: '900' },
+  archiveFilter: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  archiveFilterText: { color: colours.primary, fontWeight: '900' },
   archived: { color: '#9F1239', fontWeight: '900', marginTop: 8 },
   busy: { alignItems: 'center', gap: 8, marginTop: 16 },
   card: {
@@ -619,12 +800,15 @@ const styles = StyleSheet.create({
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
   mediaIcon: { fontSize: 28 },
   mediaName: { color: colours.ink, fontWeight: '900' },
+  mediaSummary: { color: colours.muted, fontWeight: '800', marginTop: 2 },
+  mediaTileShell: { position: 'relative' },
   mediaTile: {
     backgroundColor: colours.card,
     borderRadius: 16,
     gap: 4,
     minWidth: 132,
     padding: 12,
+    paddingRight: 60,
   },
   quickAction: {
     backgroundColor: colours.primary,

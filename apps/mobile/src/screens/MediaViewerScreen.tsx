@@ -2,6 +2,7 @@ import type { MediaAsset } from '@tradieos/shared';
 import {
   formatBusinessDateTime,
   mediaCategoryLabel,
+  mediaDisplayTitle,
   mediaTypeLabel,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
@@ -20,12 +21,25 @@ import {
 } from 'react-native';
 import {
   ApiRequestError,
+  archiveMediaRequest,
   mediaDetailRequest,
   mediaDownloadRequest,
   mediaPreviewRequest,
+  restoreMediaRequest,
 } from '../api/client';
+import {
+  canArchiveMediaInUi,
+  canRestoreMediaInUi,
+  friendlyMediaArchiveError,
+  mediaRemovedMessage,
+  mediaRestoredMessage,
+} from '../api/mediaActions';
 import { downloadAuthenticatedMediaFile } from '../api/mediaFiles';
 import { useAuth } from '../auth/AuthContext';
+import {
+  MediaOverflowMenu,
+  MediaRemovalConfirmation,
+} from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
@@ -44,6 +58,9 @@ export function MediaViewerScreen({ navigation, route }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isOpening, setIsOpening] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [isConfirmingRemove, setIsConfirmingRemove] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
   async function loadMedia() {
@@ -54,7 +71,7 @@ export function MediaViewerScreen({ navigation, route }: Props) {
     try {
       const detail = await mediaDetailRequest(token, mediaId);
       setMedia(detail.media);
-      navigation.setOptions({ title: detail.media.originalFileName });
+      navigation.setOptions({ title: mediaDisplayTitle(detail.media) });
 
       if (detail.media.mediaType === 'IMAGE') {
         setIsPreviewLoading(true);
@@ -125,6 +142,46 @@ export function MediaViewerScreen({ navigation, route }: Props) {
     }
   }
 
+  async function archiveMedia() {
+    if (!token || !media || isArchiving) return;
+    setIsArchiving(true);
+    setIsConfirmingRemove(false);
+    try {
+      await archiveMediaRequest(token, media.id);
+      showToast({
+        message: mediaRemovedMessage(media),
+        tone: 'success',
+      });
+      navigation.goBack();
+    } catch (error) {
+      showToast({ message: friendlyMediaArchiveError(error), tone: 'error' });
+    } finally {
+      setIsArchiving(false);
+    }
+  }
+
+  async function restoreMedia() {
+    if (!token || !media || isArchiving) return;
+    setIsArchiving(true);
+    setIsMenuOpen(false);
+    try {
+      const response = await restoreMediaRequest(token, media.id);
+      setMedia(response.media);
+      showToast({
+        message: mediaRestoredMessage(media),
+        tone: 'success',
+      });
+      await loadMedia();
+    } catch {
+      showToast({
+        message: "We couldn't restore this file. Please try again.",
+        tone: 'error',
+      });
+    } finally {
+      setIsArchiving(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <View style={styles.loadingPage}>
@@ -145,6 +202,21 @@ export function MediaViewerScreen({ navigation, route }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.preview}>
+        <MediaOverflowMenu
+          busy={isArchiving}
+          canArchive={canArchiveMediaInUi(user, media)}
+          canRestore={canRestoreMediaInUi(user, media)}
+          media={media}
+          onArchive={() => {
+            setIsMenuOpen(false);
+            setIsConfirmingRemove(true);
+          }}
+          onClose={() => setIsMenuOpen(false)}
+          onOpen={() => setIsMenuOpen(true)}
+          onRestore={() => void restoreMedia()}
+          onView={() => setIsMenuOpen(false)}
+          open={isMenuOpen}
+        />
         {media.mediaType === 'IMAGE' ? (
           <View style={styles.imageFrame}>
             {isPreviewLoading ? (
@@ -154,7 +226,7 @@ export function MediaViewerScreen({ navigation, route }: Props) {
               </View>
             ) : previewUri ? (
               <Image
-                accessibilityLabel={`Preview of ${media.originalFileName}`}
+                accessibilityLabel={`Preview of ${mediaDisplayTitle(media)}`}
                 resizeMode="contain"
                 source={{ uri: previewUri }}
                 style={styles.previewImage}
@@ -176,12 +248,18 @@ export function MediaViewerScreen({ navigation, route }: Props) {
           </View>
         )}
         <Text numberOfLines={2} style={styles.previewTitle}>
-          {media.originalFileName}
+          {mediaDisplayTitle(media)}
         </Text>
         <Text style={styles.muted}>Secured by your TradieOS login.</Text>
       </View>
 
       <View style={styles.card}>
+        {media.archivedAt ? (
+          <Info
+            label="Status"
+            value={`Archived ${formatBusinessDateTime(media.archivedAt, timezone)}`}
+          />
+        ) : null}
         <Info label="Category" value={mediaCategoryLabel(media.category)} />
         <Info label="Type" value={mediaTypeLabel(media.mediaType)} />
         <Info
@@ -229,6 +307,13 @@ export function MediaViewerScreen({ navigation, route }: Props) {
           </Pressable>
         </View>
       ) : null}
+      <MediaRemovalConfirmation
+        busy={isArchiving}
+        media={media}
+        onCancel={() => setIsConfirmingRemove(false)}
+        onConfirm={() => void archiveMedia()}
+        visible={isConfirmingRemove}
+      />
     </ScrollView>
   );
 }
@@ -295,6 +380,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     gap: 10,
     padding: 24,
+    position: 'relative',
   },
   previewFallback: {
     alignItems: 'center',

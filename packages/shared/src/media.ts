@@ -173,6 +173,16 @@ export const MEDIA_MANAGE_ROLES: BusinessRole[] = [
   'OFFICE_MANAGER',
 ];
 
+export const MEDIA_PROTECTED_CATEGORIES: MediaCategory[] = [
+  'COMPLIANCE_CERTIFICATE',
+  'WARRANTY',
+  'PERMIT',
+  'MATERIAL_INVOICE',
+  'RECEIPT',
+];
+
+export const MEDIA_TECHNICIAN_CORRECTION_WINDOW_HOURS = 24;
+
 export const FINANCIAL_MEDIA_CATEGORIES: MediaCategory[] = [
   'RECEIPT',
   'MATERIAL_INVOICE',

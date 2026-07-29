@@ -4,6 +4,7 @@ import type {
   Job,
   MediaAsset,
 } from '@tradieos/shared';
+import { formatMediaSummary, mediaDisplayTitle } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
@@ -18,14 +19,27 @@ import {
   View,
 } from 'react-native';
 import {
+  archiveMediaRequest,
   archiveCustomerRequest,
   archiveCustomerSiteRequest,
   createCustomerSiteRequest,
   customerDetailRequest,
   mediaRequest,
   restoreCustomerRequest,
+  restoreMediaRequest,
 } from '../api/client';
+import {
+  canArchiveMediaInUi,
+  canRestoreMediaInUi,
+  friendlyMediaArchiveError,
+  mediaRemovedMessage,
+  mediaRestoredMessage,
+} from '../api/mediaActions';
 import { useAuth } from '../auth/AuthContext';
+import {
+  MediaOverflowMenu,
+  MediaRemovalConfirmation,
+} from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import {
@@ -62,6 +76,9 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const [media, setMedia] = useState<MediaAsset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
+  const [mediaToRemove, setMediaToRemove] = useState<MediaAsset | null>(null);
+  const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
+  const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [siteModal, setSiteModal] = useState(false);
   const [siteForm, setSiteForm] = useState<CustomerSitePayload>({
@@ -83,7 +100,10 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
     try {
       const [response, mediaResponse] = await Promise.all([
         customerDetailRequest(token, customerId),
-        mediaRequest(token, { customerId }),
+        mediaRequest(token, {
+          archived: showArchivedMedia ? 'true' : undefined,
+          customerId,
+        }),
       ]);
       setCustomer(response.customer);
       setActivity(response.activity);
@@ -99,7 +119,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     void loadCustomer();
-  }, [customerId, token]);
+  }, [customerId, showArchivedMedia, token]);
 
   async function archiveOrRestore() {
     if (!token || !customer) return;
@@ -173,6 +193,47 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
       });
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function archiveMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    const previousMedia = media;
+    setBusyMediaId(mediaItem.id);
+    setMediaToRemove(null);
+    setMedia((current) => current.filter((item) => item.id !== mediaItem.id));
+    try {
+      await archiveMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRemovedMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadCustomer();
+    } catch (error) {
+      setMedia(previousMedia);
+      showToast({ message: friendlyMediaArchiveError(error), tone: 'error' });
+    } finally {
+      setBusyMediaId(null);
+    }
+  }
+
+  async function restoreMedia(mediaItem: MediaAsset) {
+    if (!token || busyMediaId) return;
+    setBusyMediaId(mediaItem.id);
+    try {
+      await restoreMediaRequest(token, mediaItem.id);
+      showToast({
+        message: mediaRestoredMessage(mediaItem),
+        tone: 'success',
+      });
+      await loadCustomer();
+    } catch {
+      showToast({
+        message: "We couldn't restore this file. Please try again.",
+        tone: 'error',
+      });
+    } finally {
+      setBusyMediaId(null);
     }
   }
 
@@ -372,28 +433,61 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
         </Card>
 
         <Card title="Photos & documents">
+          {['OWNER', 'ADMIN', 'OFFICE_MANAGER'].includes(user?.role ?? '') ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowArchivedMedia((value) => !value)}
+              style={styles.archiveFilter}
+            >
+              <Text style={styles.archiveFilterText}>
+                {showArchivedMedia
+                  ? 'Showing archived media'
+                  : 'Showing active media'}
+              </Text>
+            </Pressable>
+          ) : null}
           {media.length === 0 ? (
             <Text style={styles.muted}>No customer files uploaded yet.</Text>
           ) : (
             <View style={styles.mediaGrid}>
+              <Text style={styles.mediaSummary}>
+                {formatMediaSummary({
+                  documents: media.filter((item) => item.mediaType !== 'IMAGE')
+                    .length,
+                  photos: media.filter((item) => item.mediaType === 'IMAGE')
+                    .length,
+                })}
+              </Text>
               {media.map((item) => (
-                <Pressable
-                  accessibilityRole="button"
+                <CustomerMediaTile
+                  busy={busyMediaId === item.id}
+                  item={item}
                   key={item.id}
-                  onPress={() =>
-                    navigation.navigate('MediaViewer', { mediaId: item.id })
-                  }
-                  style={styles.mediaTile}
-                >
-                  <Text style={styles.mediaIcon}>
-                    {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.mediaName}>
-                    {item.caption ?? item.originalFileName}
-                  </Text>
-                  <Text style={styles.meta}>{label(item.category)}</Text>
-                </Pressable>
+                  navigation={navigation}
+                  onRemove={() => setMediaToRemove(item)}
+                  onRestore={() => void restoreMedia(item)}
+                  user={user}
+                />
               ))}
+              {false &&
+                media.map((item) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={item.id}
+                    onPress={() =>
+                      navigation.navigate('MediaViewer', { mediaId: item.id })
+                    }
+                    style={styles.mediaTile}
+                  >
+                    <Text style={styles.mediaIcon}>
+                      {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.mediaName}>
+                      {item.caption ?? item.originalFileName}
+                    </Text>
+                    <Text style={styles.meta}>{label(item.category)}</Text>
+                  </Pressable>
+                ))}
             </View>
           )}
         </Card>
@@ -471,6 +565,13 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
         setForm={setSiteForm}
         visible={siteModal}
       />
+      <MediaRemovalConfirmation
+        busy={Boolean(busyMediaId)}
+        media={mediaToRemove}
+        onCancel={() => setMediaToRemove(null)}
+        onConfirm={() => mediaToRemove && void archiveMedia(mediaToRemove)}
+        visible={Boolean(mediaToRemove)}
+      />
 
       <BusyOverlay visible={isBusy} />
     </View>
@@ -510,6 +611,63 @@ function Card({
     <View style={styles.card}>
       <Text style={styles.cardTitle}>{title}</Text>
       {children}
+    </View>
+  );
+}
+
+function CustomerMediaTile({
+  busy,
+  item,
+  navigation,
+  onRemove,
+  onRestore,
+  user,
+}: {
+  busy: boolean;
+  item: MediaAsset;
+  navigation: Props['navigation'];
+  onRemove(): void;
+  onRestore(): void;
+  user: ReturnType<typeof useAuth>['user'];
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const view = () => navigation.navigate('MediaViewer', { mediaId: item.id });
+  return (
+    <View style={styles.mediaTileShell}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={view}
+        style={styles.mediaTile}
+      >
+        <Text style={styles.mediaIcon}>
+          {item.mediaType === 'IMAGE' ? '🖼️' : '📄'}
+        </Text>
+        <Text numberOfLines={2} style={styles.mediaName}>
+          {mediaDisplayTitle(item)}
+        </Text>
+        <Text style={styles.meta}>{label(item.category)}</Text>
+      </Pressable>
+      <MediaOverflowMenu
+        busy={busy}
+        canArchive={canArchiveMediaInUi(user, item)}
+        canRestore={canRestoreMediaInUi(user, item)}
+        media={item}
+        onArchive={() => {
+          setIsMenuOpen(false);
+          onRemove();
+        }}
+        onClose={() => setIsMenuOpen(false)}
+        onOpen={() => setIsMenuOpen(true)}
+        onRestore={() => {
+          setIsMenuOpen(false);
+          onRestore();
+        }}
+        onView={() => {
+          setIsMenuOpen(false);
+          view();
+        }}
+        open={isMenuOpen}
+      />
     </View>
   );
 }
@@ -618,6 +776,17 @@ function BusyOverlay({ visible }: { visible: boolean }) {
 
 const styles = StyleSheet.create({
   archived: { color: '#9F1239', fontWeight: '900', marginTop: 8 },
+  archiveFilter: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  archiveFilterText: { color: colours.primary, fontWeight: '900' },
   card: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -714,6 +883,8 @@ const styles = StyleSheet.create({
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
   mediaIcon: { fontSize: 28 },
   mediaName: { color: colours.ink, fontWeight: '900' },
+  mediaSummary: { color: colours.muted, fontWeight: '800', width: '100%' },
+  mediaTileShell: { position: 'relative' },
   mediaTile: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -722,6 +893,7 @@ const styles = StyleSheet.create({
     gap: 4,
     minWidth: 132,
     padding: 12,
+    paddingRight: 60,
   },
   quickAction: {
     backgroundColor: colours.primary,

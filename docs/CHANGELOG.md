@@ -4,6 +4,9 @@
 
 ### Added
 
+- Safe media removal now archives photos/documents instead of deleting storage
+  objects, with ellipsis menus on media cards, confirmation copy, archived-media
+  filtering for manager roles and restore support.
 - Media & Document Management foundation with tenant-scoped `MediaAsset`
   records for job photos, appointment evidence and customer/job documents.
 - Storage provider abstraction with local development storage and a production
@@ -20,6 +23,9 @@
 
 ### Security
 
+- Media archive/restore is API-enforced by business, role, uploader ownership,
+  protected category and technician correction window. Technician removal is
+  limited to their own recent ordinary photos on assigned work.
 - Media API responses do not expose raw object keys.
 - Technician, accountant, read-only and management role permissions are enforced
   on media upload/view/update/archive operations.
@@ -28,6 +34,21 @@
 
 ### Fixed
 
+- Media-card ellipsis menus now measure the tapped button and render an
+  anchored, safe-area-clamped menu instead of floating near the top of the
+  screen.
+- Media-card ellipsis menus now open reliably even when native measurement is
+  delayed or unavailable on iPhone/Expo Go, using a safe fallback while logging
+  development diagnostics.
+- iPhone media-card ellipsis actions now use native `ActionSheetIOS` with
+  polished View photo/document, Remove photo/document and Cancel actions,
+  avoiding the fragile custom popover path.
+- Removed temporary media-menu debug UI, compacted generated filenames, preferred
+  captions/category labels in media menus/cards and fixed photo/document count
+  pluralisation.
+- My Day greeting now uses the authenticated business timezone and updates on
+  screen focus/app foreground, so afternoon and evening users no longer see a
+  hardcoded morning greeting.
 - Add Evidence now dismisses its action menu before launching the native
   camera, photo library or document picker, preventing iOS modal timing from
   swallowing picker launches or leaving the screen unresponsive.

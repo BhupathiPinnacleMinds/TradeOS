@@ -6,4 +6,6 @@ export * from './customers';
 export * from './datetime';
 export * from './jobs';
 export * from './media';
+export * from './media-menu';
+export * from './menu-position';
 export * from './members';

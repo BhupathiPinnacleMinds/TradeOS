@@ -6,6 +6,7 @@
   formatBusinessTimeRange,
   formatBusinessTimezoneAbbreviation,
   getBusinessDayRangeUtc,
+  getBusinessGreeting,
   timezoneForAustralianState,
   zonedTimeToUtc,
 } from '@tradieos/shared';
@@ -142,5 +143,68 @@ describe('business datetime utilities', () => {
         'Australia/Sydney',
       ),
     ).toBe('Tomorrow');
+  });
+
+  it.each([
+    ['2026-07-23T18:59:00.000Z', 'Australia/Sydney', 'Hello, Mia'],
+    ['2026-07-23T19:00:00.000Z', 'Australia/Sydney', 'Good morning, Mia'],
+    ['2026-07-24T01:59:00.000Z', 'Australia/Sydney', 'Good morning, Mia'],
+    ['2026-07-24T02:00:00.000Z', 'Australia/Sydney', 'Good afternoon, Mia'],
+    ['2026-07-24T06:59:00.000Z', 'Australia/Sydney', 'Good afternoon, Mia'],
+    ['2026-07-24T07:00:00.000Z', 'Australia/Sydney', 'Good evening, Mia'],
+    ['2026-07-24T11:59:00.000Z', 'Australia/Sydney', 'Good evening, Mia'],
+    ['2026-07-24T12:00:00.000Z', 'Australia/Sydney', 'Hello, Mia'],
+  ])(
+    'returns %s as %s for business-local greeting',
+    (now, timezone, expected) => {
+      expect(getBusinessGreeting({ firstName: 'Mia', now, timezone })).toBe(
+        expected,
+      );
+    },
+  );
+
+  it('formats greetings without dangling comma when the name is missing', () => {
+    expect(
+      getBusinessGreeting({
+        now: '2026-07-24T02:00:00.000Z',
+        timezone: 'Australia/Sydney',
+      }),
+    ).toBe('Good afternoon');
+  });
+
+  it('uses business timezone instead of device or UTC hour for greetings', () => {
+    const instant = '2026-01-15T01:30:00.000Z';
+
+    expect(
+      getBusinessGreeting({
+        firstName: 'Mia',
+        now: instant,
+        timezone: 'Australia/Sydney',
+      }),
+    ).toBe('Good afternoon, Mia');
+    expect(
+      getBusinessGreeting({
+        firstName: 'Mia',
+        now: instant,
+        timezone: 'Australia/Perth',
+      }),
+    ).toBe('Good morning, Mia');
+  });
+
+  it('handles Melbourne winter and Sydney daylight-saving greetings', () => {
+    expect(
+      getBusinessGreeting({
+        firstName: 'Mia',
+        now: '2026-07-15T02:30:00.000Z',
+        timezone: 'Australia/Melbourne',
+      }),
+    ).toBe('Good afternoon, Mia');
+    expect(
+      getBusinessGreeting({
+        firstName: 'Mia',
+        now: '2026-01-15T06:30:00.000Z',
+        timezone: 'Australia/Sydney',
+      }),
+    ).toBe('Good evening, Mia');
   });
 });

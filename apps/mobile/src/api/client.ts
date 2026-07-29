@@ -763,3 +763,17 @@ export function mediaDownloadRequest(token: string, mediaId: string) {
     token,
   });
 }
+
+export function archiveMediaRequest(token: string, mediaId: string) {
+  return apiRequest<MediaDetailResponse>(`/media/${mediaId}/archive`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function restoreMediaRequest(token: string, mediaId: string) {
+  return apiRequest<MediaDetailResponse>(`/media/${mediaId}/restore`, {
+    method: 'POST',
+    token,
+  });
+}

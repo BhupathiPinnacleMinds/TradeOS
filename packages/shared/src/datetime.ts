@@ -233,3 +233,28 @@ export function formatBusinessRelativeDay(
   if (diffDays === -1) return 'Yesterday';
   return formatBusinessLongDate(value, timezone);
 }
+
+export function getBusinessGreeting({
+  firstName,
+  now = new Date(),
+  timezone = DEFAULT_BUSINESS_TIMEZONE,
+}: {
+  firstName?: string | null;
+  now?: Date | string;
+  timezone?: string | null;
+}) {
+  const { hour } = getBusinessDateParts(
+    now,
+    normaliseBusinessTimezone(timezone),
+  );
+  const greeting =
+    hour >= 5 && hour < 12
+      ? 'Good morning'
+      : hour >= 12 && hour < 17
+        ? 'Good afternoon'
+        : hour >= 17 && hour < 22
+          ? 'Good evening'
+          : 'Hello';
+  const name = firstName?.trim();
+  return name ? `${greeting}, ${name}` : greeting;
+}

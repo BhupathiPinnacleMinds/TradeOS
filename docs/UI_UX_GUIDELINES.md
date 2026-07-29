@@ -35,6 +35,23 @@
   should be silent rather than shown as an error. Raw backend phrases such as
   `request entity too large`, Multer errors or stack traces must never appear in
   the mobile UI.
+- Media cards use a small ellipsis menu for View, Edit details, Remove
+  photo/document and Restore where permitted. Removal must show confirmation
+  copy explaining that the file is hidden from normal views while audit history
+  is retained. The selected card may show a loader; screens must not show a
+  permanent large Delete button on every card.
+- Media-card ellipsis menus must be anchored to the tapped ellipsis button using
+  screen coordinates, not card-relative layout or fixed modal placement. Clamp
+  menus inside the visible safe area, keep titles to one or two truncated lines,
+  close the menu on outside press, action selection, navigation away and touch
+  movement while open. If native anchor measurement fails or returns a zero-size
+  rect, the menu must still open using a safe fallback position rather than
+  silently doing nothing.
+- On iPhone/Expo Go, media-card ellipsis actions should use the native iOS
+  action sheet for reliability. Android and web may use the custom accessible
+  modal fallback. Do not show development build markers, debug toasts or raw
+  generated filenames in normal media menus. Prefer captions, then friendly
+  category labels, then compact filenames.
 - Customer Details should show customer-level and linked job media from the
   same secured media list API.
 - Tori may later summarise media metadata, but must never send customer-facing
@@ -45,6 +62,12 @@
 ## Product feel
 
 TradieOS should feel modern, calm, and practical. It should reduce cognitive load for busy tradies who may be using the app one-handed between jobs.
+
+My Day greetings must use the authenticated business timezone, not device-local
+or server-local time. Greeting ranges are 5:00 am-11:59 am for "Good morning",
+12:00 pm-4:59 pm for "Good afternoon", 5:00 pm-9:59 pm for "Good evening" and
+10:00 pm-4:59 am for "Hello". Do not show a dangling comma when the user's
+first name is unavailable.
 
 Inspirations:
 

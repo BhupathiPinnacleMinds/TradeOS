@@ -22,6 +22,13 @@ const technician: AuthenticatedUser = {
   role: 'TECHNICIAN',
 };
 
+const otherTechnician: AuthenticatedUser = {
+  businessId: 'business-1',
+  email: 'other-tech@example.test',
+  id: 'other-tech-1',
+  role: 'TECHNICIAN',
+};
+
 const readOnly: AuthenticatedUser = {
   businessId: 'business-1',
   email: 'readonly@example.test',
@@ -32,6 +39,11 @@ const readOnly: AuthenticatedUser = {
 function media(overrides: Record<string, unknown> = {}) {
   return {
     archivedAt: null,
+    appointment: {
+      assignedUserId: 'tech-1',
+      id: 'appointment-1',
+      status: 'CONFIRMED',
+    },
     appointmentId: 'appointment-1',
     businessId: 'business-1',
     caption: null,
@@ -44,6 +56,7 @@ function media(overrides: Record<string, unknown> = {}) {
     height: 1,
     id: 'media-1',
     isCustomerVisible: false,
+    job: { assignedToUserId: 'tech-1', id: 'job-1' },
     jobId: 'job-1',
     mediaType: 'IMAGE',
     mimeType: 'image/png',
@@ -159,6 +172,16 @@ function createHarness() {
 }
 
 describe('MediaService', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-07-27T12:00:00.000Z').getTime());
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('creates an upload target scoped to the current business', async () => {
     const { prisma, service, storage, tx } = createHarness();
 
@@ -337,5 +360,142 @@ describe('MediaService', () => {
       }),
       status: 413,
     });
+  });
+
+  it('allows owners to archive any business media and keeps the storage object', async () => {
+    const { prisma, service, storage, tx } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        category: 'COMPLIANCE_CERTIFICATE',
+        createdAt: new Date('2026-07-20T00:00:00.000Z'),
+        mediaType: 'PDF',
+        mimeType: 'application/pdf',
+      }),
+    );
+
+    const response = await service.archive(owner, 'media-1');
+
+    expect(response.media.archivedAt).toBeTruthy();
+    expect(tx.mediaAsset.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { archivedAt: expect.any(Date) },
+      }),
+    );
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'MEDIA_ARCHIVED' }),
+      }),
+    );
+    expect(storage.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it('allows technicians to archive their own recent assigned ordinary photo', async () => {
+    const { service } = createHarness();
+
+    await expect(service.archive(technician, 'media-1')).resolves.toMatchObject(
+      {
+        media: expect.objectContaining({ id: 'media-1' }),
+      },
+    );
+  });
+
+  it('blocks technicians from archiving another user photo', async () => {
+    const { service } = createHarness();
+
+    await expect(
+      service.archive(otherTechnician, 'media-1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MEDIA_ACCESS_DENIED' }),
+      status: 403,
+    });
+  });
+
+  it('blocks technicians from archiving protected documents', async () => {
+    const { prisma, service } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        category: 'COMPLIANCE_CERTIFICATE',
+        mediaType: 'PDF',
+        mimeType: 'application/pdf',
+      }),
+    );
+
+    await expect(service.archive(technician, 'media-1')).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'PROTECTED_MEDIA_REQUIRES_ADMIN',
+      }),
+      status: 403,
+    });
+  });
+
+  it('blocks technicians outside the 24 hour correction window', async () => {
+    const { prisma, service } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({ createdAt: new Date('2026-07-25T00:00:00.000Z') }),
+    );
+
+    await expect(service.archive(technician, 'media-1')).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'MEDIA_ARCHIVE_WINDOW_EXPIRED',
+      }),
+      status: 403,
+    });
+  });
+
+  it('blocks read-only and cross-business archive attempts', async () => {
+    const { prisma, service } = createHarness();
+
+    await expect(service.archive(readOnly, 'media-1')).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MEDIA_ACCESS_DENIED' }),
+      status: 403,
+    });
+
+    prisma.mediaAsset.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      service.archive({ ...owner, businessId: 'business-2' }, 'media-1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MEDIA_NOT_FOUND' }),
+      status: 404,
+    });
+  });
+
+  it('excludes archived media by default and supports archived filter for managers', async () => {
+    const { prisma, service } = createHarness();
+
+    await service.findAll(owner, { appointmentId: 'appointment-1' });
+    expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ archivedAt: null }),
+      }),
+    );
+
+    await service.findAll(owner, {
+      appointmentId: 'appointment-1',
+      archived: 'true',
+    });
+    expect(prisma.mediaAsset.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ archivedAt: { not: null } }),
+      }),
+    );
+  });
+
+  it('restores archived media with audit and timeline events', async () => {
+    const { prisma, service, tx } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({ archivedAt: new Date('2026-07-27T01:00:00.000Z') }),
+    );
+
+    const response = await service.restore(owner, 'media-1');
+
+    expect(response.media.archivedAt).toBeNull();
+    expect(tx.mediaAsset.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { archivedAt: null } }),
+    );
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'MEDIA_RESTORED' }),
+      }),
+    );
   });
 });

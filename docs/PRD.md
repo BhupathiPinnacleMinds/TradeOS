@@ -250,3 +250,7 @@ Current implementation supports the full role model documented in [Roles and Per
   images and attach supported documents to customers, jobs and appointments
   through the tenant-scoped Media API. Users review files before upload; picker
   selection alone never sends or publishes evidence.
+- Incorrect or duplicate media can be safely removed through archive, not hard
+  deletion. Archived files disappear from normal active views, retain audit and
+  timeline history, keep the storage object for future retention policy, and can
+  be restored by permitted elevated roles.

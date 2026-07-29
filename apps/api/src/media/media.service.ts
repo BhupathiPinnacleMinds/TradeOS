@@ -9,6 +9,8 @@ import {
   DOCUMENT_MEDIA_CATEGORIES,
   FINANCIAL_MEDIA_CATEGORIES,
   MEDIA_MANAGE_ROLES,
+  MEDIA_PROTECTED_CATEGORIES,
+  MEDIA_TECHNICIAN_CORRECTION_WINDOW_HOURS,
   MEDIA_UPLOAD_ROLES,
   MEDIA_VIEW_ROLES,
   PHOTO_MEDIA_CATEGORIES,
@@ -29,6 +31,8 @@ const DEFAULT_PAGE_SIZE = 20;
 export const IMAGE_LIMIT = 15 * 1024 * 1024;
 export const DOCUMENT_LIMIT = 25 * 1024 * 1024;
 export const MEDIA_MULTIPART_FILE_LIMIT = DOCUMENT_LIMIT + 1024 * 1024;
+export const TECHNICIAN_MEDIA_CORRECTION_WINDOW_MS =
+  MEDIA_TECHNICIAN_CORRECTION_WINDOW_HOURS * 60 * 60 * 1000;
 const SUPPORTED_MIME_TYPES = new Map<string, MediaType>([
   ['image/jpeg', 'IMAGE'],
   ['image/png', 'IMAGE'],
@@ -427,7 +431,14 @@ export class MediaService {
 
   async archive(currentUser: AuthenticatedUser, id: string) {
     const media = await this.getMedia(currentUser, id);
-    await this.assertMediaAccess(currentUser, media, 'archive');
+    await this.assertCanArchiveMedia(currentUser, media);
+    if (media.archivedAt) {
+      throw this.domainError(
+        'MEDIA_ALREADY_ARCHIVED',
+        'This file has already been removed.',
+        HttpStatus.CONFLICT,
+      );
+    }
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.mediaAsset.update({
         where: { id: media.id },
@@ -452,13 +463,33 @@ export class MediaService {
 
   async restore(currentUser: AuthenticatedUser, id: string) {
     const media = await this.getMedia(currentUser, id);
-    this.assertRole(currentUser, MEDIA_MANAGE_ROLES);
-    const updated = await this.prisma.mediaAsset.update({
-      where: { id: media.id },
-      data: { archivedAt: null },
-      include: this.mediaInclude(),
+    this.assertCanRestoreMedia(currentUser, media);
+    if (!media.archivedAt) {
+      throw this.domainError(
+        'MEDIA_NOT_ARCHIVED',
+        'This file is already active.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.mediaAsset.update({
+        where: { id: media.id },
+        data: { archivedAt: null },
+        include: this.mediaInclude(),
+      });
+      await tx.auditLog.create({
+        data: {
+          action: 'MEDIA_RESTORED',
+          actorUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          entityId: media.id,
+          entityType: 'MediaAsset',
+          metadata: this.auditMetadata(next),
+        },
+      });
+      await this.writeTimelineEvents(tx, currentUser, next, 'MEDIA_RESTORED');
+      return next;
     });
-    await this.log(currentUser, updated, 'MEDIA_RESTORED');
     return { media: this.toMedia(updated) };
   }
 
@@ -501,6 +532,9 @@ export class MediaService {
     }
     if (currentUser.role === 'ACCOUNTANT') {
       where.category = { in: FINANCIAL_MEDIA_CATEGORIES };
+    }
+    if (query.archived === 'true' && !this.canListArchived(currentUser)) {
+      where.archivedAt = null;
     }
     return where;
   }
@@ -743,6 +777,135 @@ export class MediaService {
     await this.assertContextPermission(currentUser, media, 'view');
   }
 
+  private async assertCanArchiveMedia(
+    currentUser: AuthenticatedUser,
+    media: MediaAssetWithRelations,
+  ) {
+    await this.assertMediaAccess(currentUser, media, 'view');
+    if (['OWNER', 'ADMIN'].includes(currentUser.role)) return;
+
+    if (MEDIA_PROTECTED_CATEGORIES.includes(media.category)) {
+      throw this.domainError(
+        'PROTECTED_MEDIA_REQUIRES_ADMIN',
+        'Only an Owner or Admin can remove this document.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    if (currentUser.role === 'OFFICE_MANAGER') {
+      if (FINANCIAL_MEDIA_CATEGORIES.includes(media.category)) {
+        throw this.domainError(
+          'PROTECTED_MEDIA_REQUIRES_ADMIN',
+          'Only an Owner or Admin can remove this document.',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    if (currentUser.role === 'ACCOUNTANT') {
+      if (FINANCIAL_MEDIA_CATEGORIES.includes(media.category)) return;
+      throw this.domainError(
+        'MEDIA_ACCESS_DENIED',
+        "You don't have permission to remove this file.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    if (currentUser.role === 'SALES') {
+      if (
+        media.category === 'CUSTOMER_SUPPLIED' &&
+        media.uploadedByUserId === currentUser.id
+      ) {
+        return;
+      }
+      throw this.domainError(
+        'MEDIA_ACCESS_DENIED',
+        "You don't have permission to remove this file.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    if (currentUser.role === 'TECHNICIAN') {
+      await this.assertTechnicianArchiveAccess(currentUser, media);
+      return;
+    }
+
+    throw this.domainError(
+      'MEDIA_ACCESS_DENIED',
+      "You don't have permission to remove this file.",
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  private assertCanRestoreMedia(
+    currentUser: AuthenticatedUser,
+    media: MediaAssetWithRelations,
+  ) {
+    if (['OWNER', 'ADMIN'].includes(currentUser.role)) return;
+    if (
+      currentUser.role === 'OFFICE_MANAGER' &&
+      !MEDIA_PROTECTED_CATEGORIES.includes(media.category)
+    ) {
+      return;
+    }
+    if (
+      currentUser.role === 'ACCOUNTANT' &&
+      FINANCIAL_MEDIA_CATEGORIES.includes(media.category)
+    ) {
+      return;
+    }
+    throw this.domainError(
+      'MEDIA_ACCESS_DENIED',
+      "You don't have permission to restore this file.",
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  private async assertTechnicianArchiveAccess(
+    currentUser: AuthenticatedUser,
+    media: MediaAssetWithRelations,
+  ) {
+    if (media.uploadedByUserId !== currentUser.id) {
+      throw this.domainError(
+        'MEDIA_ACCESS_DENIED',
+        "You don't have permission to remove this file.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    if (media.mediaType !== 'IMAGE') {
+      throw this.domainError(
+        'PROTECTED_MEDIA_REQUIRES_ADMIN',
+        'Only an Owner or Admin can remove this document.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    if (!PHOTO_MEDIA_CATEGORIES.includes(media.category)) {
+      throw this.domainError(
+        'PROTECTED_MEDIA_REQUIRES_ADMIN',
+        'Only an Owner or Admin can remove this document.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    if (
+      Date.now() - media.createdAt.getTime() >
+      TECHNICIAN_MEDIA_CORRECTION_WINDOW_MS
+    ) {
+      throw this.domainError(
+        'MEDIA_ARCHIVE_WINDOW_EXPIRED',
+        'This file can no longer be removed by a technician. Ask an Owner or Admin.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    await this.assertContextPermission(currentUser, media, 'view');
+  }
+
+  private canListArchived(currentUser: AuthenticatedUser) {
+    return ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'ACCOUNTANT'].includes(
+      currentUser.role,
+    );
+  }
+
   private assertCanUpload(
     currentUser: AuthenticatedUser,
     dto: CreateUploadTargetDto,
@@ -874,6 +1037,12 @@ export class MediaService {
 
   private mediaInclude() {
     return {
+      appointment: {
+        select: { assignedUserId: true, id: true, status: true },
+      },
+      job: {
+        select: { assignedToUserId: true, id: true },
+      },
       uploadedBy: {
         select: { email: true, firstName: true, id: true, lastName: true },
       },

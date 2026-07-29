@@ -7,6 +7,13 @@ separate file service. `MediaModule` owns upload-target creation, local
 development uploads, metadata, archive/restore and authorised preview/download
 URLs.
 
+Safe removal uses the existing archive/restore architecture. Archiving sets
+`archivedAt`, keeps the storage object, preserves metadata, writes
+`MEDIA_ARCHIVED` audit/timeline entries and relies on default list filtering to
+hide files from active views. Restoring clears `archivedAt` and writes
+`MEDIA_RESTORED`. Permanent purge is intentionally future-only and must include
+Owner/Admin authority, a retention period and compliance/legal hold checks.
+
 Storage is abstracted behind `StorageProvider`:
 
 - `LocalDevelopmentStorageProvider` writes files to `STORAGE_LOCAL_PATH` and

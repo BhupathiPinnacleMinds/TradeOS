@@ -8,14 +8,16 @@ import {
   formatBusinessTime,
   formatBusinessTimeRange,
   getAllowedAppointmentTransitions,
+  getBusinessGreeting,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type React from 'react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   Pressable,
   RefreshControl,
@@ -53,9 +55,15 @@ export function MyDayScreen({ navigation }: Props) {
   const [busyAppointmentId, setBusyAppointmentId] = useState<string | null>(
     null,
   );
+  const [greetingNow, setGreetingNow] = useState(() => new Date());
   const timezone = normaliseBusinessTimezone(
     data?.businessTimezone ?? user?.business.timezone,
   );
+  const greeting = getBusinessGreeting({
+    firstName: user?.firstName,
+    now: greetingNow,
+    timezone,
+  });
 
   const load = useCallback(
     async (showLoader = true) => {
@@ -75,9 +83,19 @@ export function MyDayScreen({ navigation }: Props) {
 
   useFocusEffect(
     useCallback(() => {
+      setGreetingNow(new Date());
       void load();
     }, [load]),
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        setGreetingNow(new Date());
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   async function runTransition(
     appointment: Appointment,
@@ -116,9 +134,7 @@ export function MyDayScreen({ navigation }: Props) {
         <Text style={styles.eyebrow}>
           {formatBusinessDate(data?.businessDate ?? new Date(), timezone)}
         </Text>
-        <Text style={styles.title}>
-          Good morning{user?.firstName ? `, ${user.firstName}` : ''}
-        </Text>
+        <Text style={styles.title}>{greeting}</Text>
         <Text style={styles.subtitle}>
           {data?.businessName ?? user?.business.name ?? 'Your field day'}
         </Text>

@@ -2,15 +2,23 @@
 
 ## Media & document permissions
 
-- `OWNER`, `ADMIN` and `OFFICE_MANAGER` can upload, edit metadata, archive and
-  restore media.
+- `OWNER` and `ADMIN` can upload, edit metadata, archive and restore any media
+  in their business.
+- `OFFICE_MANAGER` can manage operational media, but protected documents still
+  require Owner/Admin authority.
 - `SCHEDULER` can upload operational photos/documents but cannot upload
   financial categories.
-- `TECHNICIAN` can upload and view media for assigned appointments/jobs and can
-  edit their own recent uploads.
-- `ACCOUNTANT` can view financial media categories only.
-- `SALES` can upload customer/sales context documents.
+- `TECHNICIAN` can upload and view media for assigned appointments/jobs, edit
+  their own recent uploads and archive only their own ordinary photos within
+  the 24-hour correction window.
+- `ACCOUNTANT` can view and manage permitted financial media categories only.
+- `SALES` can upload customer/sales context documents and manage their own
+  customer-supplied media where permitted.
 - `READ_ONLY` can view permitted media but cannot mutate it.
+
+Protected categories are `COMPLIANCE_CERTIFICATE`, `WARRANTY`, `PERMIT`,
+`MATERIAL_INVOICE` and `RECEIPT`. Archive keeps audit history and storage
+objects; it is not permanent deletion.
 
 ## Overview
 
