@@ -8,6 +8,9 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
+    "dev:doctor": "powershell -ExecutionPolicy Bypass -File scripts/dev-doctor.ps1",
+    "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1",
+    "dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/dev-stop.ps1",
     "dev:api": "pnpm --filter @tradieos/api start:dev",
     "dev:mobile": "pnpm --filter @tradieos/mobile start",
     "typecheck": "pnpm -r --if-present typecheck",

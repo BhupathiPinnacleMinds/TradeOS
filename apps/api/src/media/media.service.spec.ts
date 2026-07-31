@@ -442,6 +442,26 @@ describe('MediaService', () => {
     });
   });
 
+  it('blocks technicians from archiving evidence on completed appointments', async () => {
+    const { prisma, service } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        appointment: {
+          assignedUserId: 'tech-1',
+          id: 'appointment-1',
+          status: 'COMPLETED',
+        },
+      }),
+    );
+
+    await expect(service.archive(technician, 'media-1')).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'MEDIA_COMPLETED_APPOINTMENT_LOCKED',
+      }),
+      status: 403,
+    });
+  });
+
   it('blocks read-only and cross-business archive attempts', async () => {
     const { prisma, service } = createHarness();
 

@@ -11,6 +11,19 @@ export type MediaMenuActionConfig = {
   keys: MediaMenuActionKey[];
 };
 
+export type MediaMenuOpenDecisionInput = {
+  busy?: boolean;
+  isOpen: boolean;
+  isOpening: boolean;
+};
+
+export type MediaMenuOpenDecision =
+  | { shouldOpen: true }
+  | {
+      reason: 'BUSY' | 'ALREADY_OPEN' | 'OPENING';
+      shouldOpen: false;
+    };
+
 export function mediaMenuNoun(media: Pick<MediaAsset, 'mediaType'>) {
   return media.mediaType === 'IMAGE' ? 'photo' : 'document';
 }
@@ -32,9 +45,8 @@ export function mediaDisplayTitle(
   const caption = media.caption?.trim();
   if (caption) return caption;
 
-  if (looksLikeGeneratedFileName(media.originalFileName)) {
-    return mediaCategoryLabel(media.category);
-  }
+  const categoryLabel = friendlyMenuCategoryLabel(media);
+  if (categoryLabel) return categoryLabel;
 
   return compactMediaFileName(media.originalFileName);
 }
@@ -108,8 +120,59 @@ export function buildMediaMenuActionConfig({
   return { cancelButtonIndex, destructiveButtonIndex, keys, options };
 }
 
+export function getMediaMenuOpenDecision({
+  busy,
+  isOpen,
+  isOpening,
+}: MediaMenuOpenDecisionInput): MediaMenuOpenDecision {
+  if (busy) return { reason: 'BUSY', shouldOpen: false };
+  if (isOpening) return { reason: 'OPENING', shouldOpen: false };
+  if (isOpen) return { reason: 'ALREADY_OPEN', shouldOpen: false };
+  return { shouldOpen: true };
+}
+
+export function isMediaMenuActionForSelectedMedia(
+  selectedMediaId: string | null,
+  mediaId: string,
+) {
+  return selectedMediaId === mediaId;
+}
+
+export function getMediaMenuActionKeyForIndex(
+  config: Pick<MediaMenuActionConfig, 'keys'>,
+  selectedIndex: number,
+): MediaMenuActionKey | null {
+  return config.keys[selectedIndex] ?? null;
+}
+
+export function shouldDispatchMediaMenuAction({
+  actionKey,
+  mediaId,
+  selectedMediaId,
+}: {
+  actionKey: MediaMenuActionKey | null;
+  mediaId: string;
+  selectedMediaId: string | null;
+}) {
+  return (
+    Boolean(actionKey) &&
+    actionKey !== 'CANCEL' &&
+    isMediaMenuActionForSelectedMedia(selectedMediaId, mediaId)
+  );
+}
+
 function looksLikeGeneratedFileName(fileName: string) {
   const nameWithoutExtension = fileName.replace(/\.[^.]+$/, '');
   const compact = nameWithoutExtension.replace(/[-_]/g, '');
   return compact.length >= 24 && /^[a-fA-F0-9]+$/.test(compact);
+}
+
+function friendlyMenuCategoryLabel(
+  media: Pick<MediaAsset, 'category' | 'originalFileName'>,
+) {
+  const label = mediaCategoryLabel(media.category);
+  if (media.category === 'GENERAL_DOCUMENT' || media.category === 'OTHER') {
+    return looksLikeGeneratedFileName(media.originalFileName) ? label : null;
+  }
+  return label;
 }

@@ -1,4 +1,10 @@
-import { getAppointmentQuickActions } from '@tradieos/shared';
+import {
+  APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
+  dismissedAppointmentMoreActionsMenuState,
+  getAppointmentQuickActions,
+  openedAppointmentMoreActionsMenuState,
+  shouldExecuteAppointmentMoreActionsMenuItem,
+} from '@tradieos/shared';
 
 function actionIds(input: Parameters<typeof getAppointmentQuickActions>[0]) {
   return getAppointmentQuickActions(input).map((action) => action.id);
@@ -133,5 +139,43 @@ describe('getAppointmentQuickActions', () => {
         status: 'SCHEDULED',
       }),
     ).toEqual(['navigate', 'call']);
+  });
+});
+
+describe('appointment More actions menu state', () => {
+  it('treats menu Cancel as pure dismissal and never as an action to execute', () => {
+    expect(
+      shouldExecuteAppointmentMoreActionsMenuItem(
+        APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
+      ),
+    ).toBe(false);
+    expect(shouldExecuteAppointmentMoreActionsMenuItem('call')).toBe(true);
+    expect(shouldExecuteAppointmentMoreActionsMenuItem('job')).toBe(true);
+  });
+
+  it('resets transient state when the menu is dismissed', () => {
+    expect(dismissedAppointmentMoreActionsMenuState()).toEqual({
+      backdropEnabled: false,
+      dismissing: false,
+      hasPendingActionTimer: false,
+      opening: false,
+      pendingActionId: null,
+      selectedActionId: null,
+      touchBlocked: false,
+      visible: false,
+    });
+  });
+
+  it('opens without creating a pending action timer', () => {
+    expect(openedAppointmentMoreActionsMenuState()).toEqual({
+      backdropEnabled: true,
+      dismissing: false,
+      hasPendingActionTimer: false,
+      opening: false,
+      pendingActionId: null,
+      selectedActionId: null,
+      touchBlocked: false,
+      visible: true,
+    });
   });
 });

@@ -6,6 +6,7 @@
 } from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_COLOURS,
+  APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   formatMediaSummary,
@@ -14,11 +15,12 @@ import {
   mediaDisplayTitle,
   mediaTypeLabel,
   normaliseBusinessTimezone,
+  shouldExecuteAppointmentMoreActionsMenuItem,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import type React from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -61,6 +63,8 @@ import {
   canCreateAppointment,
 } from '../permissions/roleVisibility';
 import { colours } from '../theme';
+
+const MORE_ACTION_DISMISS_DELAY_MS = 180;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
 type AppointmentDetailsAction =
@@ -151,6 +155,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const [workCompleted, setWorkCompleted] = useState('');
   const [followUpRequired, setFollowUpRequired] = useState(false);
   const [followUpNotes, setFollowUpNotes] = useState('');
+  const moreActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingMoreActionRef = useRef<string | null>(null);
+  const selectedMoreActionRef = useRef<string | null>(null);
 
   async function loadAppointment() {
     if (!token) return;
@@ -194,6 +201,27 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     useCallback(() => {
       void loadAppointment();
     }, [appointmentId, showArchivedMedia, token]),
+  );
+
+  const dismissMoreActions = useCallback(() => {
+    if (moreActionTimerRef.current) {
+      clearTimeout(moreActionTimerRef.current);
+      moreActionTimerRef.current = null;
+    }
+    pendingMoreActionRef.current = null;
+    selectedMoreActionRef.current = null;
+    setIsMoreOpen(false);
+  }, []);
+
+  const openMoreActions = useCallback(() => {
+    dismissMoreActions();
+    setIsMoreOpen(true);
+  }, [dismissMoreActions]);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => dismissMoreActions();
+    }, [dismissMoreActions]),
   );
 
   async function transition(action: AppointmentTransitionAction | 'cancel') {
@@ -393,7 +421,6 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     (action) => action.id === 'reassign',
   );
   const callAction = quickActions.find((action) => action.id === 'call');
-  const cancelAction = quickActions.find((action) => action.id === 'cancel');
   const rescheduleAction = quickActions.find(
     (action) => action.id === 'reschedule',
   );
@@ -444,7 +471,6 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             navigation.navigate('JobDetails', { jobId: appointment.jobId }),
         }
       : null,
-    cancelAction,
     rescheduleAction,
   ];
   const secondaryActions = secondaryActionCandidates.filter(
@@ -487,7 +513,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             ))
           : null}
         {secondaryActions.length ? (
-          <QuickAction label="More" onPress={() => setIsMoreOpen(true)} />
+          <QuickAction label="More" onPress={openMoreActions} />
         ) : null}
       </View>
 
@@ -580,6 +606,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             <View style={styles.mediaGrid}>
               {media.map((item) => (
                 <AppointmentMediaTile
+                  appointmentStatus={appointment.status}
                   item={item}
                   key={item.id}
                   onPress={() =>
@@ -615,10 +642,21 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         actions={secondaryActions}
         busy={Boolean(busyText)}
         onAction={(action) => {
-          setIsMoreOpen(false);
-          void runQuickAction(action);
+          selectedMoreActionRef.current = action.id;
+          if (!shouldExecuteAppointmentMoreActionsMenuItem(action.id)) {
+            dismissMoreActions();
+            return;
+          }
+          dismissMoreActions();
+          pendingMoreActionRef.current = action.id;
+          moreActionTimerRef.current = setTimeout(() => {
+            moreActionTimerRef.current = null;
+            pendingMoreActionRef.current = null;
+            void runQuickAction(action);
+          }, MORE_ACTION_DISMISS_DELAY_MS);
         }}
-        onDismiss={() => setIsMoreOpen(false)}
+        onCancel={dismissMoreActions}
+        onDismiss={dismissMoreActions}
         visible={isMoreOpen}
       />
       <CompletionModal
@@ -715,6 +753,7 @@ function QuickAction({
 }
 
 function AppointmentMediaTile({
+  appointmentStatus,
   busy,
   item,
   onRemove,
@@ -724,6 +763,7 @@ function AppointmentMediaTile({
   token,
   user,
 }: {
+  appointmentStatus: Appointment['status'];
   busy?: boolean;
   item: MediaAsset;
   onRemove(): void;
@@ -821,7 +861,7 @@ function AppointmentMediaTile({
       </Pressable>
       <MediaOverflowMenu
         busy={busy}
-        canArchive={canArchiveMediaInUi(user, item)}
+        canArchive={canArchiveMediaInUi(user, item, { appointmentStatus })}
         canRestore={canRestoreMediaInUi(user, item)}
         media={item}
         onArchive={() => {
@@ -958,12 +998,14 @@ function MoreActionsMenu({
   actions,
   busy,
   onAction,
+  onCancel,
   onDismiss,
   visible,
 }: {
   actions: AppointmentDetailsAction[];
   busy: boolean;
   onAction(action: AppointmentDetailsAction): void;
+  onCancel(): void;
   onDismiss(): void;
   visible: boolean;
 }) {
@@ -1008,6 +1050,24 @@ function MoreActionsMenu({
               </Text>
             </Pressable>
           ))}
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy}
+            key={APPOINTMENT_MORE_ACTIONS_DISMISS_ID}
+            onPress={(event) => {
+              event.stopPropagation();
+              onCancel();
+            }}
+            style={[
+              styles.moreAction,
+              styles.moreActionDanger,
+              busy && styles.disabledAction,
+            ]}
+          >
+            <Text style={[styles.moreActionText, styles.moreActionDangerText]}>
+              Cancel
+            </Text>
+          </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
@@ -1159,6 +1219,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   moreAction: {
+    alignItems: 'center',
     backgroundColor: '#EEF2FF',
     borderRadius: 14,
     marginTop: 8,
@@ -1167,7 +1228,11 @@ const styles = StyleSheet.create({
   },
   moreActionDanger: { backgroundColor: '#FFE4E6' },
   moreActionDangerText: { color: '#BE123C' },
-  moreActionText: { color: colours.primary, fontWeight: '900' },
+  moreActionText: {
+    color: colours.primary,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
   moreCard: {
     backgroundColor: colours.card,
     borderColor: colours.border,

@@ -3,11 +3,13 @@ import {
   getAnchoredMenuPosition,
   buildMediaMenuActionConfig,
   getFallbackMenuAnchor,
+  getMediaMenuOpenDecision,
+  getMediaMenuActionKeyForIndex,
   isValidAnchorRect,
+  isMediaMenuActionForSelectedMedia,
   mediaDisplayTitle,
   mediaMenuNoun,
-  mediaMenuRemoveLabel,
-  mediaMenuViewLabel,
+  shouldDispatchMediaMenuAction,
 } from '@tradieos/shared';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,7 +34,7 @@ const MENU_GAP = 8;
 const MENU_TITLE_HEIGHT = 36;
 const MENU_VERTICAL_PADDING = 20;
 const MEASURE_FALLBACK_MS = 200;
-const IOS_ACTION_DELAY_MS = 280;
+const ACTION_DELAY_MS = 180;
 
 export function MediaOverflowMenu({
   busy,
@@ -59,21 +61,33 @@ export function MediaOverflowMenu({
   onView(): void;
   open: boolean;
 }) {
-  const noun = mediaMenuNoun(media);
   const anchorRef = useRef<View>(null);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isOpeningRef = useRef(false);
   const measureRequestRef = useRef(0);
-  const actionSheetOpenRef = useRef(false);
+  const callbacksRef = useRef({
+    onArchive,
+    onClose,
+    onEdit,
+    onOpen,
+    onRestore,
+    onView,
+  });
+  const selectedMediaIdRef = useRef<string | null>(null);
   const [anchorRect, setAnchorRect] = useState<AnchorRect | null>(null);
   const [backdropEnabled, setBackdropEnabled] = useState(false);
+  const [isOpening, setIsOpening] = useState(false);
+  const [isNativeActionSheetOpen, setIsNativeActionSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const viewport = useWindowDimensions();
   const displayTitle = mediaDisplayTitle(media);
-  const actionCount =
-    2 +
-    (onEdit && !media.archivedAt ? 1 : 0) +
-    (canArchive ? 1 : 0) +
-    (canRestore ? 1 : 0);
+  const actionConfig = buildMediaMenuActionConfig({
+    canArchive,
+    canEdit: Boolean(onEdit),
+    canRestore,
+    media,
+  });
+  const actionCount = actionConfig.options.length;
   const menuHeight =
     MENU_VERTICAL_PADDING +
     MENU_TITLE_HEIGHT +
@@ -89,15 +103,29 @@ export function MediaOverflowMenu({
     viewport,
   });
 
+  useEffect(() => {
+    callbacksRef.current = {
+      onArchive,
+      onClose,
+      onEdit,
+      onOpen,
+      onRestore,
+      onView,
+    };
+  }, [onArchive, onClose, onEdit, onOpen, onRestore, onView]);
+
   const closeMenu = useCallback(() => {
     clearFallbackTimer(fallbackTimerRef.current);
     fallbackTimerRef.current = null;
-    actionSheetOpenRef.current = false;
+    isOpeningRef.current = false;
     measureRequestRef.current += 1;
+    selectedMediaIdRef.current = null;
     setAnchorRect(null);
     setBackdropEnabled(false);
-    onClose();
-  }, [onClose]);
+    setIsOpening(false);
+    setIsNativeActionSheetOpen(false);
+    callbacksRef.current.onClose();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -106,28 +134,37 @@ export function MediaOverflowMenu({
   );
 
   useEffect(() => {
-    logMediaMenu('MEDIA_MENU_COMPONENT_MOUNTED', {
-      mediaId: media.id,
-      menuVisible: open,
-      selectedMediaId: media.id,
-    });
     return () => {
       clearFallbackTimer(fallbackTimerRef.current);
     };
   }, []);
 
-  function openMenu() {
-    logMediaMenu('MEDIA_ELLIPSIS_NATIVE_PRESS', {
-      disabled: Boolean(busy),
-      mediaId: media.id,
-      menuVisible: open,
-      screen: 'MediaOverflowMenu',
-      selectedMediaId: media.id,
-      timestamp: new Date().toISOString(),
+  function markOpening() {
+    isOpeningRef.current = true;
+    selectedMediaIdRef.current = media.id;
+    setIsOpening(true);
+  }
+
+  function markOpened() {
+    isOpeningRef.current = false;
+    setIsOpening(false);
+  }
+
+  function openMenu(event?: GestureResponderEvent) {
+    event?.stopPropagation();
+
+    const decision = getMediaMenuOpenDecision({
+      busy,
+      isOpen: open || isNativeActionSheetOpen,
+      isOpening: isOpeningRef.current || isOpening,
     });
 
-    if (Platform.OS === 'ios') {
-      openIosActionSheet();
+    if (!decision.shouldOpen) {
+      logMediaMenu('MEDIA_MENU_OPEN_IGNORED', {
+        mediaId: media.id,
+        menuVisible: open,
+        reason: decision.reason,
+      });
       return;
     }
 
@@ -136,134 +173,176 @@ export function MediaOverflowMenu({
     clearFallbackTimer(fallbackTimerRef.current);
     fallbackTimerRef.current = null;
     setBackdropEnabled(false);
+    markOpening();
 
-    logMediaMenu('MEDIA_MENU_PRESS', {
-      anchorRefExists: Boolean(anchorRef.current),
-      mediaId: media.id,
-      menuVisible: open,
-      selectedMediaId: media.id,
-    });
+    if (usesNativeActionSheet()) {
+      openNativeActionSheet();
+      return;
+    }
 
     setAnchorRect(
       getFallbackMenuAnchor({ insets, menuWidth: MENU_WIDTH, viewport }),
     );
     onOpen();
-    logMediaMenu('MEDIA_MENU_VISIBILITY_SET_TRUE', {
-      mediaId: media.id,
-      menuVisible: true,
-      selectedMediaId: media.id,
-    });
     requestAnimationFrame(() => setBackdropEnabled(true));
 
     fallbackTimerRef.current = setTimeout(() => {
       if (measureRequestRef.current !== requestId) return;
-      logMediaMenu('MEDIA_MENU_MEASURE_TIMEOUT_FALLBACK', {
+      markOpened();
+      logMediaMenu('MEDIA_MENU_DISPLAYED', {
         mediaId: media.id,
-        menuVisible: true,
-        selectedMediaId: media.id,
+        presentation: 'fallback-anchor',
       });
     }, MEASURE_FALLBACK_MS);
 
     if (!anchorRef.current) {
-      logMediaMenu('MEDIA_MENU_MEASUREMENT_FAILED', {
-        anchorRefExists: false,
-        mediaId: media.id,
-        menuVisible: true,
-        selectedMediaId: media.id,
-      });
+      markOpened();
       return;
     }
 
-    logMediaMenu('MEDIA_MENU_MEASURE_STARTED', {
-      anchorRefExists: true,
-      mediaId: media.id,
-      menuVisible: true,
-      selectedMediaId: media.id,
-    });
-
     requestAnimationFrame(() => {
-      anchorRef.current?.measureInWindow((x, y, width, height) => {
+      try {
+        anchorRef.current?.measureInWindow((x, y, width, height) => {
+          if (measureRequestRef.current !== requestId) return;
+          clearFallbackTimer(fallbackTimerRef.current);
+          fallbackTimerRef.current = null;
+          markOpened();
+
+          const measuredRect = { height, width, x, y };
+          const usedFallback = !isValidAnchorRect(measuredRect);
+
+          if (!usedFallback) {
+            setAnchorRect(measuredRect);
+          }
+          logMediaMenu('MEDIA_MENU_DISPLAYED', {
+            mediaId: media.id,
+            presentation: usedFallback ? 'fallback-anchor' : 'measured-anchor',
+          });
+        });
+      } catch {
         if (measureRequestRef.current !== requestId) return;
         clearFallbackTimer(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
-
-        const measuredRect = { height, width, x, y };
-        const usedFallback = !isValidAnchorRect(measuredRect);
-        logMediaMenu('MEDIA_MENU_MEASURE_RESULT', {
-          ...measuredRect,
-          anchorRefExists: Boolean(anchorRef.current),
-          mediaId: media.id,
-          menuVisible: true,
-          selectedMediaId: media.id,
-          usedFallback,
-        });
-
-        if (!usedFallback) {
-          setAnchorRect(measuredRect);
-          logMediaMenu('MEDIA_MENU_ANCHOR_STORED', {
-            ...measuredRect,
-            mediaId: media.id,
-            menuVisible: true,
-            selectedMediaId: media.id,
-          });
-        }
-      });
+        markOpened();
+      }
     });
   }
 
   function runAndClose(action: () => void) {
-    setAnchorRect(null);
-    action();
+    closeMenu();
+    setTimeout(action, ACTION_DELAY_MS);
   }
 
-  function openIosActionSheet() {
-    if (actionSheetOpenRef.current || busy) return;
-    actionSheetOpenRef.current = true;
-    const actions = buildIosActions({
-      canArchive,
-      canRestore,
-      media,
-      onArchive,
-      onClose,
-      onEdit,
-      onOpen,
-      onRestore,
-      onView,
+  function handleActionPress(actionKey: (typeof actionConfig.keys)[number]) {
+    if (
+      !isMediaMenuActionForSelectedMedia(selectedMediaIdRef.current, media.id)
+    ) {
+      closeMenu();
+      return;
+    }
+    if (actionKey === 'CANCEL') {
+      closeMenu();
+      return;
+    }
+    const handlers = {
+      ARCHIVE: callbacksRef.current.onArchive,
+      EDIT: callbacksRef.current.onEdit,
+      RESTORE: callbacksRef.current.onRestore,
+      VIEW: callbacksRef.current.onView,
+    };
+    const handler = handlers[actionKey];
+    if (handler) runAndClose(handler);
+  }
+
+  function dispatchNativeActionSheetSelection(selectedIndex: number) {
+    const actionKey = getMediaMenuActionKeyForIndex(
+      actionConfig,
+      selectedIndex,
+    );
+    const selectedMediaId = media.id;
+    logMediaMenu('MEDIA_MENU_ACTION_SELECTED', {
+      actionName: actionKey ?? 'UNKNOWN',
+      buttonIndex: selectedIndex,
+      mediaId: selectedMediaId,
     });
 
-    logMediaMenu('MEDIA_MENU_IOS_ACTION_SHEET_OPEN', {
-      actionCount: actions.options.length,
+    if (!actionKey || actionKey === 'CANCEL') {
+      closeMenu();
+      return;
+    }
+
+    if (
+      !shouldDispatchMediaMenuAction({
+        actionKey,
+        mediaId: selectedMediaId,
+        selectedMediaId: selectedMediaIdRef.current,
+      })
+    ) {
+      logMediaMenu('MEDIA_MENU_ACTION_FAILED', {
+        actionName: actionKey,
+        buttonIndex: selectedIndex,
+        mediaId: selectedMediaId,
+        reason: 'STALE_MEDIA_SELECTION',
+      });
+      closeMenu();
+      return;
+    }
+
+    const handlers = {
+      ARCHIVE: callbacksRef.current.onArchive,
+      EDIT: callbacksRef.current.onEdit,
+      RESTORE: callbacksRef.current.onRestore,
+      VIEW: callbacksRef.current.onView,
+    };
+    const handler = handlers[actionKey];
+    if (!handler) {
+      closeMenu();
+      return;
+    }
+
+    const logName =
+      actionKey === 'VIEW'
+        ? 'MEDIA_MENU_VIEW_EXECUTED'
+        : actionKey === 'ARCHIVE'
+          ? 'MEDIA_MENU_REMOVE_REQUESTED'
+          : 'MEDIA_MENU_ACTION_SELECTED';
+    closeMenu();
+    setTimeout(() => {
+      logMediaMenu(logName, {
+        actionName: actionKey,
+        buttonIndex: selectedIndex,
+        mediaId: selectedMediaId,
+      });
+      handler();
+    }, ACTION_DELAY_MS);
+  }
+
+  function openNativeActionSheet() {
+    setIsNativeActionSheetOpen(true);
+    callbacksRef.current.onOpen();
+    logMediaMenu('MEDIA_MENU_DISPLAYED', {
       mediaId: media.id,
-      menuVisible: true,
-      selectedMediaId: media.id,
+      presentation: 'native-sheet',
     });
 
-    onOpen();
     ActionSheetIOS.showActionSheetWithOptions(
       {
-        cancelButtonIndex: actions.cancelButtonIndex,
-        destructiveButtonIndex: actions.destructiveButtonIndex,
-        options: actions.options,
+        cancelButtonIndex: actionConfig.cancelButtonIndex,
+        destructiveButtonIndex: actionConfig.destructiveButtonIndex,
+        options: actionConfig.options,
         title: displayTitle,
         userInterfaceStyle: 'light',
       },
       (selectedIndex) => {
-        logMediaMenu('MEDIA_MENU_IOS_ACTION_SELECTED', {
-          mediaId: media.id,
-          menuVisible: false,
-          selectedAction: actions.keys[selectedIndex] ?? 'UNKNOWN',
-          selectedIndex,
-          selectedMediaId: media.id,
-        });
-        actionSheetOpenRef.current = false;
-        onClose();
-        const selectedAction = actions.keys[selectedIndex];
-        if (!selectedAction || selectedAction === 'CANCEL') return;
-        const handler = actions.handlers[selectedIndex];
-        if (handler) {
-          setTimeout(handler, IOS_ACTION_DELAY_MS);
-        }
+        dispatchNativeActionSheetSelection(selectedIndex);
       },
+    );
+  }
+
+  function usesNativeActionSheet() {
+    return (
+      Platform.OS === 'ios' &&
+      typeof ActionSheetIOS.showActionSheetWithOptions === 'function'
     );
   }
 
@@ -277,14 +356,19 @@ export function MediaOverflowMenu({
         <Pressable
           accessibilityLabel={`More options for ${displayTitle}`}
           accessibilityRole="button"
-          disabled={busy}
+          disabled={busy || isOpening}
+          hitSlop={8}
           onPress={openMenu}
           style={styles.ellipsis}
         >
           {busy ? (
             <ActivityIndicator color={colours.primary} size="small" />
           ) : (
-            <Text style={styles.ellipsisText}>•••</Text>
+            <View style={styles.ellipsisIcon} pointerEvents="none">
+              <View style={styles.ellipsisDot} />
+              <View style={styles.ellipsisDot} />
+              <View style={styles.ellipsisDot} />
+            </View>
           )}
         </Pressable>
       </View>
@@ -292,18 +376,12 @@ export function MediaOverflowMenu({
         animationType="fade"
         onRequestClose={closeMenu}
         transparent
-        visible={Platform.OS !== 'ios' && open}
+        visible={open && !isNativeActionSheetOpen}
       >
         <Pressable
           accessibilityLabel="Close media actions menu"
           accessibilityRole="button"
           onPress={() => {
-            logMediaMenu('MENU_BACKDROP_PRESS', {
-              backdropEnabled,
-              mediaId: media.id,
-              menuVisible: open,
-              selectedMediaId: media.id,
-            });
             if (backdropEnabled) closeMenu();
           }}
           onTouchMove={closeMenu}
@@ -325,80 +403,23 @@ export function MediaOverflowMenu({
             <Text numberOfLines={2} style={styles.menuTitle}>
               {displayTitle}
             </Text>
-            <MenuAction
-              label={mediaMenuViewLabel(media)}
-              onPress={() => runAndClose(onView)}
-            />
-            {onEdit && !media.archivedAt ? (
-              <MenuAction
-                label="Edit details"
-                onPress={() => runAndClose(onEdit)}
-              />
-            ) : null}
-            {canArchive ? (
-              <MenuAction
-                destructive
-                label={mediaMenuRemoveLabel(media)}
-                onPress={() => runAndClose(onArchive)}
-              />
-            ) : null}
-            {canRestore ? (
-              <MenuAction
-                label={`Restore ${noun}`}
-                onPress={() => runAndClose(onRestore)}
-              />
-            ) : null}
-            <MenuAction label="Cancel" onPress={closeMenu} />
+            {actionConfig.keys.map((actionKey, index) => {
+              const label = actionConfig.options[index];
+              if (!label) return null;
+              return (
+                <MenuAction
+                  destructive={index === actionConfig.destructiveButtonIndex}
+                  key={actionKey}
+                  label={label}
+                  onPress={() => handleActionPress(actionKey)}
+                />
+              );
+            })}
           </Pressable>
         </Pressable>
       </Modal>
     </>
   );
-}
-
-function buildIosActions({
-  canArchive,
-  canRestore,
-  media,
-  onArchive,
-  onClose,
-  onEdit,
-  onOpen,
-  onRestore,
-  onView,
-}: {
-  canArchive: boolean;
-  canRestore: boolean;
-  media: MediaAsset;
-  onArchive(): void;
-  onClose(): void;
-  onEdit?(): void;
-  onOpen(): void;
-  onRestore(): void;
-  onView(): void;
-}) {
-  const config = buildMediaMenuActionConfig({
-    canArchive,
-    canEdit: Boolean(onEdit),
-    canRestore,
-    media,
-  });
-  const handlerByKey = {
-    ARCHIVE: onArchive,
-    CANCEL: onClose,
-    EDIT: onEdit ?? onClose,
-    RESTORE: onRestore,
-    VIEW: onView,
-  };
-  const handlers = config.keys.map((key) => handlerByKey[key]);
-
-  return {
-    cancelButtonIndex: config.cancelButtonIndex,
-    destructiveButtonIndex: config.destructiveButtonIndex,
-    handlers,
-    keys: config.keys,
-    options: config.options,
-  };
 }
 
 export function MediaRemovalConfirmation({
@@ -544,13 +565,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     height: 44,
     justifyContent: 'center',
+    marginTop: -22,
     position: 'absolute',
     right: 8,
-    top: 8,
+    top: '50%',
     width: 44,
     zIndex: 2,
   },
-  ellipsisText: { color: colours.ink, fontSize: 16, fontWeight: '900' },
+  ellipsisDot: {
+    backgroundColor: colours.ink,
+    borderRadius: 2,
+    height: 4,
+    width: 4,
+  },
+  ellipsisIcon: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 3,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
   menuAction: {
     borderRadius: 14,
     justifyContent: 'center',

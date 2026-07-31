@@ -873,6 +873,13 @@ export class MediaService {
         HttpStatus.FORBIDDEN,
       );
     }
+    if (media.appointment?.status === 'COMPLETED') {
+      throw this.domainError(
+        'MEDIA_COMPLETED_APPOINTMENT_LOCKED',
+        'Evidence on completed appointments can only be removed by an Owner or Admin.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     if (media.mediaType !== 'IMAGE') {
       throw this.domainError(
         'PROTECTED_MEDIA_REQUIRES_ADMIN',

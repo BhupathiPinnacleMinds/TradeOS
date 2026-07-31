@@ -125,9 +125,54 @@ EXPO_PUBLIC_API_URL=http://192.168.0.234:3000/api
 
 ## Local development on Windows
 
-For the most reliable local setup on this machine, use the checked-in helper
-scripts instead of retyping long Expo commands. They avoid PowerShell quoting
-issues with URLs and use the LAN IP that Expo Go needs on iPhone.
+For the most reliable local setup on Windows, start Docker Desktop manually,
+then use this daily workflow from a normal PowerShell window.
+
+Morning startup:
+
+```powershell
+pnpm dev:local
+```
+
+This launcher:
+
+- verifies Docker Desktop is running
+- verifies PostgreSQL is reachable
+- verifies the Prisma schema is valid
+- verifies Prisma migrations are current
+- reuses an already healthy API or Metro instance
+- stops only stale verified TradeOS listeners on ports `3000`, `8081` and
+  `8082`
+- opens the API in a normal visible terminal
+- opens Expo/Metro in a second normal visible terminal
+- detects your current LAN IP
+- sets `EXPO_PUBLIC_API_URL=http://<LAN-IP>:3000/api`
+- starts Expo with `--lan --clear`
+- never seeds, resets or deletes database data
+
+Work all day with the two visible terminals open.
+
+Shutdown:
+
+```powershell
+pnpm dev:stop
+```
+
+This stops only verified TradeOS API/Metro listeners and leaves Docker Desktop
+and PostgreSQL running.
+
+Troubleshooting without starting anything:
+
+```powershell
+pnpm dev:doctor
+```
+
+`dev:doctor` checks Docker, PostgreSQL, Prisma, API health, Metro, LAN IP, the
+mobile API URL, local ports and Expo configuration.
+
+Manual fallback commands are still available if you want to run each side
+yourself. They avoid PowerShell quoting issues with URLs and use the LAN IP that
+Expo Go needs on iPhone.
 
 Start the API in one PowerShell window:
 
@@ -203,6 +248,9 @@ Invoke-RestMethod "http://localhost:3000/api/media?appointmentId=$appointmentId"
 ## Common commands
 
 ```bash
+pnpm dev:doctor    # Windows: check Docker, DB, Prisma, API, Metro, LAN IP and Expo config
+pnpm dev:local     # Windows: verify DB, stop stale local listeners, start API + Expo in visible terminals
+pnpm dev:stop      # Windows: stop only verified TradeOS API/Metro listeners
 pnpm build          # Build all packages and apps
 pnpm typecheck      # Type-check the workspace
 pnpm lint           # Lint the workspace

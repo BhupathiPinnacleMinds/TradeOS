@@ -40,9 +40,12 @@
 - Media-card ellipsis menus now open reliably even when native measurement is
   delayed or unavailable on iPhone/Expo Go, using a safe fallback while logging
   development diagnostics.
-- iPhone media-card ellipsis actions now use native `ActionSheetIOS` with
-  polished View photo/document, Remove photo/document and Cancel actions,
-  avoiding the fragile custom popover path.
+- Media-card ellipsis actions now use one anchored in-app menu on iPhone,
+  Android and web so Cancel is always visible and View/Remove labels render
+  consistently.
+- Technician media removal now documents and enforces why Remove is hidden or
+  rejected: another user's upload, expired correction window, protected
+  category/document, completed appointment evidence or insufficient role.
 - Removed temporary media-menu debug UI, compacted generated filenames, preferred
   captions/category labels in media menus/cards and fixed photo/document count
   pluralisation.

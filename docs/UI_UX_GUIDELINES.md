@@ -47,11 +47,11 @@
   movement while open. If native anchor measurement fails or returns a zero-size
   rect, the menu must still open using a safe fallback position rather than
   silently doing nothing.
-- On iPhone/Expo Go, media-card ellipsis actions should use the native iOS
-  action sheet for reliability. Android and web may use the custom accessible
-  modal fallback. Do not show development build markers, debug toasts or raw
-  generated filenames in normal media menus. Prefer captions, then friendly
-  category labels, then compact filenames.
+- Media-card ellipsis actions use the same anchored in-app action menu on
+  iPhone, Android and web so View, Remove/Restore and Cancel labels are always
+  visible. Do not show development build markers, debug toasts or raw generated
+  filenames in normal media menus. Prefer captions, then friendly category
+  labels, then compact filenames.
 - Customer Details should show customer-level and linked job media from the
   same secured media list API.
 - Tori may later summarise media metadata, but must never send customer-facing

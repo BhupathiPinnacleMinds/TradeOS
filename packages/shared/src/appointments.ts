@@ -362,6 +362,45 @@ export interface AppointmentQuickAction {
   kind: 'contact' | 'workflow' | 'navigation' | 'secondary';
 }
 
+export const APPOINTMENT_MORE_ACTIONS_DISMISS_ID =
+  'appointment-more-actions-dismiss';
+
+export type AppointmentMoreActionsMenuState = {
+  backdropEnabled: boolean;
+  dismissing: boolean;
+  hasPendingActionTimer: boolean;
+  opening: boolean;
+  pendingActionId: string | null;
+  selectedActionId: string | null;
+  touchBlocked: boolean;
+  visible: boolean;
+};
+
+export function dismissedAppointmentMoreActionsMenuState(): AppointmentMoreActionsMenuState {
+  return {
+    backdropEnabled: false,
+    dismissing: false,
+    hasPendingActionTimer: false,
+    opening: false,
+    pendingActionId: null,
+    selectedActionId: null,
+    touchBlocked: false,
+    visible: false,
+  };
+}
+
+export function openedAppointmentMoreActionsMenuState(): AppointmentMoreActionsMenuState {
+  return {
+    ...dismissedAppointmentMoreActionsMenuState(),
+    backdropEnabled: true,
+    visible: true,
+  };
+}
+
+export function shouldExecuteAppointmentMoreActionsMenuItem(actionId: string) {
+  return actionId !== APPOINTMENT_MORE_ACTIONS_DISMISS_ID;
+}
+
 export interface AppointmentQuickActionInput {
   status: AppointmentStatus;
   hasPhone: boolean;
