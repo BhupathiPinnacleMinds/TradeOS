@@ -65,6 +65,7 @@ export class DashboardService {
       todayJobs,
       todayAppointments,
       nextAppointment,
+      activeExecutionAppointment,
       notifications,
     ] = await this.prisma.$transaction([
       this.prisma.customer.count({ where: { businessId, isArchived: false } }),
@@ -268,6 +269,28 @@ export class DashboardService {
           scheduledStart: true,
         },
       }),
+      this.prisma.appointment.findFirst({
+        where: {
+          businessId,
+          status: { in: ['ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS', 'PAUSED'] },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          assignedUser: {
+            select: { firstName: true, lastName: true },
+          },
+          id: true,
+          job: {
+            select: {
+              customer: {
+                select: { companyName: true, displayName: true },
+              },
+              title: true,
+            },
+          },
+          status: true,
+        },
+      }),
       this.prisma.notification.findMany({
         where: { businessId },
         orderBy: { createdAt: 'desc' },
@@ -376,6 +399,22 @@ export class DashboardService {
               : null,
           }
         : null,
+      activeExecutionAppointment: activeExecutionAppointment
+        ? {
+            currentAction: this.executionActionForStatus(
+              activeExecutionAppointment.status,
+            ),
+            customerName:
+              activeExecutionAppointment.job.customer.companyName ??
+              activeExecutionAppointment.job.customer.displayName,
+            id: activeExecutionAppointment.id,
+            jobTitle: activeExecutionAppointment.job.title,
+            status: activeExecutionAppointment.status,
+            technicianName: activeExecutionAppointment.assignedUser
+              ? `${activeExecutionAppointment.assignedUser.firstName} ${activeExecutionAppointment.assignedUser.lastName}`
+              : null,
+          }
+        : null,
       notifications: notifications.map((notification) => ({
         ...notification,
         createdAt: notification.createdAt.toISOString(),
@@ -421,5 +460,13 @@ export class DashboardService {
       title: 'Your day is looking clear',
       body: 'Tori will surface jobs, follow-ups and admin drafts here as they appear.',
     };
+  }
+
+  private executionActionForStatus(status: string) {
+    if (status === 'ON_THE_WAY') return 'Travelling to customer';
+    if (status === 'ARRIVED') return 'Ready to start work';
+    if (status === 'IN_PROGRESS') return 'Work in progress';
+    if (status === 'PAUSED') return 'Paused';
+    return 'Active appointment';
   }
 }

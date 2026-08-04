@@ -13,11 +13,13 @@ import { AppointmentsService } from './appointments.service';
 import {
   AppointmentAvailabilityDto,
   AppointmentWorkLogDto,
+  CaptureAppointmentSignatureDto,
   CompleteAppointmentDto,
   AppointmentRecommendationDto,
   DispatcherQueryDto,
   ListAppointmentsQueryDto,
   ReassignAppointmentDto,
+  SkipAppointmentSignatureDto,
   UpsertAppointmentDto,
 } from './dto/appointments.dto';
 
@@ -112,6 +114,14 @@ export class AppointmentsController {
     return this.appointments.transition(currentUser, id, 'IN_PROGRESS');
   }
 
+  @Post(':id/confirm')
+  confirm(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.appointments.transition(currentUser, id, 'CONFIRMED');
+  }
+
   @Post(':id/start-travel')
   startTravel(
     @CurrentUser() currentUser: AuthenticatedUser,
@@ -135,6 +145,40 @@ export class AppointmentsController {
     @Body() dto: CompleteAppointmentDto,
   ) {
     return this.appointments.completeWithWorkLog(currentUser, id, dto);
+  }
+
+  @Post(':id/pause')
+  pause(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.appointments.transition(currentUser, id, 'PAUSED');
+  }
+
+  @Post(':id/resume')
+  resume(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.appointments.transition(currentUser, id, 'IN_PROGRESS');
+  }
+
+  @Post(':id/signature')
+  captureSignature(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: CaptureAppointmentSignatureDto,
+  ) {
+    return this.appointments.captureSignature(currentUser, id, dto);
+  }
+
+  @Post(':id/signature/skip')
+  skipSignature(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: SkipAppointmentSignatureDto,
+  ) {
+    return this.appointments.skipSignature(currentUser, id, dto);
   }
 
   @Patch(':id/work-log')

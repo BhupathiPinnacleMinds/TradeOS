@@ -8,6 +8,7 @@ export const APPOINTMENT_STATUSES = [
   'ON_THE_WAY',
   'ARRIVED',
   'IN_PROGRESS',
+  'PAUSED',
   'COMPLETED',
   'CANCELLED',
   'NO_SHOW',
@@ -73,6 +74,17 @@ export interface Appointment {
   scheduledEnd: string;
   actualStart: string | null;
   actualEnd: string | null;
+  travelStartedAt: string | null;
+  arrivedAt: string | null;
+  workStartedAt: string | null;
+  currentWorkStartedAt: string | null;
+  pausedAt: string | null;
+  completedAt: string | null;
+  totalTravelMinutes: number;
+  totalWorkMinutes: number;
+  totalPausedMinutes: number;
+  executionDurations: AppointmentExecutionDurations;
+  signature: AppointmentSignature | null;
   estimatedDurationMinutes: number | null;
   travelDurationMinutes: number | null;
   travelDistanceKm: number | null;
@@ -118,6 +130,68 @@ export interface AppointmentWorkLog {
   updatedAt: string;
 }
 
+export interface AppointmentExecutionDurations {
+  travelMinutes: number;
+  workMinutes: number;
+  pausedMinutes: number;
+  totalElapsedMinutes: number;
+  calculatedAt: string;
+}
+
+export const DEFAULT_APPOINTMENT_EXECUTION_DURATIONS: AppointmentExecutionDurations =
+  {
+    calculatedAt: '',
+    pausedMinutes: 0,
+    totalElapsedMinutes: 0,
+    travelMinutes: 0,
+    workMinutes: 0,
+  };
+
+export function normaliseAppointmentExecutionDurations(
+  executionDurations?: Partial<AppointmentExecutionDurations> | null,
+): AppointmentExecutionDurations {
+  return {
+    calculatedAt:
+      executionDurations?.calculatedAt ??
+      DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.calculatedAt,
+    pausedMinutes:
+      executionDurations?.pausedMinutes ??
+      DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.pausedMinutes,
+    totalElapsedMinutes:
+      executionDurations?.totalElapsedMinutes ??
+      DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.totalElapsedMinutes,
+    travelMinutes:
+      executionDurations?.travelMinutes ??
+      DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.travelMinutes,
+    workMinutes:
+      executionDurations?.workMinutes ??
+      DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.workMinutes,
+  };
+}
+
+export interface AppointmentSignatureData {
+  strokes: Array<Array<{ x: number; y: number }>>;
+  width: number;
+  height: number;
+}
+
+export interface AppointmentSignature {
+  id: string;
+  businessId: string;
+  appointmentId: string;
+  jobId: string;
+  customerName: string | null;
+  signerTitle: string | null;
+  consentText: string;
+  signatureData: AppointmentSignatureData | null;
+  skipReason: string | null;
+  capturedByUserId: string;
+  capturedAt: string | null;
+  skippedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppointmentWorkLogPayload {
   technicianNotes?: string;
   workCompleted?: string;
@@ -127,6 +201,19 @@ export interface AppointmentWorkLogPayload {
 
 export interface CompleteAppointmentPayload extends AppointmentWorkLogPayload {
   workCompleted: string;
+  signatureId?: string;
+  signatureSkipReason?: string;
+}
+
+export interface AppointmentSignaturePayload {
+  customerName: string;
+  signerTitle?: string | null;
+  consentText?: string;
+  signatureData: AppointmentSignatureData;
+}
+
+export interface SkipAppointmentSignaturePayload {
+  reason: string;
 }
 
 export interface MyDayResponse {
@@ -303,6 +390,7 @@ export const APPOINTMENT_STATUS_COLOURS: Record<
   IN_PROGRESS: { background: '#FEF3C7', border: '#F59E0B', text: '#92400E' },
   NO_SHOW: { background: '#F3F4F6', border: '#9CA3AF', text: '#374151' },
   ON_THE_WAY: { background: '#DBEAFE', border: '#3B82F6', text: '#1D4ED8' },
+  PAUSED: { background: '#FFF7ED', border: '#FB923C', text: '#9A3412' },
   RESCHEDULED: { background: '#F5F3FF', border: '#8B5CF6', text: '#5B21B6' },
   SCHEDULED: { background: '#EEF2FF', border: '#6366F1', text: '#3730A3' },
 };
@@ -342,15 +430,23 @@ export const APPOINTMENT_STATUS_UPDATE_ROLES: BusinessRole[] = [
   'TECHNICIAN',
 ];
 
+export const APPOINTMENT_CONFIRM_ROLES: BusinessRole[] = [
+  'OWNER',
+  'ADMIN',
+  'OFFICE_MANAGER',
+  'SCHEDULER',
+];
+
 export type AppointmentQuickActionId =
   | 'navigate'
   | 'call'
+  | 'confirm'
   | 'reassign'
   | 'startTravel'
   | 'start'
   | 'arrive'
   | 'complete'
-  | 'hold'
+  | 'pause'
   | 'resume'
   | 'reschedule'
   | 'cancel'
@@ -411,10 +507,11 @@ export interface AppointmentQuickActionInput {
 }
 
 export type AppointmentTransitionAction =
+  | 'confirm'
   | 'start-travel'
   | 'arrive'
   | 'start'
-  | 'hold'
+  | 'pause'
   | 'resume'
   | 'complete'
   | 'cancel';
@@ -423,6 +520,28 @@ export interface AppointmentTransitionOption {
   action: AppointmentTransitionAction;
   label: string;
   nextStatus: AppointmentStatus;
+}
+
+export const APPOINTMENT_TRANSITION_ROUTE_SEGMENTS: Record<
+  AppointmentTransitionAction,
+  string
+> = {
+  arrive: 'arrive',
+  cancel: 'cancel',
+  complete: 'complete',
+  confirm: 'confirm',
+  pause: 'pause',
+  resume: 'resume',
+  start: 'start',
+  'start-travel': 'start-travel',
+};
+
+export function buildAppointmentTransitionPath(
+  appointmentId: string,
+  action: AppointmentTransitionAction,
+) {
+  const segment = APPOINTMENT_TRANSITION_ROUTE_SEGMENTS[action];
+  return `/appointments/${appointmentId}/${segment}`;
 }
 
 const APPOINTMENT_RESCHEDULE_ROLES: BusinessRole[] = [
@@ -451,18 +570,24 @@ function canUpdateAppointmentStatus(input: AppointmentQuickActionInput) {
   return true;
 }
 
+function canConfirmAppointment(input: AppointmentQuickActionInput) {
+  return Boolean(input.role && APPOINTMENT_CONFIRM_ROLES.includes(input.role));
+}
+
 export function getAllowedAppointmentTransitions(input: {
   currentStatus: AppointmentStatus;
   userRole?: BusinessRole | null;
   isAssignedTechnician?: boolean;
 }): AppointmentTransitionOption[] {
-  const canUpdate = canUpdateAppointmentStatus({
+  const quickActionInput: AppointmentQuickActionInput = {
     hasAddress: true,
     hasPhone: true,
     isAssignedUser: input.isAssignedTechnician,
     role: input.userRole,
     status: input.currentStatus,
-  });
+  };
+  const canUpdate = canUpdateAppointmentStatus(quickActionInput);
+  const canConfirm = canConfirmAppointment(quickActionInput);
   if (!canUpdate) return [];
 
   if (
@@ -473,34 +598,118 @@ export function getAllowedAppointmentTransitions(input: {
     return [];
   }
 
-  if (['SCHEDULED', 'CONFIRMED'].includes(input.currentStatus)) {
-    return [
+  const options: AppointmentTransitionOption[] = [];
+
+  if (input.currentStatus === 'SCHEDULED') {
+    if (canConfirm) {
+      options.push({
+        action: 'confirm',
+        label: 'Confirm appointment',
+        nextStatus: 'CONFIRMED',
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
+    return options;
+  }
+
+  if (input.currentStatus === 'CONFIRMED') {
+    options.push(
       {
         action: 'start-travel',
         label: 'Start travel',
         nextStatus: 'ON_THE_WAY',
       },
-      { action: 'start', label: 'Start work', nextStatus: 'IN_PROGRESS' },
-    ];
+      {
+        action: 'cancel',
+        label: 'Cancel appointment',
+        nextStatus: 'CANCELLED',
+      },
+    );
+    return options;
   }
   if (input.currentStatus === 'ON_THE_WAY') {
-    return [{ action: 'arrive', label: 'Mark arrived', nextStatus: 'ARRIVED' }];
+    return [
+      { action: 'arrive', label: 'Mark arrived', nextStatus: 'ARRIVED' },
+      {
+        action: 'cancel',
+        label: 'Cancel appointment',
+        nextStatus: 'CANCELLED',
+      },
+    ];
   }
   if (input.currentStatus === 'ARRIVED') {
     return [
       { action: 'start', label: 'Start work', nextStatus: 'IN_PROGRESS' },
+      {
+        action: 'cancel',
+        label: 'Cancel appointment',
+        nextStatus: 'CANCELLED',
+      },
     ];
   }
   if (input.currentStatus === 'IN_PROGRESS') {
     return [
       {
+        action: 'pause',
+        label: 'Pause',
+        nextStatus: 'PAUSED',
+      },
+      {
         action: 'complete',
         label: 'Complete appointment',
         nextStatus: 'COMPLETED',
       },
+      {
+        action: 'cancel',
+        label: 'Cancel appointment',
+        nextStatus: 'CANCELLED',
+      },
+    ];
+  }
+  if (input.currentStatus === 'PAUSED') {
+    return [
+      {
+        action: 'resume',
+        label: 'Resume work',
+        nextStatus: 'IN_PROGRESS',
+      },
+      {
+        action: 'cancel',
+        label: 'Cancel appointment',
+        nextStatus: 'CANCELLED',
+      },
     ];
   }
   return [];
+}
+
+export function canTransitionAppointment(input: {
+  fromStatus: AppointmentStatus;
+  action: AppointmentTransitionAction;
+  userRole?: BusinessRole | null;
+  isAssignedTechnician?: boolean;
+}) {
+  return getAllowedAppointmentTransitions({
+    currentStatus: input.fromStatus,
+    isAssignedTechnician: input.isAssignedTechnician,
+    userRole: input.userRole,
+  }).some((option) => option.action === input.action);
+}
+
+export function getAppointmentExecutionActions(input: {
+  status: AppointmentStatus;
+  role?: BusinessRole | null;
+  isAssignedTechnician?: boolean;
+}) {
+  return getAllowedAppointmentTransitions({
+    currentStatus: input.status,
+    isAssignedTechnician: input.isAssignedTechnician,
+    userRole: input.role,
+  });
 }
 
 function canRescheduleAppointment(input: AppointmentQuickActionInput) {
@@ -533,6 +742,7 @@ export function getAppointmentQuickActions(
 
   const actions: AppointmentQuickAction[] = [];
   const canUpdateStatus = canUpdateAppointmentStatus(input);
+  const canConfirm = canConfirmAppointment(input);
   const canReschedule = canRescheduleAppointment(input);
   const canReassign = canReassignAppointment(input);
 
@@ -552,7 +762,15 @@ export function getAppointmentQuickActions(
     actions.push({ id: 'call', kind: 'contact', label: 'Call' });
   }
 
-  if (canUpdateStatus && ['SCHEDULED', 'CONFIRMED'].includes(input.status)) {
+  if (canConfirm && input.status === 'SCHEDULED') {
+    actions.push({
+      id: 'confirm',
+      kind: 'workflow',
+      label: 'Confirm appointment',
+    });
+  }
+
+  if (canUpdateStatus && input.status === 'CONFIRMED') {
     actions.push({
       id: 'startTravel',
       kind: 'workflow',
@@ -569,7 +787,12 @@ export function getAppointmentQuickActions(
   }
 
   if (canUpdateStatus && input.status === 'IN_PROGRESS') {
+    actions.push({ id: 'pause', kind: 'workflow', label: 'Pause' });
     actions.push({ id: 'complete', kind: 'workflow', label: 'Complete' });
+  }
+
+  if (canUpdateStatus && input.status === 'PAUSED') {
+    actions.push({ id: 'resume', kind: 'workflow', label: 'Resume' });
   }
 
   if (
@@ -583,7 +806,10 @@ export function getAppointmentQuickActions(
     });
   }
 
-  if (canReschedule && ['CANCELLED', 'NO_SHOW'].includes(input.status)) {
+  if (
+    canReschedule &&
+    ['SCHEDULED', 'CONFIRMED', 'CANCELLED', 'NO_SHOW'].includes(input.status)
+  ) {
     actions.push({
       id: 'reschedule',
       kind: 'secondary',

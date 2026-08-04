@@ -301,6 +301,15 @@ Important fields:
 - scheduledEnd
 - actualStart
 - actualEnd
+- travelStartedAt
+- arrivedAt
+- workStartedAt
+- currentWorkStartedAt
+- pausedAt
+- completedAt
+- totalTravelMinutes
+- totalWorkMinutes
+- totalPausedMinutes
 - estimatedDurationMinutes
 - travelDurationMinutes
 - travelDistanceKm
@@ -321,6 +330,7 @@ Statuses:
 - ON_THE_WAY
 - ARRIVED
 - IN_PROGRESS
+- PAUSED
 - COMPLETED
 - CANCELLED
 - NO_SHOW
@@ -337,6 +347,32 @@ Scheduling rules:
 - Business working-hour validation uses the business timezone and current
   default hours of 07:00-18:00 local business time. Technician working hours,
   lunch breaks and public holidays are future extension points.
+- Technician execution timing stores UTC timestamps and running totals on the
+  appointment row. Audit logs remain the immutable event history for travel
+  started, arrived, work started, paused, resumed and completed transitions.
+
+### AppointmentSignature
+
+Stores customer sign-off or an authorised signature skip for one appointment.
+Signature strokes are stored as structured JSON point data rather than a large
+base64 image blob.
+
+Important fields:
+
+- id
+- businessId
+- appointmentId
+- jobId
+- customerName
+- signerTitle
+- consentText
+- signatureData
+- skipReason
+- capturedByUserId
+- capturedAt
+- skippedAt
+- createdAt
+- updatedAt
 
 ### Quote
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-31
+
+### Added
+
+- Technician Execution Workflow with strict shared transition rules for
+  `SCHEDULED/CONFIRMED -> ON_THE_WAY -> ARRIVED -> IN_PROGRESS -> PAUSED ->
+IN_PROGRESS -> COMPLETED`.
+- Appointment execution timestamps and persisted travel/work/paused duration
+  totals, with audit events for travel started, arrived, work started, paused,
+  resumed and completed.
+- Tenant-scoped appointment signature records with structured stroke data,
+  customer consent text and Owner/Admin-only skip reason support.
+- Appointment Details execution UX with live timing card, editable active field
+  notes, completion checklist, customer signature capture and final completion
+  review.
+
+### Changed
+
+- Calendar, My Day, Job Details and Appointment Details now use the shared
+  transition/action helper for pause/resume-aware action visibility.
+- Completing an appointment now requires a work-completed summary and customer
+  signature, unless an Owner/Admin records a signature skip reason.
+
 ## 2026-07-27
 
 ### Added

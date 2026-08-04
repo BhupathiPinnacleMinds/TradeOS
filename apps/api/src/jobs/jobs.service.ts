@@ -825,10 +825,12 @@ export class JobsService {
   }
 
   private toAppointment(appointment: AppointmentWithRelations): Appointment {
+    const executionDurations = this.appointmentExecutionDurations(appointment);
     return {
       actualEnd: appointment.actualEnd?.toISOString() ?? null,
       actualStart: appointment.actualStart?.toISOString() ?? null,
       accessInstructions: appointment.accessInstructions,
+      arrivedAt: appointment.arrivedAt?.toISOString() ?? null,
       addressLine1: appointment.addressLine1,
       addressLine2: appointment.addressLine2,
       appointmentNumber: appointment.appointmentNumber,
@@ -836,10 +838,14 @@ export class JobsService {
       assignedUser: appointment.assignedUser,
       assignedUserId: appointment.assignedUserId,
       businessId: appointment.businessId,
+      completedAt: appointment.completedAt?.toISOString() ?? null,
       createdAt: appointment.createdAt.toISOString(),
       createdBy: appointment.createdBy,
+      currentWorkStartedAt:
+        appointment.currentWorkStartedAt?.toISOString() ?? null,
       customerSiteId: appointment.customerSiteId,
       estimatedDurationMinutes: appointment.estimatedDurationMinutes,
+      executionDurations,
       id: appointment.id,
       job: {
         ...appointment.job,
@@ -848,19 +854,73 @@ export class JobsService {
       jobId: appointment.jobId,
       locationSource: appointment.locationSource,
       notes: appointment.notes,
+      pausedAt: appointment.pausedAt?.toISOString() ?? null,
       postcode: appointment.postcode,
       scheduledEnd: appointment.scheduledEnd.toISOString(),
       scheduledStart: appointment.scheduledStart.toISOString(),
       state: appointment.state as Appointment['state'],
       status: appointment.status,
       suburb: appointment.suburb,
+      signature: null,
+      totalPausedMinutes: appointment.totalPausedMinutes,
+      totalTravelMinutes: appointment.totalTravelMinutes,
+      totalWorkMinutes: appointment.totalWorkMinutes,
       travelDistanceKm: appointment.travelDistanceKm
         ? Number(appointment.travelDistanceKm.toString())
         : null,
       travelDurationMinutes: appointment.travelDurationMinutes,
+      travelStartedAt: appointment.travelStartedAt?.toISOString() ?? null,
       updatedAt: appointment.updatedAt.toISOString(),
       updatedBy: appointment.updatedBy,
+      workStartedAt: appointment.workStartedAt?.toISOString() ?? null,
       workLog: null,
+    };
+  }
+
+  private appointmentExecutionDurations(
+    appointment: Pick<
+      AppointmentWithRelations,
+      | 'completedAt'
+      | 'currentWorkStartedAt'
+      | 'pausedAt'
+      | 'status'
+      | 'totalPausedMinutes'
+      | 'totalTravelMinutes'
+      | 'totalWorkMinutes'
+      | 'travelStartedAt'
+      | 'workStartedAt'
+    >,
+  ) {
+    const now = new Date();
+    const minutesBetween = (start: Date | null, end: Date) =>
+      start
+        ? Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000))
+        : 0;
+    const travelMinutes =
+      appointment.status === 'ON_THE_WAY' && appointment.travelStartedAt
+        ? minutesBetween(appointment.travelStartedAt, now)
+        : appointment.totalTravelMinutes;
+    const workSegmentStart =
+      appointment.currentWorkStartedAt ?? appointment.workStartedAt;
+    const workMinutes =
+      appointment.status === 'IN_PROGRESS' && workSegmentStart
+        ? appointment.totalWorkMinutes + minutesBetween(workSegmentStart, now)
+        : appointment.totalWorkMinutes;
+    const pausedMinutes =
+      appointment.status === 'PAUSED' && appointment.pausedAt
+        ? appointment.totalPausedMinutes +
+          minutesBetween(appointment.pausedAt, now)
+        : appointment.totalPausedMinutes;
+    const elapsedStart =
+      appointment.travelStartedAt ?? appointment.workStartedAt;
+    const elapsedEnd = appointment.completedAt ?? now;
+
+    return {
+      calculatedAt: now.toISOString(),
+      pausedMinutes,
+      totalElapsedMinutes: minutesBetween(elapsedStart, elapsedEnd),
+      travelMinutes,
+      workMinutes,
     };
   }
 

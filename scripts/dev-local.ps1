@@ -13,6 +13,18 @@ $expoPidLog = Join-Path $env:TEMP "tradeos-expo-$launcherRunId.pid"
 $expoPsLauncher = Join-Path $env:TEMP "tradeos-dev-expo-$launcherRunId.ps1"
 $apiLocalUrl = 'http://localhost:3000/api'
 $apiHealthUrl = "$apiLocalUrl/health"
+$apiDistController = Join-Path $apiDir 'dist\src\appointments\appointments.controller.js'
+$apiDistMain = Join-Path $apiDir 'dist\src\main.js'
+$appointmentActionRouteSegments = @(
+  'confirm',
+  'start',
+  'start-travel',
+  'arrive',
+  'pause',
+  'resume',
+  'complete',
+  'cancel'
+)
 
 function Write-Section($message) {
   Write-Host ''
@@ -27,18 +39,175 @@ function Write-Warn($message) {
   Write-Host "[WARN] $message" -ForegroundColor Yellow
 }
 
-function Get-PrivateLanIp {
-  $ipconfig = cmd.exe /d /c ipconfig
-  foreach ($line in $ipconfig) {
-    if ($line -match 'IPv4.*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)') {
-      $candidate = $Matches[1]
-      if ($candidate -match '^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)') {
-        return $candidate
+function Test-PrivateIpv4($ipAddress) {
+  return (
+    $ipAddress -match '^(10)\.' -or
+    $ipAddress -match '^(192\.168)\.' -or
+    $ipAddress -match '^172\.(1[6-9]|2\d|3[0-1])\.'
+  )
+}
+
+function Test-UsableIpv4($ipAddress) {
+  return (
+    $ipAddress -match '^(\d{1,3}\.){3}\d{1,3}$' -and
+    $ipAddress -notmatch '^(127\.|169\.254\.|0\.|255\.)' -and
+    (Test-PrivateIpv4 $ipAddress)
+  )
+}
+
+function Test-VirtualAdapterName($adapterName) {
+  return $adapterName -match '(?i)(docker|dockernat|wsl|hyper-v|hyperv|vethernet|vpn|loopback|virtual|vmware|virtualbox|tunnel|tap|tun|wireguard|openvpn|zerotier|tailscale)'
+}
+
+function Test-PreferredPhysicalAdapterName($adapterName) {
+  return $adapterName -match '(?i)(wi-?fi|wireless|ethernet)'
+}
+
+function Test-GatewayReachable($gateway) {
+  if (-not $gateway) {
+    return $false
+  }
+
+  try {
+    $ping = cmd.exe /d /c "ping -n 1 -w 250 $gateway"
+    return $LASTEXITCODE -eq 0 -and ($ping -join "`n") -match 'TTL='
+  } catch {
+    return $false
+  }
+}
+
+function Get-IpConfigLanCandidates {
+  $sections = @()
+  $current = $null
+  $waitingForGateway = $false
+
+  foreach ($line in (cmd.exe /d /c ipconfig)) {
+    if ($line -match '^[^\s].*adapter\s+(.+):\s*$') {
+      if ($current) {
+        $sections += $current
       }
+      $current = [ordered]@{
+        AdapterName = $Matches[1].Trim()
+        Ip = $null
+        Gateway = $null
+        Disconnected = $false
+      }
+      $waitingForGateway = $false
+      continue
+    }
+
+    if (-not $current) {
+      continue
+    }
+
+    if ($line -match 'Media disconnected') {
+      $current.Disconnected = $true
+      $waitingForGateway = $false
+      continue
+    }
+
+    if ($line -match 'IPv4.*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)') {
+      $current.Ip = $Matches[1]
+      $waitingForGateway = $false
+      continue
+    }
+
+    if ($line -match 'Default Gateway.*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)') {
+      $current.Gateway = $Matches[1]
+      $waitingForGateway = $false
+      continue
+    }
+
+    if ($line -match 'Default Gateway.*:') {
+      $waitingForGateway = $true
+      continue
+    }
+
+    if ($line -match 'Default Gateway.*:\s*$') {
+      $waitingForGateway = $true
+      continue
+    }
+
+    if ($waitingForGateway -and $line -match '^\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s*$') {
+      $current.Gateway = $Matches[1]
+      $waitingForGateway = $false
     }
   }
 
-  throw 'Could not detect a private LAN IP address for Expo Go.'
+  if ($current) {
+    $sections += $current
+  }
+
+  foreach ($section in $sections) {
+    if (-not (Test-UsableIpv4 $section.Ip)) {
+      continue
+    }
+
+    [pscustomobject]@{
+      AdapterName = $section.AdapterName
+      Ip = $section.Ip
+      Gateway = $section.Gateway
+      GatewayReachable = Test-GatewayReachable $section.Gateway
+      IsVirtual = Test-VirtualAdapterName $section.AdapterName
+      IsPreferredPhysical = Test-PreferredPhysicalAdapterName $section.AdapterName
+      IsDisconnected = [bool]$section.Disconnected
+    }
+  }
+}
+
+function Get-PrivateLanSelection {
+  $candidates = @(Get-IpConfigLanCandidates)
+  $override = $env:TRADIEOS_LAN_IP
+
+  if ($override) {
+    if (-not (Test-UsableIpv4 $override)) {
+      throw "TRADIEOS_LAN_IP is not a valid private local IPv4 address: $override"
+    }
+
+    $overrideCandidate = $candidates | Where-Object { $_.Ip -eq $override } | Select-Object -First 1
+    if (-not $overrideCandidate) {
+      throw "TRADIEOS_LAN_IP=$override is not assigned to a local network adapter."
+    }
+    if ($overrideCandidate.IsVirtual -or $overrideCandidate.IsDisconnected) {
+      throw "TRADIEOS_LAN_IP=$override belongs to a virtual or disconnected adapter: $($overrideCandidate.AdapterName)"
+    }
+
+    return [pscustomobject]@{
+      AdapterName = $overrideCandidate.AdapterName
+      Ip = $overrideCandidate.Ip
+      Gateway = $overrideCandidate.Gateway
+      GatewayReachable = $overrideCandidate.GatewayReachable
+      Source = 'TRADIEOS_LAN_IP'
+    }
+  }
+
+  $physicalCandidates = @(
+    $candidates |
+      Where-Object { -not $_.IsVirtual -and -not $_.IsDisconnected -and $_.Gateway } |
+      Sort-Object `
+        @{ Expression = { if ($_.GatewayReachable) { 0 } else { 1 } } },
+        @{ Expression = { if ($_.IsPreferredPhysical) { 0 } else { 1 } } },
+        @{ Expression = { if ($_.Ip -match '^172\.') { 1 } else { 0 } } },
+        AdapterName
+  )
+
+  if ($physicalCandidates.Count -gt 0) {
+    $selected = $physicalCandidates[0]
+    return [pscustomobject]@{
+      AdapterName = $selected.AdapterName
+      Ip = $selected.Ip
+      Gateway = $selected.Gateway
+      GatewayReachable = $selected.GatewayReachable
+      Source = 'automatic physical adapter selection'
+    }
+  }
+
+  $candidateSummary = if ($candidates.Count) {
+    ($candidates | ForEach-Object { "$($_.AdapterName)=$($_.Ip)" }) -join ', '
+  } else {
+    'none'
+  }
+  throw "Could not detect a connected physical Wi-Fi/Ethernet LAN IP for Expo Go. Candidates: $candidateSummary. Set TRADIEOS_LAN_IP to your phone-reachable IPv4 address if needed."
 }
 
 function Test-TcpPort($hostName, $port) {
@@ -228,6 +397,90 @@ function Invoke-PrismaCommand($arguments, $successPattern, $failureMessage) {
   }
 }
 
+function Get-LatestSourceWriteTime {
+  $paths = @(
+    (Join-Path $apiDir 'src'),
+    (Join-Path $repoRoot 'packages\shared\src')
+  )
+  $latest = Get-Date '1970-01-01'
+  foreach ($path in $paths) {
+    if (Test-Path $path) {
+      $candidate = Get-ChildItem -LiteralPath $path -Recurse -File -Include *.ts,*.tsx |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+      if ($candidate -and $candidate.LastWriteTimeUtc -gt $latest) {
+        $latest = $candidate.LastWriteTimeUtc
+      }
+    }
+  }
+  return $latest
+}
+
+function Test-ApiDistAppointmentRoutes {
+  if (-not (Test-Path $apiDistController)) {
+    return $false
+  }
+
+  $content = Get-Content -LiteralPath $apiDistController -Raw
+  foreach ($segment in $appointmentActionRouteSegments) {
+    if ($content -notmatch [regex]::Escape("(0, common_1.Post)(':id/$segment')")) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Test-ApiDistFresh {
+  if (-not (Test-Path $apiDistMain) -or -not (Test-Path $apiDistController)) {
+    return $false
+  }
+
+  $latestSource = Get-LatestSourceWriteTime
+  $oldestDist = @(
+    (Get-Item -LiteralPath $apiDistMain).LastWriteTimeUtc,
+    (Get-Item -LiteralPath $apiDistController).LastWriteTimeUtc
+  ) | Sort-Object | Select-Object -First 1
+
+  return $oldestDist -ge $latestSource
+}
+
+function Invoke-ApiBuildIfNeeded {
+  $needsBuild = $false
+  $reasons = @()
+
+  if (-not (Test-ApiDistFresh)) {
+    $needsBuild = $true
+    $reasons += 'API dist is missing or older than source/shared files'
+  }
+
+  if (-not (Test-ApiDistAppointmentRoutes)) {
+    $needsBuild = $true
+    $reasons += 'API dist is missing one or more appointment action routes'
+  }
+
+  if (-not $needsBuild) {
+    Write-Ok 'API dist is current and appointment action routes are present'
+    return
+  }
+
+  Write-Warn "Rebuilding API dist: $($reasons -join '; ')"
+  Push-Location $repoRoot
+  try {
+    pnpm --filter '@tradieos/api' build
+    if ($LASTEXITCODE -ne 0) {
+      throw 'API build failed. Fix the build before starting local development.'
+    }
+  } finally {
+    Pop-Location
+  }
+
+  if (-not (Test-ApiDistAppointmentRoutes)) {
+    throw 'API build completed, but compiled appointment action routes are still missing.'
+  }
+  Write-Ok 'API dist rebuilt with appointment action routes'
+}
+
 function Wait-ForApi($seconds) {
   $startedAt = Get-Date
   $deadline = $startedAt.AddSeconds($seconds)
@@ -300,13 +553,42 @@ function ConvertTo-PowerShellSingleQuotedLiteral($value) {
   return ($value -replace "'", "''")
 }
 
-function Wait-ForMetro($seconds, $expoCommand, $expoWorkingDirectory, $expoApiUrl) {
+function Get-ExpoAdvertisedHosts {
+  if (-not (Test-Path $expoLog)) {
+    return @()
+  }
+
+  $content = Get-Content -LiteralPath $expoLog -Raw -ErrorAction SilentlyContinue
+  if (-not $content) {
+    return @()
+  }
+
+  $matches = [regex]::Matches($content, '(?:exp|http)://([0-9]{1,3}(?:\.[0-9]{1,3}){3}):808[12]')
+  return @(
+    $matches |
+      ForEach-Object { $_.Groups[1].Value } |
+      Where-Object { $_ -notmatch '^(127\.|0\.)' } |
+      Select-Object -Unique
+  )
+}
+
+function Assert-ExpoAdvertisesSelectedLanIp($selectedLanIp) {
+  $advertisedHosts = @(Get-ExpoAdvertisedHosts)
+  $wrongHosts = @($advertisedHosts | Where-Object { $_ -ne $selectedLanIp })
+
+  if ($wrongHosts.Count -gt 0) {
+    throw "Expo advertised Metro host(s) $($wrongHosts -join ', ') instead of selected LAN IP $selectedLanIp. Run pnpm dev:stop, then pnpm dev:local."
+  }
+}
+
+function Wait-ForMetro($seconds, $expoCommand, $expoWorkingDirectory, $expoApiUrl, $selectedLanIp) {
   $startedAt = Get-Date
   $deadline = $startedAt.AddSeconds($seconds)
   Write-Host '[INFO] Waiting for Metro on ports 8081/8082...'
   while ((Get-Date) -lt $deadline) {
     $metro = Get-MetroStatus
     if ($metro) {
+      Assert-ExpoAdvertisesSelectedLanIp $selectedLanIp
       return $metro
     }
 
@@ -319,6 +601,7 @@ function Wait-ForMetro($seconds, $expoCommand, $expoWorkingDirectory, $expoApiUr
 
   $metro = Get-MetroStatus
   if ($metro) {
+    Assert-ExpoAdvertisesSelectedLanIp $selectedLanIp
     return $metro
   }
 
@@ -361,7 +644,8 @@ function Open-VisibleTerminal($title, $launcherPath) {
   cmd.exe /d /c "start `"$title`" cmd.exe /k `"$launcherPath`""
 }
 
-function Write-Summary($lanIp, $apiPid, $metro) {
+function Write-Summary($lanSelection, $apiPid, $metro) {
+  $lanIp = $lanSelection.Ip
   $apiLanUrl = "http://$lanIp`:3000/api"
   $expoLanUrl = "exp://$lanIp`:$($metro.Port)"
 
@@ -392,14 +676,17 @@ function Write-Summary($lanIp, $apiPid, $metro) {
   Write-Host 'QR Ready: Yes'
   Write-Host ''
   Write-Host 'Environment:'
+  Write-Host "LAN adapter: $($lanSelection.AdapterName)"
   Write-Host "API URL: $apiLanUrl"
+  Write-Host "REACT_NATIVE_PACKAGER_HOSTNAME: $lanIp"
   Write-Host ''
   Write-Host 'Ready for Mobile Testing:'
   Write-Ok 'YES'
   Write-Host '====================================' -ForegroundColor White
 }
 
-$lanIp = Get-PrivateLanIp
+$lanSelection = Get-PrivateLanSelection
+$lanIp = $lanSelection.Ip
 $apiLanUrl = "http://$lanIp`:3000/api"
 
 Write-Host ''
@@ -418,14 +705,20 @@ Write-Ok 'PostgreSQL is reachable'
 Assert-RequiredEnvironment
 Write-Ok 'Required local environment/files are present'
 
-Write-Ok "Detected LAN IP: $lanIp"
+Write-Ok "LAN adapter: $($lanSelection.AdapterName)"
+Write-Ok "LAN IP: $lanIp"
 Write-Ok "EXPO_PUBLIC_API_URL will be $apiLanUrl"
+Write-Ok "REACT_NATIVE_PACKAGER_HOSTNAME will be $lanIp"
+Write-Ok "Expected Metro URL: exp://$lanIp`:8081"
 
 Write-Section 'Prisma validation'
 Invoke-PrismaCommand @('validate') 'The schema .* is valid' 'Prisma schema validation failed.'
 Write-Ok 'Prisma schema is valid'
 Invoke-PrismaCommand @('migrate', 'status') 'Database schema is up to date' 'Prisma migrations are not current.'
 Write-Ok 'Prisma migrations are current'
+
+Write-Section 'API build validation'
+Invoke-ApiBuildIfNeeded
 
 Write-Section 'Process management'
 Stop-StaleTradeOsListeners
@@ -457,6 +750,7 @@ if (Test-ApiHealthy) {
 
 $metro = Get-MetroStatus
 if ($metro) {
+  Assert-ExpoAdvertisesSelectedLanIp $lanIp
   Write-Ok "Metro is already running on port $($metro.Port); reusing PID $($metro.Pid)"
 } else {
   Write-Section 'Starting Expo/Metro'
@@ -483,6 +777,7 @@ if ($metro) {
     "Write-Host '[INFO] Expo command: pnpm start -- --lan --clear'",
     "Write-Host '[INFO] Expo working directory: $escapedMobileDir'",
     "Write-Host '[INFO] Expo API URL: $escapedApiLanUrl'",
+    "Write-Host '[INFO] React Native packager hostname: $escapedLanIp'",
     "pnpm start -- --lan --clear 2>&1 | Tee-Object -FilePath '$escapedExpoLog'",
     '$exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }',
     "`$exitCode | Set-Content -LiteralPath '$escapedExpoExitLog' -Encoding ASCII",
@@ -508,8 +803,8 @@ if ($metro) {
     Write-Warn 'Expo PID was not recorded before readiness polling started'
   }
 
-  $metro = Wait-ForMetro 120 $expoCommand $mobileDir $apiLanUrl
+  $metro = Wait-ForMetro 120 $expoCommand $mobileDir $apiLanUrl $lanIp
   Write-Ok "Metro ready on port $($metro.Port)"
 }
 
-Write-Summary $lanIp $apiPid $metro
+Write-Summary $lanSelection $apiPid $metro

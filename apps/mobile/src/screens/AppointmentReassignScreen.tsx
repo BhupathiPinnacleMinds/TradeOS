@@ -23,6 +23,7 @@ import {
 import {
   appointmentAvailabilityRequest,
   appointmentReassignmentOptionsRequest,
+  friendlyAppointmentMutationError,
   reassignAppointmentRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -191,10 +192,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
       navigation.goBack();
     } catch (error) {
       showToast({
-        message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't reassign this appointment.",
+        message: friendlyAppointmentMutationError(error),
         tone: 'error',
       });
     } finally {

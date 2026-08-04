@@ -1,7 +1,12 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
-import type { HealthResponse, MediaListResponse } from '@tradieos/shared';
+import type {
+  AppointmentTransitionAction,
+  HealthResponse,
+  MediaListResponse,
+} from '@tradieos/shared';
+import { APPOINTMENT_TRANSITION_ROUTE_SEGMENTS } from '@tradieos/shared';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -24,6 +29,9 @@ describe('Health endpoint (e2e)', () => {
         $transaction: jest.fn((input: unknown[]) => Promise.all(input)),
         businessMember: {
           findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+        },
+        appointment: {
+          findFirst: jest.fn().mockResolvedValue(null),
         },
         mediaAsset: {
           count: jest.fn().mockResolvedValue(0),
@@ -72,4 +80,32 @@ describe('Health endpoint (e2e)', () => {
     expect(body.records).toEqual([]);
     expect(body.total).toBe(0);
   });
+
+  it.each<AppointmentTransitionAction>([
+    'confirm',
+    'start-travel',
+    'arrive',
+    'start',
+    'pause',
+    'resume',
+    'complete',
+    'cancel',
+  ])(
+    'POST /api/appointments/:id/%s is registered and returns structured JSON',
+    async (action) => {
+      const segment = APPOINTMENT_TRANSITION_ROUTE_SEGMENTS[action];
+      const response = await request(app.getHttpServer())
+        .post(`/api/appointments/missing-appointment/${segment}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(action === 'complete' ? { workCompleted: 'Done' } : undefined)
+        .expect(404);
+
+      expect(response.type).toContain('json');
+      expect(response.text).not.toContain('Cannot POST');
+      expect(response.body).toMatchObject({
+        code: 'APPOINTMENT_NOT_FOUND',
+        message: 'Appointment not found.',
+      });
+    },
+  );
 });

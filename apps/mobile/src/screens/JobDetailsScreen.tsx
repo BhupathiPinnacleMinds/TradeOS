@@ -1,9 +1,16 @@
-import type { Appointment, Job, JobStatus, MediaAsset } from '@tradieos/shared';
+import type {
+  Appointment,
+  AppointmentTransitionAction,
+  Job,
+  JobStatus,
+  MediaAsset,
+} from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   formatMediaCount,
   formatBusinessTimeRange,
+  getAppointmentQuickActions,
   mediaDisplayTitle,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
@@ -22,6 +29,7 @@ import {
 import {
   archiveMediaRequest,
   archiveJobRequest,
+  friendlyAppointmentMutationError,
   jobDetailRequest,
   mediaRequest,
   restoreJobRequest,
@@ -63,6 +71,22 @@ function formatDateTime(
 ) {
   if (!value) return 'Not recorded';
   return formatBusinessDateTime(value, timezone);
+}
+
+function appointmentTransitionActionId(
+  actionId: string,
+): AppointmentTransitionAction {
+  if (actionId === 'confirm') return 'confirm';
+  if (actionId === 'startTravel') return 'start-travel';
+  if (
+    actionId === 'start' ||
+    actionId === 'arrive' ||
+    actionId === 'pause' ||
+    actionId === 'resume'
+  ) {
+    return actionId;
+  }
+  return 'cancel';
 }
 
 export function JobDetailsScreen({ navigation, route }: Props) {
@@ -212,20 +236,23 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
   async function transitionAppointment(
     appointmentId: string,
-    action: 'start-travel' | 'start' | 'arrive' | 'cancel',
+    action: AppointmentTransitionAction,
   ) {
     if (!token || isBusy) return;
     setIsBusy(true);
     try {
       await transitionAppointmentRequest(token, appointmentId, action);
       await loadJob();
-      showToast({ message: `Appointment ${action} updated.`, tone: 'success' });
-    } catch (error) {
       showToast({
         message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't update this appointment.",
+          action === 'confirm'
+            ? 'Appointment confirmed.'
+            : `Appointment ${action} updated.`,
+        tone: 'success',
+      });
+    } catch (error) {
+      showToast({
+        message: friendlyAppointmentMutationError(error),
         tone: 'error',
       });
     } finally {
@@ -433,73 +460,105 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         {appointments.length === 0 ? (
           <Text style={styles.meta}>No appointments booked yet.</Text>
         ) : null}
-        {appointments.map((appointment) => (
-          <View key={appointment.id} style={styles.appointmentCard}>
-            <Text style={styles.appointmentTitle}>
-              {appointment.appointmentNumber} ·{' '}
-              {label(appointment.appointmentType)}
-            </Text>
-            <Text style={styles.meta}>
-              {formatDateTime(appointment.scheduledStart, businessTimezone)} ·{' '}
-              {formatBusinessTimeRange(
-                appointment.scheduledStart,
-                appointment.scheduledEnd,
-                businessTimezone,
-              )}
-            </Text>
-            <Text style={styles.meta}>Status: {label(appointment.status)}</Text>
-            <Text style={styles.meta}>
-              Technician:{' '}
-              {appointment.assignedUser
-                ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-                : 'Unassigned'}
-            </Text>
-            <Text style={styles.meta}>
-              Notes: {appointment.notes ?? 'No appointment notes.'}
-            </Text>
-            {canUpdateStatus ? (
-              <View style={styles.actions}>
-                {canEdit ? (
-                  <ActionButton
-                    label="Reassign"
-                    onPress={() =>
-                      navigation.navigate('AppointmentReassign', {
-                        appointmentId: appointment.id,
-                      })
-                    }
-                  />
-                ) : null}
-                <ActionButton
-                  label="Start travel"
-                  onPress={() =>
-                    void transitionAppointment(appointment.id, 'start-travel')
-                  }
-                />
-                <ActionButton
-                  label="Arrive"
-                  onPress={() =>
-                    void transitionAppointment(appointment.id, 'arrive')
-                  }
-                />
-                <ActionButton
-                  label="Complete"
-                  onPress={() =>
-                    navigation.navigate('AppointmentDetails', {
-                      appointmentId: appointment.id,
-                    })
-                  }
-                />
-                <ActionButton
-                  danger
-                  label="Cancel"
-                  onPress={() =>
-                    void transitionAppointment(appointment.id, 'cancel')
-                  }
-                />
-              </View>
-            ) : null}
-          </View>
-        ))}
+        {appointments.map((appointment) => {
+          const appointmentActions = getAppointmentQuickActions({
+            hasAddress: Boolean(appointment.addressLine1),
+            hasPhone: Boolean(appointment.job.customer.phone),
+            isAssignedUser: appointment.assignedUserId === user?.id,
+            role: user?.role,
+            status: appointment.status,
+          });
+          const workflowActions = appointmentActions.filter((action) =>
+            [
+              'confirm',
+              'startTravel',
+              'start',
+              'arrive',
+              'pause',
+              'resume',
+            ].includes(action.id),
+          );
+          const cancelAction = appointmentActions.find(
+            (action) => action.id === 'cancel',
+          );
+          const canCompleteAppointment = appointmentActions.some(
+            (action) => action.id === 'complete',
+          );
+
+          return (
+            <View key={appointment.id} style={styles.appointmentCard}>
+              <Text style={styles.appointmentTitle}>
+                {appointment.appointmentNumber} ·{' '}
+                {label(appointment.appointmentType)}
+              </Text>
+              <Text style={styles.meta}>
+                {formatDateTime(appointment.scheduledStart, businessTimezone)} ·{' '}
+                {formatBusinessTimeRange(
+                  appointment.scheduledStart,
+                  appointment.scheduledEnd,
+                  businessTimezone,
+                )}
+              </Text>
+              <Text style={styles.meta}>
+                Status: {label(appointment.status)}
+              </Text>
+              <Text style={styles.meta}>
+                Technician:{' '}
+                {appointment.assignedUser
+                  ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+                  : 'Unassigned'}
+              </Text>
+              <Text style={styles.meta}>
+                Notes: {appointment.notes ?? 'No appointment notes.'}
+              </Text>
+              {canUpdateStatus ? (
+                <View style={styles.actions}>
+                  {canEdit ? (
+                    <ActionButton
+                      label="Reassign Technician"
+                      onPress={() =>
+                        navigation.navigate('AppointmentReassign', {
+                          appointmentId: appointment.id,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {workflowActions.map((action) => (
+                    <ActionButton
+                      key={action.id}
+                      label={action.label}
+                      onPress={() =>
+                        void transitionAppointment(
+                          appointment.id,
+                          appointmentTransitionActionId(action.id),
+                        )
+                      }
+                    />
+                  ))}
+                  {canCompleteAppointment ? (
+                    <ActionButton
+                      label="Complete work"
+                      onPress={() =>
+                        navigation.navigate('AppointmentDetails', {
+                          appointmentId: appointment.id,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {cancelAction ? (
+                    <ActionButton
+                      danger
+                      label={cancelAction.label}
+                      onPress={() =>
+                        void transitionAppointment(appointment.id, 'cancel')
+                      }
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
       </Card>
 
       <Card title="Future sections">

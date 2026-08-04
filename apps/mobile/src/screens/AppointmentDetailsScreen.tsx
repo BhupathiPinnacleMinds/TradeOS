@@ -14,6 +14,7 @@ import {
   mediaCategoryLabel,
   mediaDisplayTitle,
   mediaTypeLabel,
+  normaliseAppointmentExecutionDurations,
   normaliseBusinessTimezone,
   shouldExecuteAppointmentMoreActionsMenuItem,
 } from '@tradieos/shared';
@@ -23,9 +24,11 @@ import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Linking,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -38,9 +41,13 @@ import {
   ApiRequestError,
   appointmentDetailRequest,
   archiveMediaRequest,
+  captureAppointmentSignatureRequest,
+  friendlyAppointmentMutationError,
   mediaRequest,
   restoreMediaRequest,
+  skipAppointmentSignatureRequest,
   transitionAppointmentRequest,
+  updateAppointmentWorkLogRequest,
   updateAppointmentRequest,
 } from '../api/client';
 import {
@@ -65,6 +72,7 @@ import {
 import { colours } from '../theme';
 
 const MORE_ACTION_DISMISS_DELAY_MS = 180;
+const ACTIVE_NOTE_STATUSES = ['ARRIVED', 'IN_PROGRESS', 'PAUSED'] as const;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
 type AppointmentDetailsAction =
@@ -102,6 +110,56 @@ function durationMinutes(appointment: Appointment) {
         60000,
     ),
   );
+}
+
+function minutesBetween(start: string | null, end: Date) {
+  if (!start) return 0;
+  return Math.max(
+    0,
+    Math.round((end.getTime() - new Date(start).getTime()) / 60000),
+  );
+}
+
+function executionDurationsForDisplay(appointment: Appointment, now: Date) {
+  const baseDurations = normaliseAppointmentExecutionDurations(
+    appointment.executionDurations,
+  );
+  const travelMinutes =
+    appointment.status === 'ON_THE_WAY' && appointment.travelStartedAt
+      ? minutesBetween(appointment.travelStartedAt, now)
+      : (appointment.totalTravelMinutes ?? baseDurations.travelMinutes);
+  const workSegmentStart =
+    appointment.currentWorkStartedAt ?? appointment.workStartedAt;
+  const workMinutes =
+    appointment.status === 'IN_PROGRESS' && workSegmentStart
+      ? (appointment.totalWorkMinutes ?? baseDurations.workMinutes) +
+        minutesBetween(workSegmentStart, now)
+      : (appointment.totalWorkMinutes ?? baseDurations.workMinutes);
+  const pausedMinutes =
+    appointment.status === 'PAUSED' && appointment.pausedAt
+      ? (appointment.totalPausedMinutes ?? baseDurations.pausedMinutes) +
+        minutesBetween(appointment.pausedAt, now)
+      : (appointment.totalPausedMinutes ?? baseDurations.pausedMinutes);
+  const elapsedStart = appointment.travelStartedAt ?? appointment.workStartedAt;
+  const elapsedEnd = appointment.completedAt
+    ? new Date(appointment.completedAt)
+    : now;
+
+  return {
+    pausedMinutes,
+    totalElapsedMinutes: elapsedStart
+      ? minutesBetween(elapsedStart, elapsedEnd)
+      : baseDurations.totalElapsedMinutes,
+    travelMinutes,
+    workMinutes,
+  };
+}
+
+function formatDuration(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
 }
 
 function friendlyAppointmentError(error: unknown) {
@@ -155,6 +213,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const [workCompleted, setWorkCompleted] = useState('');
   const [followUpRequired, setFollowUpRequired] = useState(false);
   const [followUpNotes, setFollowUpNotes] = useState('');
+  const [timerNow, setTimerNow] = useState(() => new Date());
   const moreActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMoreActionRef = useRef<string | null>(null);
   const selectedMoreActionRef = useRef<string | null>(null);
@@ -202,6 +261,44 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       void loadAppointment();
     }, [appointmentId, showArchivedMedia, token]),
   );
+
+  useEffect(() => {
+    if (
+      !appointment ||
+      !['ON_THE_WAY', 'IN_PROGRESS', 'PAUSED'].includes(appointment.status)
+    ) {
+      return undefined;
+    }
+    const interval = setInterval(() => setTimerNow(new Date()), 15000);
+    return () => clearInterval(interval);
+  }, [appointment?.id, appointment?.status]);
+
+  const hasUnsavedWorkLog =
+    Boolean(appointment) &&
+    (technicianNotes !== (appointment?.workLog?.technicianNotes ?? '') ||
+      workCompleted !== (appointment?.workLog?.workCompleted ?? '') ||
+      followUpRequired !== (appointment?.workLog?.followUpRequired ?? false) ||
+      followUpNotes !== (appointment?.workLog?.followUpNotes ?? ''));
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
+      if (!hasUnsavedWorkLog || !canEditWorkLog(appointment, user)) return;
+      event.preventDefault();
+      Alert.alert(
+        'Discard unsaved notes?',
+        'Your field notes have not been saved yet.',
+        [
+          { style: 'cancel', text: 'Keep editing' },
+          {
+            style: 'destructive',
+            text: 'Discard',
+            onPress: () => navigation.dispatch(event.data.action),
+          },
+        ],
+      );
+    });
+    return unsubscribe;
+  }, [appointment, hasUnsavedWorkLog, navigation, user]);
 
   const dismissMoreActions = useCallback(() => {
     if (moreActionTimerRef.current) {
@@ -252,17 +349,16 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       setIsCompletionOpen(false);
       showToast({
         message:
-          action === 'complete'
-            ? 'Appointment completed.'
-            : `${response.appointment.appointmentNumber} updated.`,
+          action === 'confirm'
+            ? 'Appointment confirmed.'
+            : action === 'complete'
+              ? 'Appointment completed.'
+              : `${response.appointment.appointmentNumber} updated.`,
         tone: 'success',
       });
     } catch (error) {
       showToast({
-        message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't update this appointment.",
+        message: friendlyAppointmentMutationError(error),
         tone: 'error',
       });
     } finally {
@@ -307,10 +403,86 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       });
     } catch (error) {
       showToast({
+        message: friendlyAppointmentMutationError(error),
+        tone: 'error',
+      });
+    } finally {
+      setBusyText(null);
+    }
+  }
+
+  async function saveWorkLog() {
+    if (!token || !appointment || busyText) return;
+    setBusyText('Saving field notes...');
+    try {
+      const response = await updateAppointmentWorkLogRequest(
+        token,
+        appointment.id,
+        {
+          followUpNotes,
+          followUpRequired,
+          technicianNotes,
+          workCompleted,
+        },
+      );
+      setAppointment(response.appointment);
+      showToast({ message: 'Field notes saved.', tone: 'success' });
+    } catch (error) {
+      showToast({
         message:
           error instanceof Error
             ? error.message
-            : "We couldn't reschedule this appointment.",
+            : "We couldn't save your field notes.",
+        tone: 'error',
+      });
+    } finally {
+      setBusyText(null);
+    }
+  }
+
+  async function saveSignature(
+    input: Parameters<typeof captureAppointmentSignatureRequest>[2],
+  ) {
+    if (!token || !appointment || busyText) return;
+    setBusyText('Saving customer signature...');
+    try {
+      const response = await captureAppointmentSignatureRequest(
+        token,
+        appointment.id,
+        input,
+      );
+      setAppointment(response.appointment);
+      showToast({ message: 'Customer signature saved.', tone: 'success' });
+    } catch (error) {
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "We couldn't save the signature.",
+        tone: 'error',
+      });
+    } finally {
+      setBusyText(null);
+    }
+  }
+
+  async function skipSignature(reason: string) {
+    if (!token || !appointment || busyText) return;
+    setBusyText('Recording signature skip...');
+    try {
+      const response = await skipAppointmentSignatureRequest(
+        token,
+        appointment.id,
+        { reason },
+      );
+      setAppointment(response.appointment);
+      showToast({ message: 'Signature skip recorded.', tone: 'success' });
+    } catch (error) {
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "We couldn't skip the signature.",
         tone: 'error',
       });
     } finally {
@@ -415,7 +587,18 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     (action) => action.id === 'navigate',
   );
   const workflowAction = quickActions.find((action) =>
-    ['startTravel', 'start', 'arrive', 'complete'].includes(action.id),
+    [
+      'confirm',
+      'startTravel',
+      'start',
+      'arrive',
+      'pause',
+      'resume',
+      'complete',
+    ].includes(action.id),
+  );
+  const completeAction = quickActions.find(
+    (action) => action.id === 'complete',
   );
   const reassignAction = quickActions.find(
     (action) => action.id === 'reassign',
@@ -428,7 +611,8 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const primaryActions = [
     navigateAction,
-    workflowAction,
+    workflowAction && workflowAction.id !== 'complete' ? workflowAction : null,
+    completeAction,
     reassignAction
       ? {
           ...reassignAction,
@@ -476,6 +660,11 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const secondaryActions = secondaryActionCandidates.filter(
     isAppointmentDetailsAction,
   );
+  const executionDurations = executionDurationsForDisplay(
+    appointment,
+    timerNow,
+  );
+  const workLogEditable = canEditWorkLog(appointment, user);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -546,6 +735,31 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
+      <Card title="Execution timer">
+        <View style={styles.timerGrid}>
+          <TimerMetric
+            label="Travel"
+            value={formatDuration(executionDurations.travelMinutes)}
+          />
+          <TimerMetric
+            label="Work"
+            value={formatDuration(executionDurations.workMinutes)}
+          />
+          <TimerMetric
+            label="Paused"
+            value={formatDuration(executionDurations.pausedMinutes)}
+          />
+          <TimerMetric
+            label="Elapsed"
+            value={formatDuration(executionDurations.totalElapsedMinutes)}
+          />
+        </View>
+        <Text style={styles.meta}>
+          Timers use server-recorded transition timestamps and update locally
+          while this screen is open.
+        </Text>
+      </Card>
+
       <Card title="Address">
         <Text style={styles.meta}>{address}</Text>
         {appointment.accessInstructions ? (
@@ -562,19 +776,73 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       </Card>
 
       <Card title="Field notes">
-        <Text style={styles.meta}>
-          Technician notes:{' '}
-          {appointment.workLog?.technicianNotes ?? 'No technician notes yet.'}
-        </Text>
-        <Text style={styles.meta}>
-          Work completed:{' '}
-          {appointment.workLog?.workCompleted ?? 'Not recorded yet.'}
-        </Text>
-        {appointment.workLog?.followUpRequired ? (
-          <Text style={styles.meta}>
-            Follow-up required: {appointment.workLog.followUpNotes ?? 'Yes'}
-          </Text>
-        ) : null}
+        {workLogEditable ? (
+          <>
+            <Text style={styles.inputLabel}>Technician notes</Text>
+            <TextInput
+              multiline
+              onChangeText={setTechnicianNotes}
+              placeholder="Internal notes for the business."
+              placeholderTextColor={colours.muted}
+              style={styles.textArea}
+              value={technicianNotes}
+            />
+            <Text style={styles.inputLabel}>Work completed</Text>
+            <TextInput
+              multiline
+              onChangeText={setWorkCompleted}
+              placeholder="Example: Replaced faulty switch and tested circuit."
+              placeholderTextColor={colours.muted}
+              style={styles.textArea}
+              value={workCompleted}
+            />
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>Follow-up required</Text>
+                <Text style={styles.meta}>
+                  Flag another visit or admin follow-up.
+                </Text>
+              </View>
+              <Switch
+                onValueChange={setFollowUpRequired}
+                value={followUpRequired}
+              />
+            </View>
+            {followUpRequired ? (
+              <TextInput
+                multiline
+                onChangeText={setFollowUpNotes}
+                placeholder="What follow-up is needed?"
+                placeholderTextColor={colours.muted}
+                style={styles.textArea}
+                value={followUpNotes}
+              />
+            ) : null}
+            <QuickAction
+              disabled={!hasUnsavedWorkLog || Boolean(busyText)}
+              label="Save field notes"
+              onPress={() => void saveWorkLog()}
+              primary
+            />
+          </>
+        ) : (
+          <>
+            <Text style={styles.meta}>
+              Technician notes:{' '}
+              {appointment.workLog?.technicianNotes ??
+                'No technician notes yet.'}
+            </Text>
+            <Text style={styles.meta}>
+              Work completed:{' '}
+              {appointment.workLog?.workCompleted ?? 'Not recorded yet.'}
+            </Text>
+            {appointment.workLog?.followUpRequired ? (
+              <Text style={styles.meta}>
+                Follow-up required: {appointment.workLog.followUpNotes ?? 'Yes'}
+              </Text>
+            ) : null}
+          </>
+        )}
       </Card>
 
       <Card title="Photos & documents">
@@ -664,8 +932,11 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         busy={Boolean(busyText)}
         followUpNotes={followUpNotes}
         followUpRequired={followUpRequired}
+        mediaCount={media.length}
         onCancel={() => setIsCompletionOpen(false)}
         onConfirm={() => void transition('complete')}
+        onSaveSignature={(input) => void saveSignature(input)}
+        onSkipSignature={(reason) => void skipSignature(reason)}
         setFollowUpNotes={setFollowUpNotes}
         setFollowUpRequired={setFollowUpRequired}
         setTechnicianNotes={setTechnicianNotes}
@@ -673,6 +944,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         technicianNotes={technicianNotes}
         visible={isCompletionOpen}
         workCompleted={workCompleted}
+        canSkipSignature={['OWNER', 'ADMIN'].includes(user?.role ?? '')}
       />
       <MediaRemovalConfirmation
         busy={Boolean(busyMediaId)}
@@ -711,20 +983,61 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       });
       return;
     }
+    if (action.id === 'confirm') {
+      confirmAppointment();
+      return;
+    }
     if (action.id === 'cancel') await transition('cancel');
     if (action.id === 'startTravel') await transition('start-travel');
     if (action.id === 'start') await transition('start');
     if (action.id === 'arrive') await transition('arrive');
+    if (action.id === 'pause') await transition('pause');
+    if (action.id === 'resume') await transition('resume');
     if (action.id === 'complete') setIsCompletionOpen(true);
+  }
+
+  function confirmAppointment() {
+    if (!appointment || busyText) return;
+    const technician = appointment.assignedUser
+      ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+      : 'Unassigned';
+    Alert.alert(
+      'Confirm this appointment?',
+      [
+        `Customer: ${customer.companyName ?? customer.displayName}`,
+        `When: ${formatDateTime(appointment.scheduledStart, businessTimezone)}`,
+        `Technician: ${technician}`,
+      ].join('\n'),
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          onPress: () => void transition('confirm'),
+          text: 'Confirm',
+        },
+      ],
+    );
   }
 }
 
 function actionText(action: AppointmentTransitionAction | 'cancel') {
+  if (action === 'confirm') return 'Confirming appointment...';
   if (action === 'start-travel') return 'Starting travel...';
   if (action === 'start') return 'Starting work...';
   if (action === 'arrive') return 'Marking arrival...';
+  if (action === 'pause') return 'Pausing work...';
+  if (action === 'resume') return 'Resuming work...';
   if (action === 'complete') return 'Completing appointment...';
   return 'Cancelling appointment...';
+}
+
+function canEditWorkLog(
+  appointment: Appointment | null,
+  user: ReturnType<typeof useAuth>['user'],
+) {
+  if (!appointment || !user) return false;
+  if (!ACTIVE_NOTE_STATUSES.includes(appointment.status as never)) return false;
+  if (user.role === 'TECHNICIAN') return appointment.assignedUserId === user.id;
+  return ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'].includes(user.role);
 }
 
 function QuickAction({
@@ -887,10 +1200,14 @@ function AppointmentMediaTile({
 function CompletionModal({
   appointment,
   busy,
+  canSkipSignature,
   followUpNotes,
   followUpRequired,
+  mediaCount,
   onCancel,
   onConfirm,
+  onSaveSignature,
+  onSkipSignature,
   setFollowUpNotes,
   setFollowUpRequired,
   setTechnicianNotes,
@@ -901,10 +1218,16 @@ function CompletionModal({
 }: {
   appointment: Appointment;
   busy: boolean;
+  canSkipSignature: boolean;
   followUpNotes: string;
   followUpRequired: boolean;
+  mediaCount: number;
   onCancel(): void;
   onConfirm(): void;
+  onSaveSignature(
+    input: Parameters<typeof captureAppointmentSignatureRequest>[2],
+  ): void;
+  onSkipSignature(reason: string): void;
   setFollowUpNotes(value: string): void;
   setFollowUpRequired(value: boolean): void;
   setTechnicianNotes(value: string): void;
@@ -913,6 +1236,71 @@ function CompletionModal({
   visible: boolean;
   workCompleted: string;
 }) {
+  const [customerName, setCustomerName] = useState(
+    appointment.signature?.customerName ??
+      appointment.job.customer.displayName ??
+      '',
+  );
+  const [signerTitle, setSignerTitle] = useState(
+    appointment.signature?.signerTitle ?? '',
+  );
+  const [signatureData, setSignatureData] = useState<
+    Parameters<typeof captureAppointmentSignatureRequest>[2]['signatureData']
+  >({
+    height: 160,
+    strokes: [],
+    width: 320,
+  });
+  const [skipReason, setSkipReason] = useState(
+    appointment.signature?.skipReason ?? '',
+  );
+  useEffect(() => {
+    setCustomerName(
+      appointment.signature?.customerName ??
+        appointment.job.customer.displayName ??
+        '',
+    );
+    setSignerTitle(appointment.signature?.signerTitle ?? '');
+    setSignatureData({ height: 160, strokes: [], width: 320 });
+    setSkipReason(appointment.signature?.skipReason ?? '');
+  }, [
+    appointment.id,
+    appointment.job.customer.displayName,
+    appointment.signature,
+  ]);
+
+  const hasSavedSignature = Boolean(
+    appointment.signature?.capturedAt || appointment.signature?.skippedAt,
+  );
+  const hasPendingSignature = signatureData.strokes.some(
+    (stroke) => stroke.length > 0,
+  );
+  const checklist = [
+    {
+      label: 'Work completed summary entered',
+      state: workCompleted.trim() ? 'Complete' : 'Missing',
+    },
+    {
+      label: 'Required photos checked',
+      state: mediaCount > 0 ? 'Complete' : 'Optional warning',
+    },
+    {
+      label: 'Customer signature captured',
+      state: appointment.signature?.capturedAt
+        ? 'Complete'
+        : appointment.signature?.skippedAt
+          ? 'Skipped with reason'
+          : 'Missing',
+    },
+    { label: 'Materials used reviewed', state: 'Optional' },
+  ];
+  const canComplete = Boolean(
+    workCompleted.trim() && hasSavedSignature && !busy,
+  );
+  const executionDurations = normaliseAppointmentExecutionDurations(
+    appointment.executionDurations,
+  );
+
   return (
     <Modal
       animationType="slide"
@@ -926,8 +1314,24 @@ function CompletionModal({
           <Text style={styles.meta}>
             {appointment.job.customer.companyName ??
               appointment.job.customer.displayName}{' '}
-            Â· {appointment.job.title}
+            · {appointment.job.title}
           </Text>
+
+          <View style={styles.checklistCard}>
+            {checklist.map((item) => (
+              <View key={item.label} style={styles.checklistRow}>
+                <Text style={styles.checklistLabel}>{item.label}</Text>
+                <Text
+                  style={[
+                    styles.checklistState,
+                    item.state === 'Missing' && styles.checklistMissing,
+                  ]}
+                >
+                  {item.state}
+                </Text>
+              </View>
+            ))}
+          </View>
 
           <Text style={styles.inputLabel}>Work completed</Text>
           <TextInput
@@ -970,16 +1374,126 @@ function CompletionModal({
             />
           ) : null}
 
+          <Text style={styles.inputLabel}>Customer signature</Text>
+          {appointment.signature?.capturedAt ? (
+            <SignatureSummary
+              title="Signature captured"
+              subtitle={`${appointment.signature.customerName ?? 'Customer'} · ${formatDateTime(
+                appointment.signature.capturedAt,
+              )}`}
+            />
+          ) : appointment.signature?.skippedAt ? (
+            <SignatureSummary
+              title="Signature skipped"
+              subtitle={appointment.signature.skipReason ?? 'Reason recorded'}
+            />
+          ) : (
+            <>
+              <TextInput
+                onChangeText={setCustomerName}
+                placeholder="Customer name"
+                placeholderTextColor={colours.muted}
+                style={styles.textInput}
+                value={customerName}
+              />
+              <TextInput
+                onChangeText={setSignerTitle}
+                placeholder="Relationship/title (optional)"
+                placeholderTextColor={colours.muted}
+                style={styles.textInput}
+                value={signerTitle}
+              />
+              <Text style={styles.consentText}>
+                I confirm the work described above has been completed.
+              </Text>
+              <SignaturePad
+                disabled={busy}
+                onChange={setSignatureData}
+                signatureData={signatureData}
+              />
+              <View style={styles.signatureActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={
+                    busy || !hasPendingSignature || !customerName.trim()
+                  }
+                  onPress={() =>
+                    onSaveSignature({
+                      consentText:
+                        'I confirm the work described above has been completed.',
+                      customerName,
+                      signatureData,
+                      signerTitle,
+                    })
+                  }
+                  style={[
+                    styles.quickAction,
+                    styles.quickActionPrimary,
+                    (busy || !hasPendingSignature || !customerName.trim()) &&
+                      styles.disabledAction,
+                  ]}
+                >
+                  <Text style={styles.quickTextPrimary}>Save signature</Text>
+                </Pressable>
+              </View>
+              {canSkipSignature ? (
+                <>
+                  <Text style={styles.inputLabel}>Skip reason</Text>
+                  <TextInput
+                    multiline
+                    onChangeText={setSkipReason}
+                    placeholder="Why is the customer signature unavailable?"
+                    placeholderTextColor={colours.muted}
+                    style={styles.textArea}
+                    value={skipReason}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy || !skipReason.trim()}
+                    onPress={() => onSkipSignature(skipReason)}
+                    style={[
+                      styles.quickAction,
+                      busy || !skipReason.trim()
+                        ? styles.disabledAction
+                        : undefined,
+                    ]}
+                  >
+                    <Text style={styles.quickText}>
+                      Skip signature with reason
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </>
+          )}
+
+          <Card title="Completion review">
+            <Text style={styles.meta}>Job: {appointment.job.title}</Text>
+            <Text style={styles.meta}>
+              Customer:{' '}
+              {appointment.job.customer.companyName ??
+                appointment.job.customer.displayName}
+            </Text>
+            <Text style={styles.meta}>
+              Media: {mediaCount} {mediaCount === 1 ? 'file' : 'files'}
+            </Text>
+            <Text style={styles.meta}>
+              Travel: {formatDuration(executionDurations.travelMinutes)} · Work:{' '}
+              {formatDuration(executionDurations.workMinutes)} · Paused:{' '}
+              {formatDuration(executionDurations.pausedMinutes)}
+            </Text>
+          </Card>
+
           <View style={styles.modalActions}>
             <Pressable style={styles.quickAction} onPress={onCancel}>
               <Text style={styles.quickText}>Decide later</Text>
             </Pressable>
             <Pressable
-              disabled={busy || !workCompleted.trim()}
+              disabled={!canComplete}
               style={[
                 styles.quickAction,
                 styles.quickActionPrimary,
-                (busy || !workCompleted.trim()) && styles.disabledAction,
+                !canComplete && styles.disabledAction,
               ]}
               onPress={onConfirm}
             >
@@ -1074,6 +1588,139 @@ function MoreActionsMenu({
   );
 }
 
+function SignatureSummary({
+  subtitle,
+  title,
+}: {
+  subtitle: string;
+  title: string;
+}) {
+  return (
+    <View style={styles.signatureSummary}>
+      <Text style={styles.signatureSummaryTitle}>{title}</Text>
+      <Text style={styles.meta}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function TimerMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.timerMetric}>
+      <Text style={styles.timerMetricLabel}>{label}</Text>
+      <Text style={styles.timerMetricValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SignaturePad({
+  disabled,
+  onChange,
+  signatureData,
+}: {
+  disabled: boolean;
+  onChange(
+    value: Parameters<
+      typeof captureAppointmentSignatureRequest
+    >[2]['signatureData'],
+  ): void;
+  signatureData: Parameters<
+    typeof captureAppointmentSignatureRequest
+  >[2]['signatureData'];
+}) {
+  const [layout, setLayout] = useState({
+    height: signatureData.height,
+    width: signatureData.width,
+  });
+  const strokesRef = useRef(signatureData.strokes);
+  const layoutRef = useRef(layout);
+  const disabledRef = useRef(disabled);
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: () => !disabledRef.current,
+      onStartShouldSetPanResponder: () => !disabledRef.current,
+      onPanResponderGrant: (event) => {
+        const point = {
+          x: Math.max(0, event.nativeEvent.locationX),
+          y: Math.max(0, event.nativeEvent.locationY),
+        };
+        strokesRef.current = [...strokesRef.current, [point]];
+        onChange({ ...layoutRef.current, strokes: strokesRef.current });
+      },
+      onPanResponderMove: (event) => {
+        const currentStroke =
+          strokesRef.current[strokesRef.current.length - 1] ?? [];
+        const nextStroke = [
+          ...currentStroke,
+          {
+            x: Math.max(0, event.nativeEvent.locationX),
+            y: Math.max(0, event.nativeEvent.locationY),
+          },
+        ];
+        strokesRef.current = [...strokesRef.current.slice(0, -1), nextStroke];
+        onChange({ ...layoutRef.current, strokes: strokesRef.current });
+      },
+    }),
+  ).current;
+
+  useEffect(() => {
+    strokesRef.current = signatureData.strokes;
+  }, [signatureData.strokes]);
+
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
+
+  useEffect(() => {
+    disabledRef.current = disabled;
+  }, [disabled]);
+
+  return (
+    <View>
+      <View
+        accessibilityLabel="Customer signature pad"
+        accessibilityRole="adjustable"
+        onLayout={(event) => {
+          const nextLayout = {
+            height: Math.round(event.nativeEvent.layout.height),
+            width: Math.round(event.nativeEvent.layout.width),
+          };
+          setLayout(nextLayout);
+          onChange({ ...nextLayout, strokes: signatureData.strokes });
+        }}
+        style={styles.signaturePad}
+        {...panResponder.panHandlers}
+      >
+        {signatureData.strokes.map((stroke, strokeIndex) =>
+          stroke.map((point, pointIndex) => (
+            <View
+              key={`${strokeIndex}-${pointIndex}`}
+              style={[
+                styles.signaturePoint,
+                { left: point.x - 2, top: point.y - 2 },
+              ]}
+            />
+          )),
+        )}
+        {signatureData.strokes.length === 0 ? (
+          <Text style={styles.signatureHint}>Customer signs here</Text>
+        ) : null}
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        disabled={disabled || signatureData.strokes.length === 0}
+        onPress={() => onChange({ ...layout, strokes: [] })}
+        style={[
+          styles.clearSignatureButton,
+          (disabled || signatureData.strokes.length === 0) &&
+            styles.disabledAction,
+        ]}
+      >
+        <Text style={styles.quickText}>Clear signature</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function Card({
   children,
   title,
@@ -1123,6 +1770,33 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  checklistCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    marginTop: 14,
+    padding: 12,
+  },
+  checklistLabel: { color: colours.ink, flex: 1, fontWeight: '800' },
+  checklistMissing: { color: '#BE123C' },
+  checklistRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  checklistState: { color: colours.primary, fontSize: 12, fontWeight: '900' },
+  clearSignatureButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 999,
+    marginTop: 10,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
   completionCard: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -1204,6 +1878,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginTop: 14,
   },
+  consentText: {
+    color: colours.muted,
+    fontStyle: 'italic',
+    lineHeight: 20,
+    marginTop: 10,
+  },
   modalActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1275,6 +1955,44 @@ const styles = StyleSheet.create({
     gap: 12,
     marginTop: 8,
   },
+  signatureActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  signatureHint: {
+    color: colours.muted,
+    fontWeight: '800',
+    left: 18,
+    position: 'absolute',
+    top: 18,
+  },
+  signaturePad: {
+    backgroundColor: '#FFFFFF',
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    height: 160,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  signaturePoint: {
+    backgroundColor: colours.ink,
+    borderRadius: 2,
+    height: 4,
+    position: 'absolute',
+    width: 4,
+  },
+  signatureSummary: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 12,
+  },
+  signatureSummaryTitle: {
+    color: '#047857',
+    fontSize: 15,
+    fontWeight: '900',
+  },
   textArea: {
     backgroundColor: '#F8FAFC',
     borderColor: colours.border,
@@ -1285,6 +2003,28 @@ const styles = StyleSheet.create({
     padding: 12,
     textAlignVertical: 'top',
   },
+  textInput: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colours.ink,
+    marginTop: 10,
+    minHeight: 48,
+    padding: 12,
+  },
+  timerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  timerMetric: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexGrow: 1,
+    minWidth: '45%',
+    padding: 12,
+  },
+  timerMetricLabel: { color: colours.muted, fontSize: 12, fontWeight: '800' },
+  timerMetricValue: { color: colours.ink, fontSize: 20, fontWeight: '900' },
   statusPill: {
     alignSelf: 'flex-start',
     borderRadius: 999,

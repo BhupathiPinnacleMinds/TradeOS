@@ -9,6 +9,7 @@ import type {
   AppointmentRecommendationResponse,
   AppointmentReassignmentOptionsResponse,
   AppointmentReassignmentPayload,
+  AppointmentSignaturePayload,
   AppointmentTransitionAction,
   AppointmentWorkLogPayload,
   AppointmentStatus,
@@ -37,7 +38,9 @@ import type {
   ResendInvitationResponse,
   TeamMemberDetailResponse,
   TeamMember,
+  SkipAppointmentSignaturePayload,
 } from '@tradieos/shared';
+import { buildAppointmentTransitionPath } from '@tradieos/shared';
 
 declare const process: {
   env?: {
@@ -113,6 +116,40 @@ export class ApiRequestError extends Error {
     super(message);
     this.name = 'ApiRequestError';
   }
+}
+
+export function friendlyAppointmentMutationError(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    if (error.code === 'NETWORK_ERROR') {
+      return 'Could not connect to TradeOS. Check your connection and retry.';
+    }
+    if (error.status === 403 || error.code === 'INSUFFICIENT_PERMISSION') {
+      return 'You do not have permission to perform this action.';
+    }
+    if (error.code === 'APPOINTMENT_NOT_FOUND') {
+      return 'Appointment could not be found.';
+    }
+    if (
+      error.status === 404 ||
+      error.code === 'NOT_FOUND' ||
+      /Cannot (POST|PATCH|GET|PUT|DELETE)\b/i.test(error.message)
+    ) {
+      return 'Appointment action is unavailable. Refresh and try again.';
+    }
+    if (
+      error.status === 400 ||
+      error.status === 409 ||
+      error.code === 'INVALID_STATUS_TRANSITION' ||
+      error.code === 'VALIDATION_ERROR' ||
+      error.code === 'CONFLICT'
+    ) {
+      return 'This appointment can no longer perform that action.';
+    }
+  }
+
+  return error instanceof Error
+    ? error.message
+    : "We couldn't update this appointment.";
 }
 
 export async function apiRequest<T>(
@@ -615,13 +652,43 @@ export function appointmentAvailabilityRequest(
 export function transitionAppointmentRequest(
   token: string,
   appointmentId: string,
-  action: AppointmentTransitionAction | 'cancel',
+  action: AppointmentTransitionAction,
   input?: CompleteAppointmentPayload,
 ) {
   return apiRequest<AppointmentDetailResponse>(
-    `/appointments/${appointmentId}/${action}`,
+    buildAppointmentTransitionPath(appointmentId, action),
     {
       body: input ? JSON.stringify(input) : undefined,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function captureAppointmentSignatureRequest(
+  token: string,
+  appointmentId: string,
+  input: AppointmentSignaturePayload,
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}/signature`,
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function skipAppointmentSignatureRequest(
+  token: string,
+  appointmentId: string,
+  input: SkipAppointmentSignaturePayload,
+) {
+  return apiRequest<AppointmentDetailResponse>(
+    `/appointments/${appointmentId}/signature/skip`,
+    {
+      body: JSON.stringify(input),
       method: 'POST',
       token,
     },

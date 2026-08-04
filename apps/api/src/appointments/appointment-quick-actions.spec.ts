@@ -20,7 +20,14 @@ describe('getAppointmentQuickActions', () => {
         role: 'OWNER',
         status: 'SCHEDULED',
       }),
-    ).toEqual(['navigate', 'call', 'startTravel', 'reassign', 'cancel']);
+    ).toEqual([
+      'navigate',
+      'call',
+      'confirm',
+      'reassign',
+      'reschedule',
+      'cancel',
+    ]);
   });
 
   it('shows confirmed appointment actions', () => {
@@ -32,7 +39,14 @@ describe('getAppointmentQuickActions', () => {
         role: 'ADMIN',
         status: 'CONFIRMED',
       }),
-    ).toEqual(['navigate', 'call', 'startTravel', 'reassign', 'cancel']);
+    ).toEqual([
+      'navigate',
+      'call',
+      'startTravel',
+      'reassign',
+      'reschedule',
+      'cancel',
+    ]);
   });
 
   it('shows arrive for on-the-way appointments', () => {
@@ -59,7 +73,7 @@ describe('getAppointmentQuickActions', () => {
     ).toEqual(['call', 'start', 'cancel']);
   });
 
-  it('shows complete for in-progress appointments', () => {
+  it('shows pause and complete for in-progress appointments', () => {
     expect(
       actionIds({
         hasAddress: true,
@@ -68,7 +82,19 @@ describe('getAppointmentQuickActions', () => {
         role: 'TECHNICIAN',
         status: 'IN_PROGRESS',
       }),
-    ).toEqual(['call', 'complete', 'cancel']);
+    ).toEqual(['call', 'pause', 'complete', 'cancel']);
+  });
+
+  it('shows resume for paused appointments', () => {
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        role: 'TECHNICIAN',
+        status: 'PAUSED',
+      }),
+    ).toEqual(['resume', 'cancel']);
   });
 
   it('hides workflow actions for completed appointments', () => {
@@ -126,7 +152,7 @@ describe('getAppointmentQuickActions', () => {
         role: 'OWNER',
         status: 'SCHEDULED',
       }),
-    ).toEqual(['startTravel', 'reassign', 'cancel']);
+    ).toEqual(['confirm', 'reassign', 'reschedule', 'cancel']);
   });
 
   it('limits technicians to status updates on assigned appointments', () => {
@@ -139,6 +165,66 @@ describe('getAppointmentQuickActions', () => {
         status: 'SCHEDULED',
       }),
     ).toEqual(['navigate', 'call']);
+  });
+
+  it('does not show confirm for technicians, accountants, sales or read-only users', () => {
+    for (const role of [
+      'TECHNICIAN',
+      'ACCOUNTANT',
+      'SALES',
+      'READ_ONLY',
+    ] as const) {
+      expect(
+        actionIds({
+          hasAddress: true,
+          hasPhone: true,
+          isAssignedUser: role === 'TECHNICIAN',
+          role,
+          status: 'SCHEDULED',
+        }),
+      ).not.toContain('confirm');
+    }
+  });
+
+  it('shows start travel to the assigned technician only after confirmation', () => {
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        role: 'TECHNICIAN',
+        status: 'SCHEDULED',
+      }),
+    ).not.toContain('startTravel');
+
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        role: 'TECHNICIAN',
+        status: 'CONFIRMED',
+      }),
+    ).toContain('startTravel');
+  });
+
+  it('never shows confirm for terminal statuses', () => {
+    for (const status of [
+      'CANCELLED',
+      'COMPLETED',
+      'NO_SHOW',
+      'RESCHEDULED',
+    ] as const) {
+      expect(
+        actionIds({
+          hasAddress: true,
+          hasPhone: true,
+          isAssignedUser: false,
+          role: 'OWNER',
+          status,
+        }),
+      ).not.toContain('confirm');
+    }
   });
 });
 

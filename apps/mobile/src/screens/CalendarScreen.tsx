@@ -46,6 +46,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   appointmentsRequest,
   dispatcherRequest,
+  friendlyAppointmentMutationError,
   membersRequest,
   transitionAppointmentRequest,
   updateAppointmentRequest,
@@ -288,9 +289,12 @@ function isSameCalendarDay(left: Date, right: Date, timezone: string) {
 }
 
 function selectedActionText(action: AppointmentQuickAction['id']) {
+  if (action === 'confirm') return 'Confirming appointment...';
   if (action === 'startTravel') return 'Starting travel...';
   if (action === 'start') return 'Starting work...';
   if (action === 'arrive') return 'Marking arrival...';
+  if (action === 'pause') return 'Pausing work...';
+  if (action === 'resume') return 'Resuming work...';
   if (action === 'complete') return 'Completing appointment...';
   if (action === 'reschedule') return 'Rescheduling appointment...';
   if (action === 'cancel') return 'Cancelling appointment...';
@@ -620,10 +624,7 @@ export function CalendarScreen({ navigation }: Props) {
       }
     } catch (error) {
       showToast({
-        message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't update this appointment.",
+        message: friendlyAppointmentMutationError(error),
         tone: 'error',
       });
     } finally {
@@ -1320,9 +1321,12 @@ function DispatcherAppointmentCard({
     [
       'call',
       'navigate',
+      'confirm',
       'startTravel',
       'start',
       'arrive',
+      'pause',
+      'resume',
       'complete',
       'reassign',
       'viewDetails',

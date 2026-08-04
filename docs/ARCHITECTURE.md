@@ -271,10 +271,17 @@ Technician field workflow architecture:
   technicians and solo owners. It returns only appointments assigned to the
   logged-in user for the current business day in the business timezone.
 - Status transition rules are centralised in shared code and revalidated by the
-  API before writes. The active path is `SCHEDULED/CONFIRMED -> ON_THE_WAY ->
-ARRIVED -> IN_PROGRESS -> COMPLETED`.
+  API before writes. The active path is `SCHEDULED/CONFIRMED -> ON_THE_WAY
+(travelling) -> ARRIVED -> IN_PROGRESS -> PAUSED -> IN_PROGRESS ->
+COMPLETED`.
 - `AppointmentWorkLog` stores technician notes, work completed and follow-up
   flags. Audit logs remain the timeline/event history.
+- Appointment execution timing uses server-recorded UTC transition timestamps
+  plus persisted travel, work and paused totals. Mobile screens display live
+  timers from those server timestamps without writing to the API every second.
+- `AppointmentSignature` stores customer sign-off as structured signature
+  strokes or an Owner/Admin skip reason. Completion validates signature
+  requirements server-side before closing the appointment.
 - Completing an appointment does not automatically complete the job. A job may
   have multiple appointments, and job completion remains an explicit action.
 - When field work starts, a non-cancelled/non-completed job may safely move to

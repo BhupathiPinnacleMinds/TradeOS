@@ -51,6 +51,7 @@ type MockPrisma = {
     findUnique: jest.Mock;
     update: jest.Mock;
   };
+  appointmentSignature: { upsert: jest.Mock };
   auditLog: { create: jest.Mock };
   appointmentWorkLog: { upsert: jest.Mock };
   business: { findUnique: jest.Mock };
@@ -78,6 +79,7 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
     actualEnd: null,
     actualStart: null,
     accessInstructions: 'Use side gate',
+    arrivedAt: null,
     addressLine1: '12 King Street',
     addressLine2: null,
     appointmentNumber: 'APT-2026-000001',
@@ -93,6 +95,8 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
     createdAt: new Date('2026-07-15T00:00:00.000Z'),
     createdBy: 'owner-1',
     customerSiteId: null,
+    completedAt: null,
+    currentWorkStartedAt: null,
     estimatedDurationMinutes: 120,
     id: 'appointment-1',
     job: {
@@ -116,16 +120,24 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
     jobId: 'job-1',
     locationSource: 'CUSTOMER_DEFAULT',
     notes: null,
+    pausedAt: null,
     postcode: '2150',
     scheduledEnd: new Date('2026-07-15T01:00:00.000Z'),
     scheduledStart: new Date('2026-07-15T00:00:00.000Z'),
     state: 'NSW',
     status: 'SCHEDULED',
+    signatures: [],
     suburb: 'Parramatta',
+    totalPausedMinutes: 0,
+    totalTravelMinutes: 0,
+    totalWorkMinutes: 0,
     travelDistanceKm: null,
     travelDurationMinutes: null,
+    travelStartedAt: null,
     updatedAt: new Date('2026-07-15T00:00:00.000Z'),
     updatedBy: null,
+    workLogs: [],
+    workStartedAt: null,
     ...overrides,
   };
 }
@@ -147,6 +159,7 @@ function createService() {
         .mockResolvedValue({ businessId: 'business-1', nextNumber: 4 }),
       update: jest.fn(),
     },
+    appointmentSignature: { upsert: jest.fn() },
     auditLog: { create: jest.fn() },
     appointmentWorkLog: { upsert: jest.fn() },
     business: {
@@ -403,7 +416,32 @@ describe('AppointmentsService', () => {
   it('records completion transitions', async () => {
     const { prisma, service } = createService();
     prisma.appointment.findFirst.mockResolvedValueOnce(
-      appointment({ status: 'IN_PROGRESS' }),
+      appointment({
+        signatures: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            capturedAt: new Date('2026-07-15T00:45:00.000Z'),
+            capturedByUserId: 'tech-1',
+            consentText:
+              'I confirm the work described above has been completed.',
+            createdAt: new Date('2026-07-15T00:45:00.000Z'),
+            customerName: 'Priya Shah',
+            id: 'signature-1',
+            jobId: 'job-1',
+            signatureData: {
+              height: 160,
+              strokes: [[{ x: 1, y: 1 }]],
+              width: 320,
+            },
+            signerTitle: null,
+            skippedAt: null,
+            skipReason: null,
+            updatedAt: new Date('2026-07-15T00:45:00.000Z'),
+          },
+        ],
+        status: 'IN_PROGRESS',
+      }),
     );
 
     await service.transition(owner, 'appointment-1', 'COMPLETED', {
@@ -874,6 +912,173 @@ describe('AppointmentsService', () => {
       });
   });
 
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(
+    'allows %s to confirm a scheduled appointment',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.appointment.findFirst.mockResolvedValueOnce(
+        appointment({ status: 'SCHEDULED' }),
+      );
+      prisma.appointment.update.mockImplementationOnce(
+        ({ data }: { data: { status: string } }) =>
+          Promise.resolve(appointment({ status: data.status })),
+      );
+
+      const result = await service.transition(
+        userForRole(role),
+        'appointment-1',
+        'CONFIRMED',
+      );
+
+      expect(result.appointment.status).toBe('CONFIRMED');
+      const updateCalls = prisma.appointment.update.mock
+        .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+      expect(updateCalls[0][0].data).toMatchObject({
+        status: 'CONFIRMED',
+        updatedBy: userForRole(role).id,
+      });
+    },
+  );
+
+  it('writes appointment audit and job timeline events when confirmed', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'SCHEDULED' }),
+    );
+    prisma.appointment.update.mockImplementationOnce(
+      ({ data }: { data: { status: string } }) =>
+        Promise.resolve(appointment({ status: data.status })),
+    );
+
+    await service.transition(owner, 'appointment-1', 'CONFIRMED');
+
+    const auditCalls = prisma.auditLog.create.mock.calls as unknown as Array<
+      [{ data: { action: string; metadata: Record<string, unknown> } }]
+    >;
+    const auditActions = auditCalls.map((call) => call[0].data.action);
+    expect(auditActions).toContain('APPOINTMENT_CONFIRMED');
+    expect(auditActions).toContain('JOB_TIMELINE_APPOINTMENT_CONFIRMED');
+    expect(
+      auditCalls.find(
+        (call) => call[0].data.action === 'APPOINTMENT_CONFIRMED',
+      )?.[0].data.metadata,
+    ).toMatchObject({ from: 'SCHEDULED', to: 'CONFIRMED' });
+  });
+
+  it.each<BusinessRole>(['TECHNICIAN', 'READ_ONLY', 'ACCOUNTANT', 'SALES'])(
+    'blocks %s from confirming appointments',
+    async (role) => {
+      const { prisma, service } = createService();
+      prisma.appointment.findFirst.mockResolvedValueOnce(
+        appointment({ status: 'SCHEDULED' }),
+      );
+
+      await service
+        .transition(userForRole(role), 'appointment-1', 'CONFIRMED')
+        .catch((error) => {
+          expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+        });
+    },
+  );
+
+  it('blocks cross-tenant confirmation by scoping lookup to businessId', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    await service
+      .transition(
+        {
+          ...owner,
+          businessId: 'business-2',
+          id: 'other-owner',
+        },
+        'appointment-1',
+        'CONFIRMED',
+      )
+      .catch((error) => {
+        expectDomainError(error, 'APPOINTMENT_NOT_FOUND');
+      });
+
+    const findFirstCalls = prisma.appointment.findFirst.mock
+      .calls as unknown as Array<
+      [{ where: { businessId: string; id: string } }]
+    >;
+    expect(findFirstCalls[0][0].where).toMatchObject({
+      businessId: 'business-2',
+      id: 'appointment-1',
+    });
+  });
+
+  it.each(['CANCELLED', 'COMPLETED', 'NO_SHOW', 'RESCHEDULED'] as const)(
+    'rejects confirmation from %s appointments',
+    async (status) => {
+      const { prisma, service } = createService();
+      prisma.appointment.findFirst.mockResolvedValueOnce(
+        appointment({ status }),
+      );
+
+      await service
+        .transition(owner, 'appointment-1', 'CONFIRMED')
+        .catch((error) => {
+          expectDomainError(
+            error,
+            status === 'COMPLETED'
+              ? 'APPOINTMENT_ALREADY_COMPLETED'
+              : 'INVALID_STATUS_TRANSITION',
+          );
+        });
+    },
+  );
+
+  it('does not create duplicate audit events when confirmation is requested again', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'CONFIRMED' }),
+    );
+
+    const result = await service.transition(
+      owner,
+      'appointment-1',
+      'CONFIRMED',
+    );
+
+    expect(result.appointment.status).toBe('CONFIRMED');
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('allows an assigned technician to start travel only after confirmation', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ assignedUserId: 'tech-1', status: 'CONFIRMED' }),
+    );
+    prisma.appointment.update.mockImplementationOnce(
+      ({ data }: { data: { status: string } }) =>
+        Promise.resolve(appointment({ status: data.status })),
+    );
+
+    const result = await service.transition(
+      technician,
+      'appointment-1',
+      'ON_THE_WAY',
+    );
+
+    expect(result.appointment.status).toBe('ON_THE_WAY');
+  });
+
+  it('rejects starting travel directly from a scheduled appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ assignedUserId: 'tech-1', status: 'SCHEDULED' }),
+    );
+
+    await service
+      .transition(technician, 'appointment-1', 'ON_THE_WAY')
+      .catch((error) => {
+        expectDomainError(error, 'INVALID_STATUS_TRANSITION');
+      });
+  });
+
   it('requires work completed before completing an in-progress appointment', async () => {
     const { prisma, service } = createService();
     prisma.appointment.findFirst.mockResolvedValueOnce(
@@ -887,6 +1092,105 @@ describe('AppointmentsService', () => {
       .catch((error) => {
         expectDomainError(error, 'WORK_COMPLETED_REQUIRED');
       });
+  });
+
+  it('requires a signature before completing an in-progress appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service
+      .transition(technician, 'appointment-1', 'COMPLETED', {
+        workCompleted: 'Replaced faulty switch and tested circuit.',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'SIGNATURE_REQUIRED');
+      });
+  });
+
+  it('records pause and resume transitions with duration totals', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-15T00:30:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        currentWorkStartedAt: new Date('2026-07-15T00:00:00.000Z'),
+        status: 'IN_PROGRESS',
+        totalWorkMinutes: 10,
+        workStartedAt: new Date('2026-07-15T00:00:00.000Z'),
+      }),
+    );
+
+    await service.transition(technician, 'appointment-1', 'PAUSED');
+
+    const updateCalls = prisma.appointment.update.mock
+      .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+    expect(updateCalls[0][0].data.status).toBe('PAUSED');
+    expect(updateCalls[0][0].data.totalWorkMinutes).toBe(40);
+    expect(updateCalls[0][0].data.pausedAt).toBeInstanceOf(Date);
+
+    jest.setSystemTime(new Date('2026-07-15T00:45:00.000Z'));
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        pausedAt: new Date('2026-07-15T00:30:00.000Z'),
+        status: 'PAUSED',
+        totalPausedMinutes: 5,
+        totalWorkMinutes: 40,
+        workStartedAt: new Date('2026-07-15T00:00:00.000Z'),
+      }),
+    );
+    prisma.appointment.update.mockClear();
+
+    await service.transition(technician, 'appointment-1', 'IN_PROGRESS');
+
+    const resumeUpdateCalls = prisma.appointment.update.mock
+      .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+    const resumeUpdateCall = resumeUpdateCalls[0]?.[0];
+    expect(resumeUpdateCall?.data.status).toBe('IN_PROGRESS');
+    expect(resumeUpdateCall?.data.totalPausedMinutes).toBe(20);
+    expect(resumeUpdateCall?.data.currentWorkStartedAt).toBeInstanceOf(Date);
+  });
+
+  it('captures a tenant-scoped customer signature', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service.captureSignature(technician, 'appointment-1', {
+      customerName: 'Priya Shah',
+      signatureData: {
+        height: 160,
+        strokes: [[{ x: 8, y: 12 }]],
+        width: 320,
+      },
+    });
+
+    const signatureCalls = prisma.appointmentSignature.upsert.mock
+      .calls as unknown as Array<[{ create: Record<string, unknown> }]>;
+    expect(signatureCalls[0][0].create).toMatchObject({
+      appointmentId: 'appointment-1',
+      businessId: 'business-1',
+      customerName: 'Priya Shah',
+      jobId: 'job-1',
+    });
+  });
+
+  it('allows owners to skip signature only with a reason', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service.skipSignature(owner, 'appointment-1', {
+      reason: 'Customer was unavailable for sign-off.',
+    });
+
+    const signatureCalls = prisma.appointmentSignature.upsert.mock
+      .calls as unknown as Array<[{ create: Record<string, unknown> }]>;
+    expect(signatureCalls[0][0].create).toMatchObject({
+      skipReason: 'Customer was unavailable for sign-off.',
+    });
   });
 
   it('saves work logs and writes follow-up audit events', async () => {

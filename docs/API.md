@@ -508,18 +508,31 @@ Implemented technician workflow endpoints:
   counts active workflow statuses, and `urgentCount` counts active `URGENT`
   priority appointments only.
 - `POST /api/appointments/:id/start-travel` moves `SCHEDULED` or `CONFIRMED`
-  appointments to `ON_THE_WAY`.
+  appointments to `ON_THE_WAY` and records `travelStartedAt`. The UI labels
+  this state as travelling.
 - `POST /api/appointments/:id/arrive` moves `ON_THE_WAY` appointments to
-  `ARRIVED`.
-- `POST /api/appointments/:id/start` moves `SCHEDULED`, `CONFIRMED` or
-  `ARRIVED` appointments to `IN_PROGRESS`.
+  `ARRIVED`, records `arrivedAt` and finalises travel minutes.
+- `POST /api/appointments/:id/start` moves `ARRIVED` appointments to
+  `IN_PROGRESS`, records the first work-start timestamp and starts the active
+  work timer.
+- `POST /api/appointments/:id/pause` moves `IN_PROGRESS` appointments to
+  `PAUSED` and accumulates work minutes without closing the appointment.
+- `POST /api/appointments/:id/resume` moves `PAUSED` appointments back to
+  `IN_PROGRESS` and accumulates paused minutes.
 - `PATCH /api/appointments/:id/work-log` saves internal technician notes, work
-  completed notes and follow-up flags.
-- `POST /api/appointments/:id/complete` requires `workCompleted`, saves the
-  work log and moves `IN_PROGRESS` appointments to `COMPLETED`.
+  completed notes and follow-up flags during active field-work states.
+- `POST /api/appointments/:id/signature` saves a tenant-scoped customer
+  signature record for the appointment.
+- `POST /api/appointments/:id/signature/skip` is limited to Owner/Admin and
+  requires a reason for audit history.
+- `POST /api/appointments/:id/complete` requires `workCompleted` and either a
+  saved customer signature or an Owner/Admin signature-skip reason, saves the
+  work log, finalises execution duration totals and moves `IN_PROGRESS`
+  appointments to `COMPLETED`.
 
 The API validates transitions again even when the mobile UI hides unavailable
-actions.
+actions. Invalid transitions return structured errors such as
+`INVALID_STATUS_TRANSITION`, `WORK_COMPLETED_REQUIRED` or `SIGNATURE_REQUIRED`.
 
 ## AI endpoint rule
 

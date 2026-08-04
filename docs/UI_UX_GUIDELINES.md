@@ -296,10 +296,21 @@ Technician field workflow UI:
 - My Day appointment cards should be compact and show suburb instead of the full
   address, with time, job title, customer, priority and status visible.
 - Keep no more than two actions visible on My Day appointment cards. Use short
-  labels such as `Start travel`, `Arrived`, `Start work` and `Complete`. Put
-  secondary work in Appointment Details or More menus.
+  labels such as `Start travel`, `Arrived`, `Start work`, `Pause`, `Resume`
+  and `Complete`. Put secondary work in Appointment Details or More menus.
+- Appointment Details should act as the execution screen: show the appointment
+  number, job title, current status, scheduled time, assigned technician, one
+  status-appropriate primary action area and a timing card for travel, work,
+  paused and elapsed time.
+- Field notes and work-completed summaries are editable during `ARRIVED`,
+  `IN_PROGRESS` and `PAUSED` states, with an explicit Save action and a discard
+  warning for unsaved text.
 - Completing an appointment must open a review flow with work completed,
-  technician notes and follow-up fields before submitting.
+  technician notes, follow-up fields, checklist status, customer signature and
+  final duration review before submitting.
+- Customer signature capture must include clear/reset controls, consent text and
+  a visible saved/skipped state. Owner/Admin signature skips require a reason;
+  technicians should capture the signature rather than silently bypassing it.
 - Use large touch targets, pull-to-refresh, centred mutation loaders and friendly
   error messages.
 

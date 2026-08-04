@@ -13,6 +13,7 @@ import type {
 import {
   APPOINTMENT_LOCATION_SOURCES,
   AUSTRALIAN_STATES,
+  createUnsavedChangesNavigationGuard,
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDate,
   formatBusinessTime,
@@ -23,12 +24,15 @@ import {
   zonedTimeToUtc,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { usePreventRemove } from '@react-navigation/native';
+import type { NavigationAction } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -210,6 +214,59 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
+  const [isFormDirty, setIsFormDirty] = useState(false);
+  const [isPreventRemoveArmed, setIsPreventRemoveArmed] = useState(true);
+  const cleanSnapshotRef = useRef<string | null>(null);
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
+  const hasSavedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const navigationRef = useRef(navigation);
+  const guardRef = useRef(
+    createUnsavedChangesNavigationGuard<NavigationAction>({
+      dispatch(action) {
+        navigationRef.current.dispatch(action);
+      },
+      getHasSaved() {
+        return hasSavedRef.current;
+      },
+      getIsDirty() {
+        return isDirtyRef.current;
+      },
+      getIsMounted() {
+        return mountedRef.current;
+      },
+      getIsSaving() {
+        return isSavingRef.current;
+      },
+      onBeforeConfirmation() {
+        Keyboard.dismiss();
+      },
+      onStay() {
+        setIsPreventRemoveArmed(false);
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setIsPreventRemoveArmed(true);
+          }
+        }, 0);
+      },
+      requestConfirmation({ leave, stay }) {
+        Alert.alert(
+          'Leave appointment?',
+          'You have unsaved appointment details. Leave without saving?',
+          [
+            { onPress: stay, style: 'cancel', text: 'Stay' },
+            {
+              onPress: leave,
+              style: 'destructive',
+              text: 'Leave',
+            },
+          ],
+          { onDismiss: stay },
+        );
+      },
+    }),
+  );
 
   const selectedCustomer = useMemo(
     () => customers.find((customer) => customer.id === selectedCustomerId),
@@ -256,30 +313,103 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       selectedSite,
     ],
   );
+  const formSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        appointmentType,
+        assignedUserId,
+        customerSearch,
+        durationMinutes,
+        locationSource,
+        manualAccessInstructions,
+        manualAddressLine1,
+        manualAddressLine2,
+        manualPostcode,
+        manualState,
+        manualSuburb,
+        notes,
+        quickCustomerName,
+        quickCustomerPhone,
+        quickJobTitle,
+        saveAddressAsSite,
+        selectedCustomerId,
+        selectedJobId,
+        selectedSiteId,
+        startAt: startAt.toISOString(),
+        useQuickCustomer,
+        useQuickJob,
+      }),
+    [
+      appointmentType,
+      assignedUserId,
+      customerSearch,
+      durationMinutes,
+      locationSource,
+      manualAccessInstructions,
+      manualAddressLine1,
+      manualAddressLine2,
+      manualPostcode,
+      manualState,
+      manualSuburb,
+      notes,
+      quickCustomerName,
+      quickCustomerPhone,
+      quickJobTitle,
+      saveAddressAsSite,
+      selectedCustomerId,
+      selectedJobId,
+      selectedSiteId,
+      startAt,
+      useQuickCustomer,
+      useQuickJob,
+    ],
+  );
 
   useEffect(() => {
     navigation.setOptions({ title: 'New appointment' });
   }, [navigation]);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (hasSaved || isSaving) return;
-      event.preventDefault();
-      Alert.alert(
-        'Leave appointment?',
-        'You have unsaved appointment details. Leave without saving?',
-        [
-          { style: 'cancel', text: 'Stay' },
-          {
-            onPress: () => navigation.dispatch(event.data.action),
-            style: 'destructive',
-            text: 'Leave',
-          },
-        ],
-      );
-    });
-    return unsubscribe;
-  }, [hasSaved, isSaving, navigation]);
+    navigationRef.current = navigation;
+  }, [navigation]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      guardRef.current.cleanup();
+    };
+  }, []);
+
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
+    hasSavedRef.current = hasSaved;
+  }, [hasSaved]);
+
+  useEffect(() => {
+    if (!isLoading && cleanSnapshotRef.current === null) {
+      cleanSnapshotRef.current = formSnapshot;
+    }
+  }, [formSnapshot, isLoading]);
+
+  useEffect(() => {
+    isDirtyRef.current =
+      !isLoading &&
+      !hasSaved &&
+      cleanSnapshotRef.current !== null &&
+      cleanSnapshotRef.current !== formSnapshot;
+    setIsFormDirty(isDirtyRef.current);
+  }, [formSnapshot, hasSaved, isLoading]);
+
+  usePreventRemove(
+    isPreventRemoveArmed && isFormDirty && !hasSaved && !isSaving,
+    ({ data }) => {
+      guardRef.current.handlePreventedAction(data.action as NavigationAction);
+    },
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -575,6 +705,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         suburb: resolvedLocation.suburb,
       };
       const response = await createAppointmentRequest(token, payload);
+      hasSavedRef.current = true;
       setHasSaved(true);
       showToast({
         message: `${response.appointment.appointmentNumber} created.`,

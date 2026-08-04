@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  friendlyAppointmentMutationError,
   myDayRequest,
   transitionAppointmentRequest,
   type ApiRequestError,
@@ -44,7 +45,7 @@ type MyDayCardAction = {
   label: string;
   onPress(): void;
 };
-const CURRENT_STATUSES = ['IN_PROGRESS', 'ARRIVED', 'ON_THE_WAY'];
+const CURRENT_STATUSES = ['IN_PROGRESS', 'PAUSED', 'ARRIVED', 'ON_THE_WAY'];
 
 export function MyDayScreen({ navigation }: Props) {
   const { token, user } = useAuth();
@@ -463,9 +464,12 @@ function myDayCardActions({
   const callAction = appointment.job.customer.phone
     ? { kind: 'secondary' as const, label: 'Call', onPress: onCall }
     : null;
-  const evidenceAction = ['ARRIVED', 'IN_PROGRESS', 'ON_THE_WAY'].includes(
-    appointment.status,
-  )
+  const evidenceAction = [
+    'ARRIVED',
+    'IN_PROGRESS',
+    'ON_THE_WAY',
+    'PAUSED',
+  ].includes(appointment.status)
     ? { kind: 'secondary' as const, label: 'Evidence', onPress: onEvidence }
     : null;
   const detailAction = {
@@ -474,7 +478,14 @@ function myDayCardActions({
     onPress: onOpen,
   };
 
-  if (['SCHEDULED', 'CONFIRMED'].includes(appointment.status)) {
+  if (appointment.status === 'SCHEDULED') {
+    const scheduledActions: Array<MyDayCardAction | null> = [
+      navigateAction,
+      detailAction,
+    ];
+    return scheduledActions.filter(isMyDayCardAction).slice(0, 2);
+  }
+  if (appointment.status === 'CONFIRMED') {
     return [navigateAction, transitionAction('start-travel', 'Start travel')]
       .filter(isMyDayCardAction)
       .slice(0, 2);
@@ -490,7 +501,14 @@ function myDayCardActions({
       .slice(0, 2);
   }
   if (appointment.status === 'IN_PROGRESS') {
-    return [transitionAction('complete', 'Complete'), evidenceAction]
+    const inProgressActions: Array<MyDayCardAction | null> = [
+      transitionAction('pause', 'Pause'),
+      transitionAction('complete', 'Complete'),
+    ];
+    return inProgressActions.filter(isMyDayCardAction).slice(0, 2);
+  }
+  if (appointment.status === 'PAUSED') {
+    return [transitionAction('resume', 'Resume'), evidenceAction]
       .filter(isMyDayCardAction)
       .slice(0, 2);
   }
@@ -574,6 +592,14 @@ function friendlyError(error: unknown) {
   }
   if (apiError?.code === 'NETWORK_ERROR') {
     return 'Network error. Check the API is running and try again.';
+  }
+  if (
+    apiError?.status === 403 ||
+    apiError?.status === 404 ||
+    apiError?.status === 400 ||
+    apiError?.status === 409
+  ) {
+    return friendlyAppointmentMutationError(error);
   }
   return error instanceof Error ? error.message : 'Something went wrong.';
 }

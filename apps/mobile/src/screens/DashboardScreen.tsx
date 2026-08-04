@@ -234,6 +234,29 @@ export function DashboardScreen() {
           )}
         </View>
 
+        <View style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>Active field work</Text>
+          {summary?.activeExecutionAppointment ? (
+            <>
+              <Text style={styles.itemTitle}>
+                {summary.activeExecutionAppointment.jobTitle}
+              </Text>
+              <Text style={styles.itemMeta}>
+                {summary.activeExecutionAppointment.customerName}
+              </Text>
+              <Text style={styles.itemMeta}>
+                {summary.activeExecutionAppointment.technicianName ??
+                  'Unassigned'}{' '}
+                · {summary.activeExecutionAppointment.currentAction}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.emptyText}>
+              No technician is actively travelling or working right now.
+            </Text>
+          )}
+        </View>
+
         <View style={styles.toriCard}>
           <Text style={styles.toriLabel}>TORI'S DAILY PRIORITIES</Text>
           <Text style={styles.toriTitle}>

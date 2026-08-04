@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
   Matches,
+  ValidateNested,
 } from 'class-validator';
 import {
   APPOINTMENT_LOCATION_SOURCES,
@@ -298,6 +299,71 @@ export class CompleteAppointmentDto {
   @IsString()
   @MaxLength(1000)
   followUpNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  signatureId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  signatureSkipReason?: string;
+}
+
+export class SignaturePointDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  x!: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  y!: number;
+}
+
+export class SignatureDataDto {
+  @ValidateNested({ each: true })
+  @Type(() => SignaturePointDto)
+  strokes!: SignaturePointDto[][];
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(2000)
+  width!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(2000)
+  height!: number;
+}
+
+export class CaptureAppointmentSignatureDto {
+  @IsString()
+  @MaxLength(160)
+  customerName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  signerTitle?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  consentText?: string;
+
+  @ValidateNested()
+  @Type(() => SignatureDataDto)
+  signatureData!: SignatureDataDto;
+}
+
+export class SkipAppointmentSignatureDto {
+  @IsString()
+  @MaxLength(500)
+  reason!: string;
 }
 
 export class ReassignAppointmentDto {

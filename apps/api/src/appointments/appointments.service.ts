@@ -3,8 +3,10 @@ import type {
   Appointment,
   AppointmentAvailabilityResponse,
   AppointmentDetailResponse,
+  AppointmentExecutionDurations,
   AppointmentListResponse,
   AppointmentReassignmentOptionsResponse,
+  AppointmentSignature,
   AppointmentStatus,
   AuthenticatedUser,
   CompleteAppointmentPayload,
@@ -14,6 +16,7 @@ import type {
   MyDayResponse,
 } from '@tradieos/shared';
 import {
+  APPOINTMENT_CONFIRM_ROLES,
   APPOINTMENT_STATUS_UPDATE_ROLES,
   APPOINTMENT_VIEW_ROLES,
   APPOINTMENT_WRITE_ROLES,
@@ -29,10 +32,12 @@ import type {
   AppointmentRecommendationDto,
   AppointmentAvailabilityDto,
   AppointmentWorkLogDto,
+  CaptureAppointmentSignatureDto,
   CompleteAppointmentDto,
   DispatcherQueryDto,
   ListAppointmentsQueryDto,
   ReassignAppointmentDto,
+  SkipAppointmentSignatureDto,
   UpsertAppointmentDto,
 } from './dto/appointments.dto';
 import { SchedulingService } from './scheduling.service';
@@ -53,12 +58,17 @@ const REMAINING_MY_DAY_STATUSES = [
   'ON_THE_WAY',
   'ARRIVED',
   'IN_PROGRESS',
+  'PAUSED',
 ] as const;
 const CURRENT_MY_DAY_STATUSES = [
   'IN_PROGRESS',
+  'PAUSED',
   'ARRIVED',
   'ON_THE_WAY',
 ] as const;
+const SIGNATURE_SKIP_ROLES = ['OWNER', 'ADMIN'] as const;
+const SIGNATURE_CONSENT_TEXT =
+  'I confirm the work described above has been completed.';
 const DISPATCHER_MANAGE_ROLES = [
   'OWNER',
   'ADMIN',
@@ -348,7 +358,9 @@ export class AppointmentsService {
           (technician) => technician.overtimeWarning,
         ),
         techniciansWorking: technicians.filter((technician) =>
-          ['TRAVELLING', 'WORKING'].includes(technician.currentStatus),
+          ['TRAVELLING', 'WORKING', 'ON_BREAK'].includes(
+            technician.currentStatus,
+          ),
         ).length,
         totalAppointmentsToday: appointments.length,
         travelPlaceholderMinutes,
@@ -821,6 +833,122 @@ export class AppointmentsService {
     return this.transition(currentUser, id, 'COMPLETED', dto);
   }
 
+  async captureSignature(
+    currentUser: AuthenticatedUser,
+    id: string,
+    dto: CaptureAppointmentSignatureDto,
+  ): Promise<AppointmentDetailResponse> {
+    this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
+    const existing = await this.getAppointmentForUser(currentUser, id);
+    if (CLOSED_STATUSES.includes(existing.status as never)) {
+      throw this.domainError(
+        'SIGNATURE_NOT_AVAILABLE',
+        'Signatures can only be captured before an appointment is closed.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    const customerName = this.clean(dto.customerName);
+    if (!customerName) {
+      throw this.domainError(
+        'SIGNATURE_CUSTOMER_NAME_REQUIRED',
+        'Enter the customer name before saving the signature.',
+      );
+    }
+    if (!this.hasSignatureStrokes(dto.signatureData)) {
+      throw this.domainError(
+        'SIGNATURE_REQUIRED',
+        'Ask the customer to sign before saving.',
+      );
+    }
+
+    const capturedAt = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.appointmentSignature.upsert({
+        create: {
+          appointmentId: existing.id,
+          businessId: currentUser.businessId,
+          capturedAt,
+          capturedByUserId: currentUser.id,
+          consentText: this.clean(dto.consentText) ?? SIGNATURE_CONSENT_TEXT,
+          customerName,
+          jobId: existing.jobId,
+          signatureData: dto.signatureData as unknown as Prisma.InputJsonValue,
+          signerTitle: this.clean(dto.signerTitle),
+        },
+        update: {
+          capturedAt,
+          capturedByUserId: currentUser.id,
+          consentText: this.clean(dto.consentText) ?? SIGNATURE_CONSENT_TEXT,
+          customerName,
+          signatureData: dto.signatureData as unknown as Prisma.InputJsonValue,
+          signerTitle: this.clean(dto.signerTitle),
+          skipReason: null,
+          skippedAt: null,
+        },
+        where: {
+          businessId_appointmentId: {
+            appointmentId: existing.id,
+            businessId: currentUser.businessId,
+          },
+        },
+      });
+      await this.log(
+        tx,
+        currentUser,
+        'APPOINTMENT_SIGNATURE_CAPTURED',
+        existing,
+        {
+          capturedAt: capturedAt.toISOString(),
+          customerName,
+        },
+      );
+      return tx.appointment.findFirstOrThrow({
+        where: { businessId: currentUser.businessId, id },
+        include: this.appointmentInclude(),
+      });
+    });
+
+    return { appointment: this.toAppointment(updated) };
+  }
+
+  async skipSignature(
+    currentUser: AuthenticatedUser,
+    id: string,
+    dto: SkipAppointmentSignatureDto,
+  ): Promise<AppointmentDetailResponse> {
+    if (!SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)) {
+      throw this.domainError(
+        'SIGNATURE_SKIP_NOT_ALLOWED',
+        'Only an owner or admin can skip customer signature capture.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    const existing = await this.getAppointmentForUser(currentUser, id);
+    const reason = this.clean(dto.reason);
+    if (!reason) {
+      throw this.domainError(
+        'SIGNATURE_SKIP_REASON_REQUIRED',
+        'Add a reason before skipping the customer signature.',
+      );
+    }
+    const skippedAt = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.upsertSkippedSignature(
+        tx,
+        currentUser,
+        existing,
+        reason,
+        skippedAt,
+      );
+      return tx.appointment.findFirstOrThrow({
+        where: { businessId: currentUser.businessId, id },
+        include: this.appointmentInclude(),
+      });
+    });
+
+    return { appointment: this.toAppointment(updated) };
+  }
+
   async transition(
     currentUser: AuthenticatedUser,
     id: string,
@@ -829,6 +957,12 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
     const existing = await this.getAppointmentForUser(currentUser, id);
+    if (existing.status === status) {
+      return { appointment: this.toAppointment(existing) };
+    }
+    if (status === 'CONFIRMED') {
+      this.assertRole(currentUser, APPOINTMENT_CONFIRM_ROLES);
+    }
     this.assertAllowedTransition(currentUser, existing, status);
     if (status === 'COMPLETED') {
       const completed = this.clean(completion?.workCompleted);
@@ -838,18 +972,18 @@ export class AppointmentsService {
           'Add a short summary of the work completed before closing this appointment.',
         );
       }
+      this.assertCompletionSignatureRequirement(
+        currentUser,
+        existing,
+        completion,
+      );
     }
     const now = new Date();
     const data: Prisma.AppointmentUncheckedUpdateInput = {
       status,
       updatedBy: currentUser.id,
     };
-    if (status === 'IN_PROGRESS' && !existing.actualStart) {
-      data.actualStart = now;
-    }
-    if (status === 'COMPLETED' || status === 'CANCELLED') {
-      data.actualEnd = now;
-    }
+    this.applyExecutionTiming(data, existing, status, now);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       if (completion) {
@@ -883,6 +1017,20 @@ export class AppointmentsService {
             followUpNotes: workLogData.followUpNotes,
           });
         }
+        if (
+          status === 'COMPLETED' &&
+          !this.hasCompletionSignature(existing) &&
+          completion.signatureSkipReason &&
+          SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)
+        ) {
+          await this.upsertSkippedSignature(
+            tx,
+            currentUser,
+            existing,
+            completion.signatureSkipReason,
+            now,
+          );
+        }
       }
       const appointment = await tx.appointment.update({
         where: { id },
@@ -892,13 +1040,28 @@ export class AppointmentsService {
       await this.log(
         tx,
         currentUser,
-        this.actionForStatus(status),
+        this.actionForStatus(status, existing.status),
         appointment,
         {
+          durations: this.executionDurations(appointment, now),
           from: existing.status,
           to: status,
         },
       );
+      if (existing.status === 'SCHEDULED' && status === 'CONFIRMED') {
+        await this.log(
+          tx,
+          currentUser,
+          'JOB_TIMELINE_APPOINTMENT_CONFIRMED',
+          appointment,
+          {
+            confirmedAt: now.toISOString(),
+            confirmedByUserId: currentUser.id,
+            from: existing.status,
+            to: status,
+          },
+        );
+      }
       await this.syncJobProgress(tx, currentUser, existing, status);
       return appointment;
     });
@@ -1011,6 +1174,7 @@ export class AppointmentsService {
         !CLOSED_STATUSES.includes(appointment.status as never),
     );
     if (active?.status === 'ON_THE_WAY') return 'TRAVELLING';
+    if (active?.status === 'PAUSED') return 'ON_BREAK';
     if (active) return 'WORKING';
     const upcoming = appointments.some(
       (appointment) =>
@@ -1056,7 +1220,9 @@ export class AppointmentsService {
 
     if (!filter) return true;
     if (filter === 'working') {
-      return ['WORKING', 'TRAVELLING'].includes(technician.currentStatus);
+      return ['WORKING', 'TRAVELLING', 'ON_BREAK'].includes(
+        technician.currentStatus,
+      );
     }
     if (filter === 'available') {
       return technician.currentStatus === 'AVAILABLE';
@@ -1461,17 +1627,17 @@ export class AppointmentsService {
     currentStatus: AppointmentStatus,
     nextStatus: AppointmentStatus,
   ) {
-    if (
-      ['SCHEDULED', 'CONFIRMED'].includes(currentStatus) &&
-      nextStatus === 'ON_THE_WAY'
-    ) {
+    if (currentStatus === 'SCHEDULED' && nextStatus === 'CONFIRMED') {
+      return 'confirm';
+    }
+    if (currentStatus === 'CONFIRMED' && nextStatus === 'ON_THE_WAY') {
       return 'start-travel';
     }
     if (currentStatus === 'ON_THE_WAY' && nextStatus === 'ARRIVED') {
       return 'arrive';
     }
     if (
-      ['SCHEDULED', 'CONFIRMED', 'ARRIVED'].includes(currentStatus) &&
+      ['CONFIRMED', 'ARRIVED'].includes(currentStatus) &&
       nextStatus === 'IN_PROGRESS'
     ) {
       return 'start';
@@ -1479,10 +1645,226 @@ export class AppointmentsService {
     if (currentStatus === 'IN_PROGRESS' && nextStatus === 'COMPLETED') {
       return 'complete';
     }
+    if (currentStatus === 'IN_PROGRESS' && nextStatus === 'PAUSED') {
+      return 'pause';
+    }
+    if (currentStatus === 'PAUSED' && nextStatus === 'IN_PROGRESS') {
+      return 'resume';
+    }
     if (!NON_ACTIONABLE_STATUSES.includes(currentStatus as never)) {
       if (nextStatus === 'CANCELLED') return 'cancel';
     }
     return null;
+  }
+
+  private applyExecutionTiming(
+    data: Prisma.AppointmentUncheckedUpdateInput,
+    appointment: AppointmentWithRelations,
+    nextStatus: AppointmentStatus,
+    now: Date,
+  ) {
+    if (nextStatus === 'ON_THE_WAY') {
+      data.travelStartedAt = appointment.travelStartedAt ?? now;
+    }
+    if (nextStatus === 'ARRIVED') {
+      data.arrivedAt = appointment.arrivedAt ?? now;
+      if (appointment.travelStartedAt && appointment.totalTravelMinutes === 0) {
+        data.totalTravelMinutes = this.minutesBetween(
+          appointment.travelStartedAt,
+          now,
+        );
+      }
+    }
+    if (nextStatus === 'IN_PROGRESS') {
+      data.actualStart = appointment.actualStart ?? now;
+      data.workStartedAt = appointment.workStartedAt ?? now;
+      data.currentWorkStartedAt = now;
+      if (appointment.status === 'PAUSED' && appointment.pausedAt) {
+        data.totalPausedMinutes =
+          appointment.totalPausedMinutes +
+          this.minutesBetween(appointment.pausedAt, now);
+        data.pausedAt = null;
+      }
+    }
+    if (nextStatus === 'PAUSED') {
+      const segmentStart =
+        appointment.currentWorkStartedAt ?? appointment.workStartedAt ?? now;
+      data.totalWorkMinutes =
+        appointment.totalWorkMinutes + this.minutesBetween(segmentStart, now);
+      data.currentWorkStartedAt = null;
+      data.pausedAt = now;
+    }
+    if (nextStatus === 'COMPLETED') {
+      data.actualEnd = now;
+      data.completedAt = appointment.completedAt ?? now;
+      data.currentWorkStartedAt = null;
+      if (appointment.status === 'IN_PROGRESS') {
+        const segmentStart =
+          appointment.currentWorkStartedAt ?? appointment.workStartedAt ?? now;
+        data.totalWorkMinutes =
+          appointment.totalWorkMinutes + this.minutesBetween(segmentStart, now);
+      }
+      if (appointment.status === 'PAUSED' && appointment.pausedAt) {
+        data.totalPausedMinutes =
+          appointment.totalPausedMinutes +
+          this.minutesBetween(appointment.pausedAt, now);
+        data.pausedAt = null;
+      }
+    }
+    if (nextStatus === 'CANCELLED') {
+      data.actualEnd = now;
+    }
+  }
+
+  private minutesBetween(start: Date, end: Date) {
+    return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  }
+
+  private executionDurations(
+    appointment: Pick<
+      AppointmentWithRelations,
+      | 'arrivedAt'
+      | 'completedAt'
+      | 'currentWorkStartedAt'
+      | 'pausedAt'
+      | 'scheduledStart'
+      | 'status'
+      | 'totalPausedMinutes'
+      | 'totalTravelMinutes'
+      | 'totalWorkMinutes'
+      | 'travelStartedAt'
+      | 'workStartedAt'
+    >,
+    now = new Date(),
+  ): AppointmentExecutionDurations {
+    const travelMinutes =
+      appointment.status === 'ON_THE_WAY' && appointment.travelStartedAt
+        ? this.minutesBetween(appointment.travelStartedAt, now)
+        : appointment.totalTravelMinutes;
+    const workSegmentStart =
+      appointment.currentWorkStartedAt ?? appointment.workStartedAt;
+    const workMinutes =
+      appointment.status === 'IN_PROGRESS' && workSegmentStart
+        ? appointment.totalWorkMinutes +
+          this.minutesBetween(workSegmentStart, now)
+        : appointment.totalWorkMinutes;
+    const pausedMinutes =
+      appointment.status === 'PAUSED' && appointment.pausedAt
+        ? appointment.totalPausedMinutes +
+          this.minutesBetween(appointment.pausedAt, now)
+        : appointment.totalPausedMinutes;
+    const elapsedStart =
+      appointment.travelStartedAt ?? appointment.workStartedAt;
+    const elapsedEnd = appointment.completedAt ?? now;
+
+    return {
+      calculatedAt: now.toISOString(),
+      pausedMinutes,
+      totalElapsedMinutes: elapsedStart
+        ? this.minutesBetween(elapsedStart, elapsedEnd)
+        : 0,
+      travelMinutes,
+      workMinutes,
+    };
+  }
+
+  private hasSignatureStrokes(
+    signatureData: CaptureAppointmentSignatureDto['signatureData'],
+  ) {
+    return (
+      Array.isArray(signatureData?.strokes) &&
+      signatureData.strokes.some(
+        (stroke) => Array.isArray(stroke) && stroke.length > 0,
+      )
+    );
+  }
+
+  private hasCompletionSignature(appointment: AppointmentWithRelations) {
+    const signature = appointment.signatures?.[0];
+    return Boolean(
+      signature &&
+      ((signature.capturedAt && signature.signatureData) ||
+        (signature.skippedAt && signature.skipReason)),
+    );
+  }
+
+  private assertCompletionSignatureRequirement(
+    currentUser: AuthenticatedUser,
+    appointment: AppointmentWithRelations,
+    completion?: CompleteAppointmentPayload,
+  ) {
+    const signature = appointment.signatures?.[0];
+    if (completion?.signatureId && signature?.id !== completion.signatureId) {
+      throw this.domainError(
+        'SIGNATURE_NOT_FOUND',
+        'The saved signature could not be matched to this appointment.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (this.hasCompletionSignature(appointment)) return;
+    if (
+      completion?.signatureSkipReason &&
+      SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)
+    ) {
+      return;
+    }
+    throw this.domainError(
+      'SIGNATURE_REQUIRED',
+      'Capture the customer signature before completing this appointment.',
+      HttpStatus.CONFLICT,
+    );
+  }
+
+  private async upsertSkippedSignature(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    appointment: AppointmentWithRelations,
+    rawReason: string,
+    skippedAt: Date,
+  ) {
+    const reason = this.clean(rawReason);
+    if (!reason) {
+      throw this.domainError(
+        'SIGNATURE_SKIP_REASON_REQUIRED',
+        'Add a reason before skipping the customer signature.',
+      );
+    }
+    await tx.appointmentSignature.upsert({
+      create: {
+        appointmentId: appointment.id,
+        businessId: currentUser.businessId,
+        capturedByUserId: currentUser.id,
+        consentText: SIGNATURE_CONSENT_TEXT,
+        jobId: appointment.jobId,
+        skipReason: reason,
+        skippedAt,
+      },
+      update: {
+        capturedAt: null,
+        capturedByUserId: currentUser.id,
+        customerName: null,
+        signatureData: {},
+        signerTitle: null,
+        skipReason: reason,
+        skippedAt,
+      },
+      where: {
+        businessId_appointmentId: {
+          appointmentId: appointment.id,
+          businessId: currentUser.businessId,
+        },
+      },
+    });
+    await this.log(
+      tx,
+      currentUser,
+      'APPOINTMENT_SIGNATURE_SKIPPED',
+      appointment,
+      {
+        reason,
+        skippedAt: skippedAt.toISOString(),
+      },
+    );
   }
 
   private workLogData(
@@ -1704,9 +2086,17 @@ export class AppointmentsService {
     });
   }
 
-  private actionForStatus(status: AppointmentStatus) {
+  private actionForStatus(
+    status: AppointmentStatus,
+    previousStatus?: AppointmentStatus,
+  ) {
+    if (status === 'IN_PROGRESS' && previousStatus === 'PAUSED') {
+      return 'APPOINTMENT_RESUMED';
+    }
     if (status === 'IN_PROGRESS') return 'APPOINTMENT_WORK_STARTED';
+    if (status === 'PAUSED') return 'APPOINTMENT_PAUSED';
     if (status === 'ARRIVED') return 'APPOINTMENT_ARRIVED';
+    if (status === 'CONFIRMED') return 'APPOINTMENT_CONFIRMED';
     if (status === 'COMPLETED') return 'APPOINTMENT_COMPLETED';
     if (status === 'CANCELLED') return 'APPOINTMENT_CANCELLED';
     if (status === 'ON_THE_WAY') return 'APPOINTMENT_TRAVEL_STARTED';
@@ -1746,14 +2136,20 @@ export class AppointmentsService {
         orderBy: { updatedAt: 'desc' },
         take: 1,
       },
+      signatures: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+      },
     } satisfies Prisma.AppointmentInclude;
   }
 
   private toAppointment(appointment: AppointmentWithRelations): Appointment {
+    const signature = appointment.signatures?.[0] ?? null;
     return {
       actualEnd: appointment.actualEnd?.toISOString() ?? null,
       actualStart: appointment.actualStart?.toISOString() ?? null,
       accessInstructions: appointment.accessInstructions,
+      arrivedAt: appointment.arrivedAt?.toISOString() ?? null,
       addressLine1: appointment.addressLine1,
       addressLine2: appointment.addressLine2,
       appointmentNumber: appointment.appointmentNumber,
@@ -1764,7 +2160,11 @@ export class AppointmentsService {
       createdAt: appointment.createdAt.toISOString(),
       createdBy: appointment.createdBy,
       customerSiteId: appointment.customerSiteId,
+      completedAt: appointment.completedAt?.toISOString() ?? null,
       estimatedDurationMinutes: appointment.estimatedDurationMinutes,
+      currentWorkStartedAt:
+        appointment.currentWorkStartedAt?.toISOString() ?? null,
+      executionDurations: this.executionDurations(appointment),
       id: appointment.id,
       job: {
         ...appointment.job,
@@ -1773,18 +2173,25 @@ export class AppointmentsService {
       jobId: appointment.jobId,
       locationSource: appointment.locationSource,
       notes: appointment.notes,
+      pausedAt: appointment.pausedAt?.toISOString() ?? null,
       postcode: appointment.postcode,
       scheduledEnd: appointment.scheduledEnd.toISOString(),
       scheduledStart: appointment.scheduledStart.toISOString(),
       state: appointment.state as Appointment['state'],
       status: appointment.status,
       suburb: appointment.suburb,
+      signature: signature ? this.toSignature(signature) : null,
+      totalPausedMinutes: appointment.totalPausedMinutes,
+      totalTravelMinutes: appointment.totalTravelMinutes,
+      totalWorkMinutes: appointment.totalWorkMinutes,
       travelDistanceKm: appointment.travelDistanceKm
         ? Number(appointment.travelDistanceKm.toString())
         : null,
       travelDurationMinutes: appointment.travelDurationMinutes,
+      travelStartedAt: appointment.travelStartedAt?.toISOString() ?? null,
       updatedAt: appointment.updatedAt.toISOString(),
       updatedBy: appointment.updatedBy,
+      workStartedAt: appointment.workStartedAt?.toISOString() ?? null,
       workLog: appointment.workLogs?.[0]
         ? {
             appointmentId: appointment.workLogs[0].appointmentId,
@@ -1800,6 +2207,32 @@ export class AppointmentsService {
             workCompleted: appointment.workLogs[0].workCompleted,
           }
         : null,
+    };
+  }
+
+  private toSignature(
+    signature: NonNullable<AppointmentWithRelations['signatures']>[number],
+  ): AppointmentSignature {
+    return {
+      appointmentId: signature.appointmentId,
+      businessId: signature.businessId,
+      capturedAt: signature.capturedAt?.toISOString() ?? null,
+      capturedByUserId: signature.capturedByUserId,
+      consentText: signature.consentText,
+      createdAt: signature.createdAt.toISOString(),
+      customerName: signature.customerName,
+      id: signature.id,
+      jobId: signature.jobId,
+      signatureData:
+        signature.signatureData &&
+        typeof signature.signatureData === 'object' &&
+        !Array.isArray(signature.signatureData)
+          ? (signature.signatureData as unknown as AppointmentSignature['signatureData'])
+          : null,
+      signerTitle: signature.signerTitle,
+      skippedAt: signature.skippedAt?.toISOString() ?? null,
+      skipReason: signature.skipReason,
+      updatedAt: signature.updatedAt.toISOString(),
     };
   }
 

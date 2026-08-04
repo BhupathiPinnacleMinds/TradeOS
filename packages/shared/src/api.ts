@@ -60,6 +60,14 @@ export interface DashboardSummaryResponse {
     startsAt: string;
     technicianName: string | null;
   } | null;
+  activeExecutionAppointment: {
+    id: string;
+    jobTitle: string;
+    customerName: string;
+    status: string;
+    currentAction: string;
+    technicianName: string | null;
+  } | null;
   notifications: Array<{
     id: string;
     title: string;
