@@ -27,6 +27,10 @@ export interface DashboardSummaryResponse {
     availableTechnicians: number;
     unassignedAppointments: number;
     openQuotes: number;
+    draftQuotes: number;
+    quotesAwaitingResponse: number;
+    acceptedQuotesNotConverted: number;
+    quotesExpiringSoon: number;
     unpaidInvoices: number;
     unreadNotifications: number;
     aiMessages: number;

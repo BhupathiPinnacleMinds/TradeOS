@@ -1,5 +1,18 @@
 # UI/UX Guidelines
 
+## Quotes UX
+
+- Quotes use list, detail and multi-step form screens.
+- The quote form stays split into scope, line items, GST/terms and review steps
+  so it does not become one long screen.
+- Mobile totals update immediately using the shared quote calculation helper;
+  the API remains authoritative after save.
+- Quote cards show quote number, customer, status, total, expiry and linked job
+  when present. Detailed lifecycle actions belong on Quote Details.
+- Empty, error and loading states must never fall back to fake quote data.
+- Quote creation entry points are More -> Quotes, Customer Details, Job Details
+  and Appointment Details.
+
 ## Media & document UX
 
 - Job Details must show photos and documents as real sections, not future

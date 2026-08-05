@@ -13,6 +13,7 @@ import {
   getAppointmentQuickActions,
   mediaDisplayTitle,
   normaliseBusinessTimezone,
+  roleCanCreateQuotes,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -111,6 +112,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canScheduleAppointment = canCreateAppointment(user?.role);
   const canUpdateStatus = canEdit;
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
+  const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
 
   async function loadJob() {
     if (!token) return;
@@ -327,6 +329,17 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             label="Schedule Appointment"
             onPress={() =>
               navigation.navigate('AppointmentForm', {
+                customerId: job.customerId,
+                jobId: job.id,
+              })
+            }
+          />
+        ) : null}
+        {canCreateQuote ? (
+          <QuickAction
+            label="Create Quote"
+            onPress={() =>
+              navigation.navigate('QuoteForm', {
                 customerId: job.customerId,
                 jobId: job.id,
               })
@@ -565,6 +578,17 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.meta}>
           Quotes: {job.quoteCreated ? 'Created' : 'Not created yet'}
         </Text>
+        {canCreateQuote && !job.quoteCreated ? (
+          <ActionButton
+            label="Create quote"
+            onPress={() =>
+              navigation.navigate('QuoteForm', {
+                customerId: job.customerId,
+                jobId: job.id,
+              })
+            }
+          />
+        ) : null}
         <Text style={styles.meta}>
           Invoices: {job.invoiceCreated ? 'Created' : 'Not created yet'}
         </Text>

@@ -5,6 +5,16 @@ export type RootStackParamList = {
   Main: undefined;
   MyDay: undefined;
   Quotes: undefined;
+  QuoteDetails: { quoteId: string };
+  QuoteForm:
+    | {
+        appointmentId?: string;
+        customerId?: string;
+        customerSiteId?: string;
+        jobId?: string;
+        quoteId?: string;
+      }
+    | undefined;
   Invoices: undefined;
   Notifications: undefined;
   Settings: undefined;

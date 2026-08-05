@@ -7,28 +7,55 @@
 import {
   APPOINTMENT_STATUS_COLOURS,
   APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
+  APPOINTMENT_SIGNATURE_ACTION_GAP,
+  APPOINTMENT_SIGNATURE_PAD_HEIGHT,
+  APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP,
+  APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP,
+  APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING,
+  APPOINTMENT_SIGNATURE_STROKE_COLOUR,
+  APPOINTMENT_SIGNATURE_STROKE_WIDTH,
   DEFAULT_BUSINESS_TIMEZONE,
+  buildAppointmentSignatureStrokeSegments,
+  clearAppointmentSignatureData,
+  createUnsavedChangesNavigationGuard,
   formatBusinessDateTime,
   formatMediaSummary,
   getAppointmentQuickActions,
+  hasAppointmentSignatureStrokes,
+  hasAppointmentValidationErrors,
+  isAppointmentFieldNotesDirty,
+  isAppointmentCompletionSignatureScrollEnabled,
   mediaCategoryLabel,
   mediaDisplayTitle,
   mediaTypeLabel,
   normaliseAppointmentExecutionDurations,
+  normaliseAppointmentFieldNotes,
   normaliseBusinessTimezone,
+  roleCanCreateQuotes,
   shouldExecuteAppointmentMoreActionsMenuItem,
+  validateAppointmentCompletion,
+  validateAppointmentFieldWork,
 } from '@tradieos/shared';
+import type { AppointmentFieldValidationErrors } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
+import {
+  CommonActions,
+  useFocusEffect,
+  usePreventRemove,
+} from '@react-navigation/native';
+import type { NavigationAction } from '@react-navigation/native';
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,6 +64,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ApiRequestError,
   appointmentDetailRequest,
@@ -63,6 +91,7 @@ import {
   MediaOverflowMenu,
   MediaRemovalConfirmation,
 } from '../components/MediaOverflowMenu';
+import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import {
@@ -78,7 +107,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
 type AppointmentDetailsAction =
   | AppointmentQuickAction
   | {
-      id: 'edit' | 'job' | 'sms';
+      id: 'edit' | 'job' | 'quote' | 'sms';
       label: string;
       onPress(): void;
     };
@@ -192,6 +221,13 @@ function friendlyMediaError(error: unknown) {
     : "We couldn't load appointment media.";
 }
 
+function logAppointmentDetailsNavigation(
+  event: string,
+  details: Record<string, unknown> = {},
+) {
+  console.info(`[AppointmentDetails] ${event}`, details);
+}
+
 export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
@@ -213,10 +249,78 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const [workCompleted, setWorkCompleted] = useState('');
   const [followUpRequired, setFollowUpRequired] = useState(false);
   const [followUpNotes, setFollowUpNotes] = useState('');
+  const [fieldErrors, setFieldErrors] =
+    useState<AppointmentFieldValidationErrors>({});
+  const [completionErrors, setCompletionErrors] =
+    useState<AppointmentFieldValidationErrors>({});
   const [timerNow, setTimerNow] = useState(() => new Date());
+  const pageScrollRef = useRef<ScrollView | null>(null);
+  const followUpInputRef = useRef<TextInput | null>(null);
+  const savedFieldNotesRef = useRef(normaliseAppointmentFieldNotes(null));
   const moreActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMoreActionRef = useRef<string | null>(null);
   const selectedMoreActionRef = useRef<string | null>(null);
+  const navigationRef = useRef(navigation);
+  const mountedRef = useRef(true);
+  const workLogDirtyRef = useRef(false);
+  const workLogEditableRef = useRef(false);
+  const workLogSavingRef = useRef(false);
+  const guardRef = useRef(
+    createUnsavedChangesNavigationGuard<NavigationAction>({
+      dispatch(action) {
+        navigationRef.current.dispatch(action);
+      },
+      getHasSaved() {
+        return false;
+      },
+      getIsDirty() {
+        return workLogDirtyRef.current && workLogEditableRef.current;
+      },
+      getIsMounted() {
+        return mountedRef.current;
+      },
+      getIsSaving() {
+        return workLogSavingRef.current;
+      },
+      onBeforeConfirmation() {
+        Keyboard.dismiss();
+      },
+      onDiscard() {
+        workLogDirtyRef.current = false;
+      },
+      requestConfirmation({ leave, stay }) {
+        Alert.alert(
+          'Discard unsaved notes?',
+          'Your field notes have not been saved yet.',
+          [
+            { onPress: stay, style: 'cancel', text: 'Keep editing' },
+            {
+              onPress: leave,
+              style: 'destructive',
+              text: 'Discard',
+            },
+          ],
+          { onDismiss: stay },
+        );
+      },
+    }),
+  );
+
+  useEffect(() => {
+    navigationRef.current = navigation;
+  }, [navigation]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      logAppointmentDetailsNavigation('APPOINTMENT_DETAILS_UNMOUNTED', {
+        appointmentId,
+        routeKey: route.key,
+      });
+      mountedRef.current = false;
+      guardRef.current.cleanup();
+    };
+  }, [appointmentId, route.key]);
 
   async function loadAppointment() {
     if (!token) return;
@@ -231,6 +335,12 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         response.appointment.workLog?.followUpRequired ?? false,
       );
       setFollowUpNotes(response.appointment.workLog?.followUpNotes ?? '');
+      savedFieldNotesRef.current = normaliseAppointmentFieldNotes(
+        response.appointment.workLog,
+      );
+      workLogDirtyRef.current = false;
+      setFieldErrors({});
+      setCompletionErrors({});
       navigation.setOptions({ title: response.appointment.appointmentNumber });
       try {
         const mediaResponse = await mediaRequest(token, {
@@ -275,30 +385,172 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
   const hasUnsavedWorkLog =
     Boolean(appointment) &&
-    (technicianNotes !== (appointment?.workLog?.technicianNotes ?? '') ||
-      workCompleted !== (appointment?.workLog?.workCompleted ?? '') ||
-      followUpRequired !== (appointment?.workLog?.followUpRequired ?? false) ||
-      followUpNotes !== (appointment?.workLog?.followUpNotes ?? ''));
+    isAppointmentFieldNotesDirty(
+      {
+        followUpNotes,
+        followUpRequired,
+        technicianNotes,
+        workCompleted,
+      },
+      savedFieldNotesRef.current,
+    );
+  const canEditCurrentWorkLog = canEditWorkLog(appointment, user);
+  const requestMainBack = useCallback(() => {
+    const canGoBack = navigation.canGoBack();
+    logAppointmentDetailsNavigation('APPOINTMENT_DETAILS_MAIN_PRESS', {
+      appointmentId,
+      canGoBack,
+      dirty: workLogDirtyRef.current,
+      editable: workLogEditableRef.current,
+      routeKey: route.key,
+      routeName: route.name,
+    });
+
+    Keyboard.dismiss();
+
+    if (canGoBack) {
+      logAppointmentDetailsNavigation(
+        'APPOINTMENT_DETAILS_GO_BACK_DISPATCHED',
+        {
+          appointmentId,
+          dirty: workLogDirtyRef.current,
+        },
+      );
+      navigation.goBack();
+      return;
+    }
+
+    logAppointmentDetailsNavigation('APPOINTMENT_DETAILS_FALLBACK_TO_MAIN', {
+      appointmentId,
+      dirty: workLogDirtyRef.current,
+    });
+    const fallbackAction = CommonActions.navigate('Main');
+    if (workLogDirtyRef.current && workLogEditableRef.current) {
+      guardRef.current.handlePreventedAction(fallbackAction);
+      return;
+    }
+    navigation.dispatch(fallbackAction);
+  }, [appointmentId, navigation, route.key, route.name]);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (!hasUnsavedWorkLog || !canEditWorkLog(appointment, user)) return;
-      event.preventDefault();
-      Alert.alert(
-        'Discard unsaved notes?',
-        'Your field notes have not been saved yet.',
-        [
-          { style: 'cancel', text: 'Keep editing' },
-          {
-            style: 'destructive',
-            text: 'Discard',
-            onPress: () => navigation.dispatch(event.data.action),
-          },
-        ],
-      );
+    navigation.setOptions({
+      headerBackVisible: false,
+      headerLeft: () => (
+        <ScreenBackButton
+          accessibilityLabel="Back to Main"
+          label="Main"
+          onPress={requestMainBack}
+        />
+      ),
+      title: appointment?.appointmentNumber ?? 'Appointment',
     });
-    return unsubscribe;
-  }, [appointment, hasUnsavedWorkLog, navigation, user]);
+  }, [appointment?.appointmentNumber, navigation, requestMainBack]);
+
+  useEffect(() => {
+    workLogDirtyRef.current = hasUnsavedWorkLog;
+  }, [hasUnsavedWorkLog]);
+
+  useEffect(() => {
+    workLogEditableRef.current = canEditCurrentWorkLog;
+  }, [canEditCurrentWorkLog]);
+
+  useEffect(() => {
+    workLogSavingRef.current = busyText === 'Saving field notes...';
+  }, [busyText]);
+
+  usePreventRemove(
+    hasUnsavedWorkLog &&
+      canEditCurrentWorkLog &&
+      busyText !== 'Saving field notes...',
+    ({ data }) => {
+      guardRef.current.handlePreventedAction(data.action as NavigationAction);
+    },
+  );
+
+  const focusFieldNoteFollowUp = useCallback(() => {
+    pageScrollRef.current?.scrollToEnd({ animated: true });
+    setTimeout(() => followUpInputRef.current?.focus(), 120);
+  }, []);
+
+  const clearFieldError = useCallback(
+    (field: keyof AppointmentFieldValidationErrors) => {
+      setFieldErrors((current) => {
+        if (!current[field]) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+      setCompletionErrors((current) => {
+        if (!current[field]) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+    },
+    [],
+  );
+
+  const updateWorkCompleted = useCallback(
+    (value: string) => {
+      setWorkCompleted(value);
+      if (value.trim()) clearFieldError('workCompleted');
+    },
+    [clearFieldError],
+  );
+
+  const updateFollowUpRequired = useCallback(
+    (value: boolean) => {
+      setFollowUpRequired(value);
+      if (!value) clearFieldError('followUpNotes');
+    },
+    [clearFieldError],
+  );
+
+  const updateFollowUpNotes = useCallback(
+    (value: string) => {
+      setFollowUpNotes(value);
+      if (!followUpRequired || value.trim()) clearFieldError('followUpNotes');
+    },
+    [clearFieldError, followUpRequired],
+  );
+
+  const validateFieldNotesForSave = useCallback(() => {
+    const errors = validateAppointmentFieldWork({
+      followUpNotes,
+      followUpRequired,
+    });
+    setFieldErrors(errors);
+    if (errors.followUpNotes) {
+      focusFieldNoteFollowUp();
+      return false;
+    }
+    return true;
+  }, [focusFieldNoteFollowUp, followUpNotes, followUpRequired]);
+
+  const validateCompletion = useCallback(() => {
+    const errors = validateAppointmentCompletion({
+      canSkipSignature: ['OWNER', 'ADMIN'].includes(user?.role ?? ''),
+      followUpNotes,
+      followUpRequired,
+      hasSignature: Boolean(
+        appointment?.signature?.capturedAt || appointment?.signature?.skippedAt,
+      ),
+      workCompleted,
+    });
+    setCompletionErrors(errors);
+    if (errors.followUpNotes) {
+      focusFieldNoteFollowUp();
+    }
+    return !hasAppointmentValidationErrors(errors);
+  }, [
+    appointment?.signature?.capturedAt,
+    appointment?.signature?.skippedAt,
+    focusFieldNoteFollowUp,
+    followUpNotes,
+    followUpRequired,
+    user?.role,
+    workCompleted,
+  ]);
 
   const dismissMoreActions = useCallback(() => {
     if (moreActionTimerRef.current) {
@@ -323,11 +575,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
   async function transition(action: AppointmentTransitionAction | 'cancel') {
     if (!token || !appointment || busyText) return;
-    if (action === 'complete' && !workCompleted.trim()) {
-      showToast({
-        message: 'Add a short work completed summary before completing.',
-        tone: 'error',
-      });
+    if (action === 'complete' && !validateCompletion()) {
       return;
     }
     setBusyText(actionText(action));
@@ -345,6 +593,21 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             }
           : undefined,
       );
+      if (action === 'complete') {
+        setTechnicianNotes(response.appointment.workLog?.technicianNotes ?? '');
+        setWorkCompleted(response.appointment.workLog?.workCompleted ?? '');
+        setFollowUpRequired(
+          response.appointment.workLog?.followUpRequired ?? false,
+        );
+        setFollowUpNotes(response.appointment.workLog?.followUpNotes ?? '');
+        savedFieldNotesRef.current = normaliseAppointmentFieldNotes(
+          response.appointment.workLog,
+        );
+        workLogDirtyRef.current = false;
+        guardRef.current.cleanup();
+        setFieldErrors({});
+        setCompletionErrors({});
+      }
       setAppointment(response.appointment);
       setIsCompletionOpen(false);
       showToast({
@@ -357,6 +620,25 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         tone: 'success',
       });
     } catch (error) {
+      if (error instanceof ApiRequestError) {
+        if (error.code === 'WORK_COMPLETED_REQUIRED') {
+          setCompletionErrors({
+            workCompleted: 'Please enter the work completed.',
+          });
+        }
+        if (error.code === 'FOLLOW_UP_NOTES_REQUIRED') {
+          setCompletionErrors({
+            followUpNotes: 'Please describe the follow-up required.',
+          });
+          focusFieldNoteFollowUp();
+        }
+        if (error.code === 'SIGNATURE_REQUIRED') {
+          setCompletionErrors({
+            signature:
+              'Capture the customer signature or record an authorised skip reason.',
+          });
+        }
+      }
       showToast({
         message: friendlyAppointmentMutationError(error),
         tone: 'error',
@@ -413,6 +695,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
   async function saveWorkLog() {
     if (!token || !appointment || busyText) return;
+    if (!validateFieldNotesForSave()) return;
     setBusyText('Saving field notes...');
     try {
       const response = await updateAppointmentWorkLogRequest(
@@ -425,9 +708,31 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           workCompleted,
         },
       );
+      setTechnicianNotes(response.appointment.workLog?.technicianNotes ?? '');
+      setWorkCompleted(response.appointment.workLog?.workCompleted ?? '');
+      setFollowUpRequired(
+        response.appointment.workLog?.followUpRequired ?? false,
+      );
+      setFollowUpNotes(response.appointment.workLog?.followUpNotes ?? '');
+      savedFieldNotesRef.current = normaliseAppointmentFieldNotes(
+        response.appointment.workLog,
+      );
+      workLogDirtyRef.current = false;
+      guardRef.current.cleanup();
+      setFieldErrors({});
+      setCompletionErrors({});
       setAppointment(response.appointment);
       showToast({ message: 'Field notes saved.', tone: 'success' });
     } catch (error) {
+      if (
+        error instanceof ApiRequestError &&
+        error.code === 'FOLLOW_UP_NOTES_REQUIRED'
+      ) {
+        setFieldErrors({
+          followUpNotes: 'Please describe the follow-up required.',
+        });
+        focusFieldNoteFollowUp();
+      }
       showToast({
         message:
           error instanceof Error
@@ -451,6 +756,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         appointment.id,
         input,
       );
+      clearFieldError('signature');
       setAppointment(response.appointment);
       showToast({ message: 'Customer signature saved.', tone: 'success' });
     } catch (error) {
@@ -475,6 +781,8 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         appointment.id,
         { reason },
       );
+      clearFieldError('signature');
+      clearFieldError('signatureSkipReason');
       setAppointment(response.appointment);
       showToast({ message: 'Signature skip recorded.', tone: 'success' });
     } catch (error) {
@@ -609,6 +917,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   );
   const canEditAppointment = canCreateAppointment(user?.role);
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
+  const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const primaryActions = [
     navigateAction,
     workflowAction && workflowAction.id !== 'complete' ? workflowAction : null,
@@ -655,6 +964,19 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             navigation.navigate('JobDetails', { jobId: appointment.jobId }),
         }
       : null,
+    canCreateQuote
+      ? {
+          id: 'quote' as const,
+          label: 'Create Quote',
+          onPress: () =>
+            navigation.navigate('QuoteForm', {
+              appointmentId: appointment.id,
+              customerId: appointment.job.customer.id,
+              customerSiteId: appointment.customerSiteId ?? undefined,
+              jobId: appointment.jobId,
+            }),
+        }
+      : null,
     rescheduleAction,
   ];
   const secondaryActions = secondaryActionCandidates.filter(
@@ -664,10 +986,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     appointment,
     timerNow,
   );
-  const workLogEditable = canEditWorkLog(appointment, user);
+  const workLogEditable = canEditCurrentWorkLog;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} ref={pageScrollRef}>
       <Text style={styles.eyebrow}>{appointment.appointmentNumber}</Text>
       <Text style={styles.title}>{appointment.job.title}</Text>
       <View
@@ -790,12 +1112,20 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
             <Text style={styles.inputLabel}>Work completed</Text>
             <TextInput
               multiline
-              onChangeText={setWorkCompleted}
+              onChangeText={updateWorkCompleted}
               placeholder="Example: Replaced faulty switch and tested circuit."
               placeholderTextColor={colours.muted}
-              style={styles.textArea}
+              style={[
+                styles.textArea,
+                completionErrors.workCompleted && styles.inputError,
+              ]}
               value={workCompleted}
             />
+            {completionErrors.workCompleted ? (
+              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+                {completionErrors.workCompleted}
+              </Text>
+            ) : null}
             <View style={styles.switchRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.inputLabel}>Follow-up required</Text>
@@ -804,26 +1134,51 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
                 </Text>
               </View>
               <Switch
-                onValueChange={setFollowUpRequired}
+                onValueChange={updateFollowUpRequired}
                 value={followUpRequired}
               />
             </View>
             {followUpRequired ? (
-              <TextInput
-                multiline
-                onChangeText={setFollowUpNotes}
-                placeholder="What follow-up is needed?"
-                placeholderTextColor={colours.muted}
-                style={styles.textArea}
-                value={followUpNotes}
-              />
+              <>
+                <TextInput
+                  ref={followUpInputRef}
+                  multiline
+                  onChangeText={updateFollowUpNotes}
+                  placeholder="What follow-up is needed?"
+                  placeholderTextColor={colours.muted}
+                  style={[
+                    styles.textArea,
+                    fieldErrors.followUpNotes && styles.inputError,
+                  ]}
+                  value={followUpNotes}
+                />
+                {fieldErrors.followUpNotes ? (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    style={styles.errorText}
+                  >
+                    {fieldErrors.followUpNotes}
+                  </Text>
+                ) : null}
+              </>
             ) : null}
-            <QuickAction
-              disabled={!hasUnsavedWorkLog || Boolean(busyText)}
-              label="Save field notes"
-              onPress={() => void saveWorkLog()}
-              primary
-            />
+            {hasUnsavedWorkLog ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={Boolean(busyText)}
+                onPress={() => void saveWorkLog()}
+                style={[
+                  styles.saveFieldNotesButton,
+                  Boolean(busyText) && styles.disabledAction,
+                ]}
+              >
+                <Text style={styles.quickTextPrimary}>
+                  {busyText === 'Saving field notes...'
+                    ? 'Saving...'
+                    : 'Save field notes'}
+                </Text>
+              </Pressable>
+            ) : null}
           </>
         ) : (
           <>
@@ -930,6 +1285,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       <CompletionModal
         appointment={appointment}
         busy={Boolean(busyText)}
+        errors={completionErrors}
         followUpNotes={followUpNotes}
         followUpRequired={followUpRequired}
         mediaCount={media.length}
@@ -937,10 +1293,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         onConfirm={() => void transition('complete')}
         onSaveSignature={(input) => void saveSignature(input)}
         onSkipSignature={(reason) => void skipSignature(reason)}
-        setFollowUpNotes={setFollowUpNotes}
-        setFollowUpRequired={setFollowUpRequired}
+        setFollowUpNotes={updateFollowUpNotes}
+        setFollowUpRequired={updateFollowUpRequired}
         setTechnicianNotes={setTechnicianNotes}
-        setWorkCompleted={setWorkCompleted}
+        setWorkCompleted={updateWorkCompleted}
         technicianNotes={technicianNotes}
         visible={isCompletionOpen}
         workCompleted={workCompleted}
@@ -993,7 +1349,21 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     if (action.id === 'arrive') await transition('arrive');
     if (action.id === 'pause') await transition('pause');
     if (action.id === 'resume') await transition('resume');
-    if (action.id === 'complete') setIsCompletionOpen(true);
+    if (action.id === 'complete') {
+      setCompletionErrors(
+        validateAppointmentCompletion({
+          canSkipSignature: ['OWNER', 'ADMIN'].includes(user?.role ?? ''),
+          followUpNotes,
+          followUpRequired,
+          hasSignature: Boolean(
+            appointment.signature?.capturedAt ||
+            appointment.signature?.skippedAt,
+          ),
+          workCompleted,
+        }),
+      );
+      setIsCompletionOpen(true);
+    }
   }
 
   function confirmAppointment() {
@@ -1201,6 +1571,7 @@ function CompletionModal({
   appointment,
   busy,
   canSkipSignature,
+  errors,
   followUpNotes,
   followUpRequired,
   mediaCount,
@@ -1219,6 +1590,7 @@ function CompletionModal({
   appointment: Appointment;
   busy: boolean;
   canSkipSignature: boolean;
+  errors: AppointmentFieldValidationErrors;
   followUpNotes: string;
   followUpRequired: boolean;
   mediaCount: number;
@@ -1236,6 +1608,8 @@ function CompletionModal({
   visible: boolean;
   workCompleted: string;
 }) {
+  const insets = useSafeAreaInsets();
+  const completionScrollRef = useRef<ScrollView | null>(null);
   const [customerName, setCustomerName] = useState(
     appointment.signature?.customerName ??
       appointment.job.customer.displayName ??
@@ -1247,13 +1621,14 @@ function CompletionModal({
   const [signatureData, setSignatureData] = useState<
     Parameters<typeof captureAppointmentSignatureRequest>[2]['signatureData']
   >({
-    height: 160,
+    height: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
     strokes: [],
     width: 320,
   });
   const [skipReason, setSkipReason] = useState(
     appointment.signature?.skipReason ?? '',
   );
+  const [signatureActive, setSignatureActive] = useState(false);
   useEffect(() => {
     setCustomerName(
       appointment.signature?.customerName ??
@@ -1261,20 +1636,39 @@ function CompletionModal({
         '',
     );
     setSignerTitle(appointment.signature?.signerTitle ?? '');
-    setSignatureData({ height: 160, strokes: [], width: 320 });
+    setSignatureData({
+      height: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
+      strokes: [],
+      width: 320,
+    });
     setSkipReason(appointment.signature?.skipReason ?? '');
+    setSignatureActive(false);
   }, [
     appointment.id,
     appointment.job.customer.displayName,
     appointment.signature,
   ]);
+  useEffect(() => {
+    if (!visible) {
+      setSignatureActive(false);
+    }
+  }, [visible]);
+  useEffect(() => {
+    if (!visible) return;
+    if (errors.workCompleted) {
+      completionScrollRef.current?.scrollTo({ animated: true, y: 80 });
+      return;
+    }
+    if (errors.followUpNotes) {
+      completionScrollRef.current?.scrollTo({ animated: true, y: 260 });
+      return;
+    }
+    if (errors.signature) {
+      completionScrollRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [errors.followUpNotes, errors.signature, errors.workCompleted, visible]);
 
-  const hasSavedSignature = Boolean(
-    appointment.signature?.capturedAt || appointment.signature?.skippedAt,
-  );
-  const hasPendingSignature = signatureData.strokes.some(
-    (stroke) => stroke.length > 0,
-  );
+  const hasPendingSignature = hasAppointmentSignatureStrokes(signatureData);
   const checklist = [
     {
       label: 'Work completed summary entered',
@@ -1294,216 +1688,306 @@ function CompletionModal({
     },
     { label: 'Materials used reviewed', state: 'Optional' },
   ];
-  const canComplete = Boolean(
-    workCompleted.trim() && hasSavedSignature && !busy,
-  );
+  const canComplete = !busy;
   const executionDurations = normaliseAppointmentExecutionDurations(
     appointment.executionDurations,
   );
+  const clearSignature = useCallback(() => {
+    setSignatureActive(false);
+    setSignatureData(clearAppointmentSignatureData);
+  }, []);
+  const cancelCompletion = useCallback(() => {
+    setSignatureActive(false);
+    onCancel();
+  }, [onCancel]);
 
   return (
     <Modal
       animationType="slide"
-      onRequestClose={onCancel}
+      onRequestClose={cancelCompletion}
       transparent
       visible={visible}
     >
-      <View style={styles.modalBackdrop}>
-        <View style={styles.completionCard}>
-          <Text style={styles.moreTitle}>Complete this appointment?</Text>
-          <Text style={styles.meta}>
-            {appointment.job.customer.companyName ??
-              appointment.job.customer.displayName}{' '}
-            · {appointment.job.title}
-          </Text>
-
-          <View style={styles.checklistCard}>
-            {checklist.map((item) => (
-              <View key={item.label} style={styles.checklistRow}>
-                <Text style={styles.checklistLabel}>{item.label}</Text>
-                <Text
-                  style={[
-                    styles.checklistState,
-                    item.state === 'Missing' && styles.checklistMissing,
-                  ]}
-                >
-                  {item.state}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          <Text style={styles.inputLabel}>Work completed</Text>
-          <TextInput
-            multiline
-            onChangeText={setWorkCompleted}
-            placeholder="Example: Replaced faulty switch and tested circuit."
-            style={styles.textArea}
-            value={workCompleted}
-          />
-
-          <Text style={styles.inputLabel}>Technician notes</Text>
-          <TextInput
-            multiline
-            onChangeText={setTechnicianNotes}
-            placeholder="Internal notes for the business."
-            style={styles.textArea}
-            value={technicianNotes}
-          />
-
-          <View style={styles.switchRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Follow-up required</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.completionKeyboardAvoider}
+      >
+        <View
+          style={[
+            styles.completionBackdrop,
+            {
+              paddingBottom: Math.max(insets.bottom + 12, 20),
+              paddingTop: Math.max(insets.top + 12, 20),
+            },
+          ]}
+        >
+          <View style={styles.completionCard}>
+            <View style={styles.completionHeader}>
+              <Text style={styles.moreTitle}>Complete this appointment?</Text>
               <Text style={styles.meta}>
-                Keep the job open and flag another visit or admin follow-up.
+                {appointment.job.customer.companyName ??
+                  appointment.job.customer.displayName}{' '}
+                · {appointment.job.title}
               </Text>
             </View>
-            <Switch
-              onValueChange={setFollowUpRequired}
-              value={followUpRequired}
-            />
-          </View>
 
-          {followUpRequired ? (
-            <TextInput
-              multiline
-              onChangeText={setFollowUpNotes}
-              placeholder="What follow-up is needed?"
-              style={styles.textArea}
-              value={followUpNotes}
-            />
-          ) : null}
-
-          <Text style={styles.inputLabel}>Customer signature</Text>
-          {appointment.signature?.capturedAt ? (
-            <SignatureSummary
-              title="Signature captured"
-              subtitle={`${appointment.signature.customerName ?? 'Customer'} · ${formatDateTime(
-                appointment.signature.capturedAt,
-              )}`}
-            />
-          ) : appointment.signature?.skippedAt ? (
-            <SignatureSummary
-              title="Signature skipped"
-              subtitle={appointment.signature.skipReason ?? 'Reason recorded'}
-            />
-          ) : (
-            <>
-              <TextInput
-                onChangeText={setCustomerName}
-                placeholder="Customer name"
-                placeholderTextColor={colours.muted}
-                style={styles.textInput}
-                value={customerName}
-              />
-              <TextInput
-                onChangeText={setSignerTitle}
-                placeholder="Relationship/title (optional)"
-                placeholderTextColor={colours.muted}
-                style={styles.textInput}
-                value={signerTitle}
-              />
-              <Text style={styles.consentText}>
-                I confirm the work described above has been completed.
-              </Text>
-              <SignaturePad
-                disabled={busy}
-                onChange={setSignatureData}
-                signatureData={signatureData}
-              />
-              <View style={styles.signatureActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={
-                    busy || !hasPendingSignature || !customerName.trim()
-                  }
-                  onPress={() =>
-                    onSaveSignature({
-                      consentText:
-                        'I confirm the work described above has been completed.',
-                      customerName,
-                      signatureData,
-                      signerTitle,
-                    })
-                  }
-                  style={[
-                    styles.quickAction,
-                    styles.quickActionPrimary,
-                    (busy || !hasPendingSignature || !customerName.trim()) &&
-                      styles.disabledAction,
-                  ]}
-                >
-                  <Text style={styles.quickTextPrimary}>Save signature</Text>
-                </Pressable>
+            <ScrollView
+              contentContainerStyle={styles.completionScrollContent}
+              keyboardShouldPersistTaps="handled"
+              ref={completionScrollRef}
+              scrollEnabled={isAppointmentCompletionSignatureScrollEnabled(
+                signatureActive,
+              )}
+              showsVerticalScrollIndicator
+              style={styles.completionScroll}
+            >
+              <View style={styles.checklistCard}>
+                {checklist.map((item) => (
+                  <View key={item.label} style={styles.checklistRow}>
+                    <Text style={styles.checklistLabel}>{item.label}</Text>
+                    <Text
+                      style={[
+                        styles.checklistState,
+                        item.state === 'Missing' && styles.checklistMissing,
+                      ]}
+                    >
+                      {item.state}
+                    </Text>
+                  </View>
+                ))}
               </View>
-              {canSkipSignature ? (
+
+              <Text style={styles.inputLabel}>Work completed</Text>
+              <TextInput
+                multiline
+                onChangeText={setWorkCompleted}
+                placeholder="Example: Replaced faulty switch and tested circuit."
+                style={[
+                  styles.textArea,
+                  errors.workCompleted && styles.inputError,
+                ]}
+                value={workCompleted}
+              />
+              {errors.workCompleted ? (
+                <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+                  {errors.workCompleted}
+                </Text>
+              ) : null}
+
+              <Text style={styles.inputLabel}>Technician notes</Text>
+              <TextInput
+                multiline
+                onChangeText={setTechnicianNotes}
+                placeholder="Internal notes for the business."
+                style={styles.textArea}
+                value={technicianNotes}
+              />
+
+              <View style={styles.switchRow}>
+                <View style={styles.switchCopy}>
+                  <Text style={styles.inputLabel}>Follow-up required</Text>
+                  <Text style={styles.meta}>
+                    Keep the job open and flag another visit or admin follow-up.
+                  </Text>
+                </View>
+                <Switch
+                  onValueChange={setFollowUpRequired}
+                  value={followUpRequired}
+                />
+              </View>
+
+              {followUpRequired ? (
                 <>
-                  <Text style={styles.inputLabel}>Skip reason</Text>
                   <TextInput
                     multiline
-                    onChangeText={setSkipReason}
-                    placeholder="Why is the customer signature unavailable?"
-                    placeholderTextColor={colours.muted}
-                    style={styles.textArea}
-                    value={skipReason}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={busy || !skipReason.trim()}
-                    onPress={() => onSkipSignature(skipReason)}
+                    onChangeText={setFollowUpNotes}
+                    placeholder="What follow-up is needed?"
                     style={[
-                      styles.quickAction,
-                      busy || !skipReason.trim()
-                        ? styles.disabledAction
-                        : undefined,
+                      styles.textArea,
+                      errors.followUpNotes && styles.inputError,
                     ]}
-                  >
-                    <Text style={styles.quickText}>
-                      Skip signature with reason
+                    value={followUpNotes}
+                  />
+                  {errors.followUpNotes ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      style={styles.errorText}
+                    >
+                      {errors.followUpNotes}
                     </Text>
-                  </Pressable>
+                  ) : null}
                 </>
               ) : null}
-            </>
-          )}
 
-          <Card title="Completion review">
-            <Text style={styles.meta}>Job: {appointment.job.title}</Text>
-            <Text style={styles.meta}>
-              Customer:{' '}
-              {appointment.job.customer.companyName ??
-                appointment.job.customer.displayName}
-            </Text>
-            <Text style={styles.meta}>
-              Media: {mediaCount} {mediaCount === 1 ? 'file' : 'files'}
-            </Text>
-            <Text style={styles.meta}>
-              Travel: {formatDuration(executionDurations.travelMinutes)} · Work:{' '}
-              {formatDuration(executionDurations.workMinutes)} · Paused:{' '}
-              {formatDuration(executionDurations.pausedMinutes)}
-            </Text>
-          </Card>
+              <View style={styles.signatureSection}>
+                <Text style={styles.inputLabel}>Customer signature</Text>
+                {appointment.signature?.capturedAt ? (
+                  <SignatureSummary
+                    title="Signature captured"
+                    subtitle={`${appointment.signature.customerName ?? 'Customer'} · ${formatDateTime(
+                      appointment.signature.capturedAt,
+                    )}`}
+                  />
+                ) : appointment.signature?.skippedAt ? (
+                  <SignatureSummary
+                    title="Signature skipped"
+                    subtitle={
+                      appointment.signature.skipReason ?? 'Reason recorded'
+                    }
+                  />
+                ) : (
+                  <>
+                    <TextInput
+                      onChangeText={setCustomerName}
+                      placeholder="Customer name"
+                      placeholderTextColor={colours.muted}
+                      style={styles.textInput}
+                      value={customerName}
+                    />
+                    <TextInput
+                      onChangeText={setSignerTitle}
+                      placeholder="Relationship/title (optional)"
+                      placeholderTextColor={colours.muted}
+                      style={styles.textInput}
+                      value={signerTitle}
+                    />
+                    <Text style={styles.consentText}>
+                      I confirm the work described above has been completed.
+                    </Text>
+                    <SignaturePad
+                      disabled={busy}
+                      onBeginSignature={() => setSignatureActive(true)}
+                      onChange={setSignatureData}
+                      onEndSignature={() => setSignatureActive(false)}
+                      signatureData={signatureData}
+                    />
+                    <View style={styles.signatureActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={busy || !hasPendingSignature}
+                        onPress={clearSignature}
+                        style={[
+                          styles.quickAction,
+                          styles.signatureActionButton,
+                          (busy || !hasPendingSignature) &&
+                            styles.disabledAction,
+                        ]}
+                      >
+                        <Text style={styles.quickText}>Clear signature</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={
+                          busy || !hasPendingSignature || !customerName.trim()
+                        }
+                        onPress={() =>
+                          onSaveSignature({
+                            consentText:
+                              'I confirm the work described above has been completed.',
+                            customerName,
+                            signatureData,
+                            signerTitle,
+                          })
+                        }
+                        style={[
+                          styles.quickAction,
+                          styles.quickActionPrimary,
+                          styles.signatureActionButton,
+                          (busy ||
+                            !hasPendingSignature ||
+                            !customerName.trim()) &&
+                            styles.disabledAction,
+                        ]}
+                      >
+                        <Text style={styles.quickTextPrimary}>
+                          Save signature
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {errors.signature ? (
+                      <Text
+                        accessibilityLiveRegion="polite"
+                        style={styles.errorText}
+                      >
+                        {errors.signature}
+                      </Text>
+                    ) : null}
+                    {canSkipSignature ? (
+                      <View style={styles.skipSignatureSection}>
+                        <Text
+                          style={[styles.inputLabel, styles.skipReasonLabel]}
+                        >
+                          Skip reason
+                        </Text>
+                        <TextInput
+                          multiline
+                          onChangeText={setSkipReason}
+                          placeholder="Why is the customer signature unavailable?"
+                          placeholderTextColor={colours.muted}
+                          style={[styles.textArea, styles.skipReasonInput]}
+                          value={skipReason}
+                        />
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={busy || !skipReason.trim()}
+                          onPress={() => onSkipSignature(skipReason)}
+                          style={[
+                            styles.quickAction,
+                            styles.skipSignatureButton,
+                            busy || !skipReason.trim()
+                              ? styles.disabledAction
+                              : undefined,
+                          ]}
+                        >
+                          <Text style={styles.quickText}>
+                            Skip signature with reason
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </>
+                )}
+              </View>
 
-          <View style={styles.modalActions}>
-            <Pressable style={styles.quickAction} onPress={onCancel}>
-              <Text style={styles.quickText}>Decide later</Text>
-            </Pressable>
-            <Pressable
-              disabled={!canComplete}
-              style={[
-                styles.quickAction,
-                styles.quickActionPrimary,
-                !canComplete && styles.disabledAction,
-              ]}
-              onPress={onConfirm}
-            >
-              <Text style={styles.quickTextPrimary}>
-                {busy ? 'Completing...' : 'Complete appointment'}
-              </Text>
-            </Pressable>
+              <Card title="Completion review">
+                <Text style={styles.meta}>Job: {appointment.job.title}</Text>
+                <Text style={styles.meta}>
+                  Customer:{' '}
+                  {appointment.job.customer.companyName ??
+                    appointment.job.customer.displayName}
+                </Text>
+                <Text style={styles.meta}>
+                  Media: {mediaCount} {mediaCount === 1 ? 'file' : 'files'}
+                </Text>
+                <Text style={styles.meta}>
+                  Travel: {formatDuration(executionDurations.travelMinutes)} ·
+                  Work: {formatDuration(executionDurations.workMinutes)} ·
+                  Paused: {formatDuration(executionDurations.pausedMinutes)}
+                </Text>
+              </Card>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.quickAction} onPress={cancelCompletion}>
+                <Text style={styles.quickText}>Decide later</Text>
+              </Pressable>
+              <Pressable
+                disabled={!canComplete}
+                style={[
+                  styles.quickAction,
+                  styles.quickActionPrimary,
+                  !canComplete && styles.disabledAction,
+                ]}
+                onPress={onConfirm}
+              >
+                <Text style={styles.quickTextPrimary}>
+                  {busy ? 'Completing...' : 'Complete appointment'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1614,15 +2098,19 @@ function TimerMetric({ label, value }: { label: string; value: string }) {
 
 function SignaturePad({
   disabled,
+  onBeginSignature,
   onChange,
+  onEndSignature,
   signatureData,
 }: {
   disabled: boolean;
+  onBeginSignature(): void;
   onChange(
     value: Parameters<
       typeof captureAppointmentSignatureRequest
     >[2]['signatureData'],
   ): void;
+  onEndSignature(): void;
   signatureData: Parameters<
     typeof captureAppointmentSignatureRequest
   >[2]['signatureData'];
@@ -1639,6 +2127,7 @@ function SignaturePad({
       onMoveShouldSetPanResponder: () => !disabledRef.current,
       onStartShouldSetPanResponder: () => !disabledRef.current,
       onPanResponderGrant: (event) => {
+        onBeginSignature();
         const point = {
           x: Math.max(0, event.nativeEvent.locationX),
           y: Math.max(0, event.nativeEvent.locationY),
@@ -1659,6 +2148,13 @@ function SignaturePad({
         strokesRef.current = [...strokesRef.current.slice(0, -1), nextStroke];
         onChange({ ...layoutRef.current, strokes: strokesRef.current });
       },
+      onPanResponderRelease: () => {
+        onEndSignature();
+      },
+      onPanResponderTerminate: () => {
+        onEndSignature();
+      },
+      onShouldBlockNativeResponder: () => true,
     }),
   ).current;
 
@@ -1674,49 +2170,63 @@ function SignaturePad({
     disabledRef.current = disabled;
   }, [disabled]);
 
+  const signatureSegments =
+    buildAppointmentSignatureStrokeSegments(signatureData);
+
   return (
-    <View>
-      <View
-        accessibilityLabel="Customer signature pad"
-        accessibilityRole="adjustable"
-        onLayout={(event) => {
-          const nextLayout = {
-            height: Math.round(event.nativeEvent.layout.height),
-            width: Math.round(event.nativeEvent.layout.width),
-          };
-          setLayout(nextLayout);
-          onChange({ ...nextLayout, strokes: signatureData.strokes });
-        }}
-        style={styles.signaturePad}
-        {...panResponder.panHandlers}
-      >
-        {signatureData.strokes.map((stroke, strokeIndex) =>
-          stroke.map((point, pointIndex) => (
+    <View style={styles.signaturePadBlock}>
+      <View style={styles.signaturePadContainer}>
+        <View
+          accessibilityLabel="Customer signature pad"
+          accessibilityRole="adjustable"
+          onLayout={(event) => {
+            const nextLayout = {
+              height: Math.round(event.nativeEvent.layout.height),
+              width: Math.round(event.nativeEvent.layout.width),
+            };
+            setLayout(nextLayout);
+            onChange({ ...nextLayout, strokes: signatureData.strokes });
+          }}
+          style={styles.signaturePad}
+          {...panResponder.panHandlers}
+        >
+          {signatureSegments.map((segment) => (
             <View
-              key={`${strokeIndex}-${pointIndex}`}
+              key={`${segment.strokeIndex}-${segment.segmentIndex}`}
               style={[
-                styles.signaturePoint,
-                { left: point.x - 2, top: point.y - 2 },
+                styles.signatureStrokeSegment,
+                {
+                  left: segment.x,
+                  top: segment.y,
+                  transform: [{ rotateZ: `${segment.angleDegrees}deg` }],
+                  width: Math.max(
+                    segment.length,
+                    APPOINTMENT_SIGNATURE_STROKE_WIDTH,
+                  ),
+                },
               ]}
             />
-          )),
-        )}
-        {signatureData.strokes.length === 0 ? (
-          <Text style={styles.signatureHint}>Customer signs here</Text>
-        ) : null}
+          ))}
+          {signatureData.strokes.map((stroke, strokeIndex) => {
+            const point = stroke[0];
+            return stroke.length === 1 && point ? (
+              <View
+                key={`${strokeIndex}-single-point`}
+                style={[
+                  styles.signatureSinglePoint,
+                  {
+                    left: point.x - APPOINTMENT_SIGNATURE_STROKE_WIDTH / 2,
+                    top: point.y - APPOINTMENT_SIGNATURE_STROKE_WIDTH / 2,
+                  },
+                ]}
+              />
+            ) : null;
+          })}
+          {signatureData.strokes.length === 0 ? (
+            <Text style={styles.signatureHint}>Customer signs here</Text>
+          ) : null}
+        </View>
       </View>
-      <Pressable
-        accessibilityRole="button"
-        disabled={disabled || signatureData.strokes.length === 0}
-        onPress={() => onChange({ ...layout, strokes: [] })}
-        style={[
-          styles.clearSignatureButton,
-          (disabled || signatureData.strokes.length === 0) &&
-            styles.disabledAction,
-        ]}
-      >
-        <Text style={styles.quickText}>Clear signature</Text>
-      </Pressable>
     </View>
   );
 }
@@ -1788,24 +2298,35 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   checklistState: { color: colours.primary, fontSize: 12, fontWeight: '900' },
-  clearSignatureButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    marginTop: 10,
-    minHeight: 44,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  completionBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.32)',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   completionCard: {
     backgroundColor: colours.card,
     borderColor: colours.border,
     borderRadius: 24,
     borderWidth: 1,
-    maxHeight: '92%',
+    maxHeight: '100%',
     maxWidth: 520,
-    padding: 18,
+    overflow: 'hidden',
     width: '94%',
+  },
+  completionHeader: {
+    borderBottomColor: colours.border,
+    borderBottomWidth: 1,
+    paddingBottom: 12,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+  },
+  completionKeyboardAvoider: { flex: 1 },
+  completionScroll: { alignSelf: 'stretch' },
+  completionScrollContent: {
+    paddingBottom: 18,
+    paddingHorizontal: 18,
   },
   container: {
     backgroundColor: colours.background,
@@ -1817,6 +2338,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1,
+  },
+  errorText: {
+    color: '#BE123C',
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 18,
+    marginTop: 6,
+  },
+  inputError: {
+    borderColor: '#BE123C',
+    borderWidth: 1.5,
   },
   loadingPage: {
     alignItems: 'center',
@@ -1885,11 +2417,14 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   modalActions: {
+    borderTopColor: colours.border,
+    borderTopWidth: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
     justifyContent: 'flex-end',
-    marginTop: 16,
+    padding: 18,
+    paddingTop: 12,
   },
   modalBackdrop: {
     alignItems: 'center',
@@ -1949,13 +2484,32 @@ const styles = StyleSheet.create({
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
   quickText: { color: colours.primary, fontWeight: '900', textAlign: 'center' },
   quickTextPrimary: { color: '#FFFFFF', textAlign: 'center' },
+  saveFieldNotesButton: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    backgroundColor: colours.primary,
+    borderRadius: 999,
+    justifyContent: 'center',
+    marginBottom: 4,
+    marginTop: 16,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 12,
     marginTop: 8,
   },
-  signatureActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  switchCopy: { flex: 1 },
+  signatureActionButton: { flex: 1 },
+  signatureActions: {
+    flexDirection: 'row',
+    gap: APPOINTMENT_SIGNATURE_ACTION_GAP,
+    marginBottom: 8,
+    marginTop: 14,
+  },
   signatureHint: {
     color: colours.muted,
     fontWeight: '800',
@@ -1969,16 +2523,34 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderStyle: 'dashed',
     borderWidth: 1,
-    height: 160,
-    marginTop: 10,
+    flexGrow: 0,
+    flexShrink: 0,
+    height: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
+    minHeight: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
     overflow: 'hidden',
   },
-  signaturePoint: {
-    backgroundColor: colours.ink,
-    borderRadius: 2,
-    height: 4,
+  signaturePadBlock: {
+    flexShrink: 0,
+    marginTop: 10,
+  },
+  signaturePadContainer: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
+    minHeight: APPOINTMENT_SIGNATURE_PAD_HEIGHT,
+  },
+  signatureSinglePoint: {
+    backgroundColor: APPOINTMENT_SIGNATURE_STROKE_COLOUR,
+    borderRadius: APPOINTMENT_SIGNATURE_STROKE_WIDTH / 2,
+    height: APPOINTMENT_SIGNATURE_STROKE_WIDTH,
     position: 'absolute',
-    width: 4,
+    width: APPOINTMENT_SIGNATURE_STROKE_WIDTH,
+  },
+  signatureStrokeSegment: {
+    backgroundColor: APPOINTMENT_SIGNATURE_STROKE_COLOUR,
+    borderRadius: APPOINTMENT_SIGNATURE_STROKE_WIDTH / 2,
+    height: APPOINTMENT_SIGNATURE_STROKE_WIDTH,
+    position: 'absolute',
   },
   signatureSummary: {
     backgroundColor: '#ECFDF5',
@@ -1992,6 +2564,22 @@ const styles = StyleSheet.create({
     color: '#047857',
     fontSize: 15,
     fontWeight: '900',
+  },
+  signatureSection: {
+    flexShrink: 0,
+    marginTop: 4,
+  },
+  skipReasonInput: {
+    marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP,
+  },
+  skipReasonLabel: {
+    marginTop: 0,
+  },
+  skipSignatureButton: {
+    marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP,
+  },
+  skipSignatureSection: {
+    marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING,
   },
   textArea: {
     backgroundColor: '#F8FAFC',

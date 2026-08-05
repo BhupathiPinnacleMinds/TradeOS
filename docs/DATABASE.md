@@ -40,6 +40,8 @@ Current Prisma models include:
 - AppointmentSequence
 - Quote
 - QuoteLineItem
+- QuoteRevision
+- QuoteSequence
 - Invoice
 - InvoiceLineItem
 - Payment
@@ -53,6 +55,27 @@ Current Prisma models include:
 - AuditLog
 
 Future documentation names may use `QuoteItem`, `InvoiceItem`, and `MessageDraft`; in the current implementation, quote/invoice items are represented by line item models, and message drafts are represented through `Message.status`.
+
+## Quote data model
+
+The Quotes foundation upgrades the earlier placeholder quote records into a
+tenant-scoped Australian quoting model.
+
+- `Quote` includes `businessId`, `quoteNumber`, customer/site/job/appointment
+  links, lifecycle status, issue/expiry dates, AUD currency, GST pricing mode,
+  integer-cent subtotal/discount/GST/total/deposit fields, customer/internal
+  notes, terms, acceptance metadata, conversion metadata and archive metadata.
+- `QuoteLineItem` stores labour/material/service/fee/other lines with decimal
+  quantity, unit, integer-cent unit price and server-calculated integer-cent
+  line totals.
+- `QuoteRevision` stores immutable JSON snapshots before customer-facing send,
+  acceptance and controlled revisions.
+- `QuoteSequence` stores business-local numbering for values such as
+  `Q-2026-000001`.
+
+Quote money values are stored as integer cents. The API recalculates all totals
+server-side through the shared quote calculation helper and does not trust
+client-provided totals.
 
 ## Entity definitions
 

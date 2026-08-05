@@ -1094,6 +1094,23 @@ describe('AppointmentsService', () => {
       });
   });
 
+  it('requires follow-up notes before completing when follow-up is required', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service
+      .transition(technician, 'appointment-1', 'COMPLETED', {
+        followUpNotes: '   ',
+        followUpRequired: true,
+        workCompleted: 'Replaced faulty switch and tested circuit.',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'FOLLOW_UP_NOTES_REQUIRED');
+      });
+  });
+
   it('requires a signature before completing an in-progress appointment', async () => {
     const { prisma, service } = createService();
     prisma.appointment.findFirst.mockResolvedValueOnce(
@@ -1224,6 +1241,23 @@ describe('AppointmentsService', () => {
     const auditActions = auditCalls.map((call) => call[0].data.action);
     expect(auditActions).toContain('APPOINTMENT_WORK_LOG_UPDATED');
     expect(auditActions).toContain('FOLLOW_UP_REQUIRED');
+  });
+
+  it('rejects missing follow-up notes when saving a required follow-up work log', async () => {
+    const { prisma, service } = createService();
+
+    await service
+      .updateWorkLog(technician, 'appointment-1', {
+        followUpNotes: '  ',
+        followUpRequired: true,
+        technicianNotes: 'Breaker is intermittent.',
+        workCompleted: 'Made site safe.',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'FOLLOW_UP_NOTES_REQUIRED');
+      });
+
+    expect(prisma.appointmentWorkLog.upsert).not.toHaveBeenCalled();
   });
 
   it.each<BusinessRole>([

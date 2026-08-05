@@ -36,6 +36,24 @@ const roles = {
   jobCreate: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
   jobArchive: ['OWNER', 'ADMIN', 'OFFICE_MANAGER'],
   jobManage: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
+  quoteCreate: [
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'SALES',
+    'TECHNICIAN',
+  ],
+  quoteView: [
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ],
   teamManage: ['OWNER', 'ADMIN'],
 } satisfies Record<string, BusinessRole[]>;
 
@@ -53,6 +71,7 @@ const bottomTabs: Record<BusinessRole, MainTabRoute[]> = {
 
 const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ACCOUNTANT: [
+    { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
@@ -96,6 +115,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   SCHEDULER: [
     { label: 'My Day', route: 'MyDay' },
     { label: 'Customers', route: 'Customers' },
+    { label: 'Quotes', route: 'Quotes' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   STAFF: [
@@ -105,7 +125,10 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
-  TECHNICIAN: [{ label: 'Notifications', route: 'Notifications' }],
+  TECHNICIAN: [
+    { label: 'Quotes', route: 'Quotes' },
+    { label: 'Notifications', route: 'Notifications' },
+  ],
 };
 
 const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
@@ -178,7 +201,9 @@ const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
     'SALES',
     'READ_ONLY',
   ],
-  Quotes: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SALES', 'READ_ONLY'],
+  QuoteDetails: roles.quoteView,
+  QuoteForm: roles.quoteCreate,
+  Quotes: roles.quoteView,
   Settings: roles.businessSettings,
   Team: roles.teamManage,
   TeamMemberProfile: roles.teamManage,

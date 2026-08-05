@@ -211,6 +211,30 @@ export function DashboardScreen() {
           />
         </View>
 
+        <View style={styles.grid}>
+          <MetricCard
+            label="Draft quotes"
+            value={summary?.counts.draftQuotes}
+          />
+          <MetricCard
+            label="Awaiting response"
+            tone="warning"
+            value={summary?.counts.quotesAwaitingResponse}
+          />
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard
+            label="Accepted not converted"
+            value={summary?.counts.acceptedQuotesNotConverted}
+          />
+          <MetricCard
+            label="Expiring soon"
+            tone="warning"
+            value={summary?.counts.quotesExpiringSoon}
+          />
+        </View>
+
         <View style={styles.summaryCard}>
           <Text style={styles.sectionTitle}>Next appointment</Text>
           {summary?.nextAppointment ? (

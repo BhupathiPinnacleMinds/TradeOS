@@ -80,6 +80,55 @@ user-cancelled pending uploads where possible. Real files must not be
 Base64-encoded inside JSON because that inflates payload size and can hit normal
 JSON body limits before the media endpoint handles the request.
 
+### Quotes
+
+Quotes are tenant-scoped commercial offers. Every quote, quote line item and
+quote revision is scoped by authenticated `businessId`; clients must never send
+or choose a business id.
+
+```http
+POST /api/quotes
+GET /api/quotes
+GET /api/quotes/:id
+PATCH /api/quotes/:id
+POST /api/quotes/:id/items
+PATCH /api/quotes/:id/items/:itemId
+DELETE /api/quotes/:id/items/:itemId
+POST /api/quotes/:id/reorder-items
+POST /api/quotes/:id/send
+POST /api/quotes/:id/revise
+POST /api/quotes/:id/accept
+POST /api/quotes/:id/decline
+POST /api/quotes/:id/cancel
+POST /api/quotes/:id/convert-to-job
+GET /api/quotes/:id/preview
+GET /api/quotes/:id/pdf
+POST /api/quotes/:id/duplicate
+```
+
+Quote lifecycle:
+
+```text
+DRAFT -> SENT -> VIEWED -> ACCEPTED -> CONVERTED
+                 └──────-> DECLINED
+DRAFT/SENT/VIEWED -> CANCELLED
+DRAFT/SENT/VIEWED -> EXPIRED
+SENT/VIEWED -> DRAFT through revise, after snapshotting the sent version
+```
+
+Money rules:
+
+- Currency is AUD.
+- Stored totals use integer cents.
+- GST defaults to 10% (`1000` basis points).
+- Discounts and deposits use either fixed cents or percentage basis points.
+- The API recalculates line totals, subtotal, discount, GST, total and deposit
+  server-side and rejects invalid line items.
+
+Local send behaviour uses the console email/provider seam and logs a preview
+URL. Public customer token acceptance and production PDF generation are
+documented seams, not completed production infrastructure in this milestone.
+
 ### Health
 
 ```http

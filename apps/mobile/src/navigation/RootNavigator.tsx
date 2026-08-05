@@ -21,6 +21,8 @@ import { MediaViewerScreen } from '../screens/MediaViewerScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { MyDayScreen } from '../screens/MyDayScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
+import { QuoteDetailsScreen } from '../screens/QuoteDetailsScreen';
+import { QuoteFormScreen } from '../screens/QuoteFormScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -134,6 +136,20 @@ export function RootNavigator() {
           />
           {canAccessStackRoute(user?.role, 'Quotes') ? (
             <Stack.Screen name="Quotes" component={QuotesScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Quotes') ? (
+            <Stack.Screen
+              name="QuoteDetails"
+              component={QuoteDetailsScreen}
+              options={{ title: 'Quote' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'Quotes') ? (
+            <Stack.Screen
+              name="QuoteForm"
+              component={QuoteFormScreen}
+              options={{ title: 'New quote' }}
+            />
           ) : null}
           {canAccessStackRoute(user?.role, 'Invoices') ? (
             <Stack.Screen name="Invoices" component={InvoicesScreen} />

@@ -1,5 +1,23 @@
 # Roles and Permissions
 
+## Quote permissions
+
+- `OWNER` and `ADMIN` have full quote access.
+- `OFFICE_MANAGER` can create, edit drafts, send, revise, cancel and convert
+  accepted quotes.
+- `SALES` can create, edit drafts, send and revise quotes; conversion is enabled
+  in the current foundation.
+- `SCHEDULER` can view quotes and create operational drafts, but cannot send,
+  cancel or approve financial outcomes.
+- `ACCOUNTANT` can view quote financial details.
+- `TECHNICIAN` can view quotes related to assigned work and create quote drafts
+  from assigned jobs, but cannot send, cancel or approve.
+- `READ_ONLY` can view only.
+
+Quote action visibility should use the shared helpers in
+`packages/shared/src/quotes.ts`; mobile route visibility remains centralised in
+`apps/mobile/src/permissions/roleVisibility.ts`.
+
 ## Media & document permissions
 
 - `OWNER` and `ADMIN` can upload, edit metadata, archive and restore any media

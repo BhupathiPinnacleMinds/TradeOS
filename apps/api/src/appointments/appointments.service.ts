@@ -24,6 +24,9 @@ import {
   getBusinessDayRangeUtc,
   getAllowedAppointmentTransitions,
   getBusinessDateParts,
+  hasAppointmentValidationErrors,
+  validateAppointmentCompletion,
+  validateAppointmentFieldWork,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -784,6 +787,7 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
     const existing = await this.getAppointmentForUser(currentUser, id);
+    this.assertValidFieldWork(dto);
     const workLogData = this.workLogData(currentUser, existing, dto);
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -965,13 +969,7 @@ export class AppointmentsService {
     }
     this.assertAllowedTransition(currentUser, existing, status);
     if (status === 'COMPLETED') {
-      const completed = this.clean(completion?.workCompleted);
-      if (!completed) {
-        throw this.domainError(
-          'WORK_COMPLETED_REQUIRED',
-          'Add a short summary of the work completed before closing this appointment.',
-        );
-      }
+      this.assertValidCompletion(currentUser, existing, completion);
       this.assertCompletionSignatureRequirement(
         currentUser,
         existing,
@@ -1865,6 +1863,75 @@ export class AppointmentsService {
         skippedAt: skippedAt.toISOString(),
       },
     );
+  }
+
+  private assertValidFieldWork(
+    dto: AppointmentWorkLogDto | CompleteAppointmentPayload | undefined,
+  ) {
+    const errors = validateAppointmentFieldWork({
+      followUpNotes: dto?.followUpNotes,
+      followUpRequired: dto?.followUpRequired,
+    });
+    if (errors.followUpNotes) {
+      throw this.domainError(
+        'FOLLOW_UP_NOTES_REQUIRED',
+        errors.followUpNotes,
+        HttpStatus.BAD_REQUEST,
+        { field: 'followUpNotes' },
+      );
+    }
+  }
+
+  private assertValidCompletion(
+    currentUser: AuthenticatedUser,
+    appointment: AppointmentWithRelations,
+    completion?: CompleteAppointmentPayload,
+  ) {
+    const errors = validateAppointmentCompletion({
+      canSkipSignature: SIGNATURE_SKIP_ROLES.includes(
+        currentUser.role as never,
+      ),
+      followUpNotes: completion?.followUpNotes,
+      followUpRequired: completion?.followUpRequired,
+      hasSignature: this.hasCompletionSignature(appointment),
+      signatureSkipReason: completion?.signatureSkipReason,
+      workCompleted: completion?.workCompleted,
+    });
+    if (errors.workCompleted) {
+      throw this.domainError(
+        'WORK_COMPLETED_REQUIRED',
+        errors.workCompleted,
+        HttpStatus.BAD_REQUEST,
+        { field: 'workCompleted' },
+      );
+    }
+    if (errors.followUpNotes) {
+      throw this.domainError(
+        'FOLLOW_UP_NOTES_REQUIRED',
+        errors.followUpNotes,
+        HttpStatus.BAD_REQUEST,
+        { field: 'followUpNotes' },
+      );
+    }
+    if (
+      errors.signatureSkipReason &&
+      completion?.signatureSkipReason !== undefined
+    ) {
+      throw this.domainError(
+        'SIGNATURE_SKIP_REASON_REQUIRED',
+        errors.signatureSkipReason,
+        HttpStatus.BAD_REQUEST,
+        { field: 'signatureSkipReason' },
+      );
+    }
+    if (hasAppointmentValidationErrors(errors) && errors.signature) {
+      throw this.domainError(
+        'SIGNATURE_REQUIRED',
+        errors.signature,
+        HttpStatus.CONFLICT,
+        { field: 'signature' },
+      );
+    }
   }
 
   private workLogData(

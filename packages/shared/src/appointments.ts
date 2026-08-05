@@ -175,6 +175,72 @@ export interface AppointmentSignatureData {
   height: number;
 }
 
+export const APPOINTMENT_SIGNATURE_STROKE_COLOUR = '#111827';
+export const APPOINTMENT_SIGNATURE_STROKE_WIDTH = 4;
+export const APPOINTMENT_SIGNATURE_PAD_HEIGHT = 240;
+export const APPOINTMENT_SIGNATURE_ACTION_GAP = 16;
+export const APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING = 24;
+export const APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP = 10;
+export const APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP = 14;
+
+export interface AppointmentSignatureStrokeSegment {
+  angleDegrees: number;
+  from: { x: number; y: number };
+  length: number;
+  strokeIndex: number;
+  segmentIndex: number;
+  to: { x: number; y: number };
+  x: number;
+  y: number;
+}
+
+export function hasAppointmentSignatureStrokes(
+  signatureData?: Pick<AppointmentSignatureData, 'strokes'> | null,
+) {
+  return Boolean(signatureData?.strokes.some((stroke) => stroke.length > 0));
+}
+
+export function clearAppointmentSignatureData(
+  signatureData: AppointmentSignatureData,
+): AppointmentSignatureData {
+  return { ...signatureData, strokes: [] };
+}
+
+export function isAppointmentCompletionSignatureScrollEnabled(
+  signatureActive: boolean,
+) {
+  return !signatureActive;
+}
+
+export function buildAppointmentSignatureStrokeSegments(
+  signatureData: Pick<AppointmentSignatureData, 'strokes'>,
+): AppointmentSignatureStrokeSegment[] {
+  const segments: AppointmentSignatureStrokeSegment[] = [];
+
+  signatureData.strokes.forEach((stroke, strokeIndex) => {
+    for (let pointIndex = 1; pointIndex < stroke.length; pointIndex += 1) {
+      const previous = stroke[pointIndex - 1];
+      const point = stroke[pointIndex];
+      if (!previous || !point) continue;
+      const deltaX = point.x - previous.x;
+      const deltaY = point.y - previous.y;
+      const length = Math.hypot(deltaX, deltaY);
+      segments.push({
+        angleDegrees: (Math.atan2(deltaY, deltaX) * 180) / Math.PI,
+        from: previous,
+        length,
+        segmentIndex: pointIndex - 1,
+        strokeIndex,
+        to: point,
+        x: (previous.x + point.x) / 2 - length / 2,
+        y: (previous.y + point.y) / 2 - APPOINTMENT_SIGNATURE_STROKE_WIDTH / 2,
+      });
+    }
+  });
+
+  return segments;
+}
+
 export interface AppointmentSignature {
   id: string;
   businessId: string;
@@ -199,10 +265,136 @@ export interface AppointmentWorkLogPayload {
   followUpNotes?: string;
 }
 
+export interface AppointmentFieldNotesInput {
+  technicianNotes?: string | null;
+  workCompleted?: string | null;
+  followUpRequired?: boolean | null;
+  followUpNotes?: string | null;
+}
+
+export interface NormalisedAppointmentFieldNotes {
+  technicianNotes: string;
+  workCompleted: string;
+  followUpRequired: boolean;
+  followUpNotes: string;
+}
+
+function normaliseFieldNoteText(value?: string | null) {
+  return (value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+export function normaliseAppointmentFieldNotes(
+  input: AppointmentFieldNotesInput | null | undefined,
+): NormalisedAppointmentFieldNotes {
+  const followUpRequired = Boolean(input?.followUpRequired);
+  return {
+    followUpNotes: followUpRequired
+      ? normaliseFieldNoteText(input?.followUpNotes)
+      : '',
+    followUpRequired,
+    technicianNotes: normaliseFieldNoteText(input?.technicianNotes),
+    workCompleted: normaliseFieldNoteText(input?.workCompleted),
+  };
+}
+
+export function isAppointmentFieldNotesDirty(
+  current: AppointmentFieldNotesInput | null | undefined,
+  baseline: AppointmentFieldNotesInput | null | undefined,
+) {
+  const currentNotes = normaliseAppointmentFieldNotes(current);
+  const baselineNotes = normaliseAppointmentFieldNotes(baseline);
+  return (
+    currentNotes.technicianNotes !== baselineNotes.technicianNotes ||
+    currentNotes.workCompleted !== baselineNotes.workCompleted ||
+    currentNotes.followUpRequired !== baselineNotes.followUpRequired ||
+    currentNotes.followUpNotes !== baselineNotes.followUpNotes
+  );
+}
+
 export interface CompleteAppointmentPayload extends AppointmentWorkLogPayload {
   workCompleted: string;
   signatureId?: string;
   signatureSkipReason?: string;
+}
+
+export const APPOINTMENT_FIELD_VALIDATION_MESSAGES = {
+  FOLLOW_UP_NOTES_REQUIRED: 'Please describe the follow-up required.',
+  SIGNATURE_REQUIRED:
+    'Capture the customer signature or record an authorised skip reason.',
+  SIGNATURE_SKIP_REASON_REQUIRED:
+    'Please enter a reason before skipping the customer signature.',
+  WORK_COMPLETED_REQUIRED: 'Please enter the work completed.',
+} as const;
+
+export type AppointmentFieldValidationCode =
+  keyof typeof APPOINTMENT_FIELD_VALIDATION_MESSAGES;
+
+export type AppointmentFieldValidationErrors = Partial<
+  Record<
+    'followUpNotes' | 'signature' | 'signatureSkipReason' | 'workCompleted',
+    string
+  >
+>;
+
+export function normaliseAppointmentText(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : '';
+}
+
+export function validateAppointmentFieldWork(input: {
+  followUpNotes?: string | null;
+  followUpRequired?: boolean | null;
+}): AppointmentFieldValidationErrors {
+  const errors: AppointmentFieldValidationErrors = {};
+  if (
+    input.followUpRequired &&
+    !normaliseAppointmentText(input.followUpNotes)
+  ) {
+    errors.followUpNotes =
+      APPOINTMENT_FIELD_VALIDATION_MESSAGES.FOLLOW_UP_NOTES_REQUIRED;
+  }
+  return errors;
+}
+
+export function validateAppointmentCompletion(input: {
+  canSkipSignature?: boolean | null;
+  followUpNotes?: string | null;
+  followUpRequired?: boolean | null;
+  hasSignature?: boolean | null;
+  signatureSkipReason?: string | null;
+  workCompleted?: string | null;
+}): AppointmentFieldValidationErrors {
+  const errors: AppointmentFieldValidationErrors = {
+    ...validateAppointmentFieldWork(input),
+  };
+  if (!normaliseAppointmentText(input.workCompleted)) {
+    errors.workCompleted =
+      APPOINTMENT_FIELD_VALIDATION_MESSAGES.WORK_COMPLETED_REQUIRED;
+  }
+  if (
+    input.signatureSkipReason !== undefined &&
+    input.signatureSkipReason !== null &&
+    !normaliseAppointmentText(input.signatureSkipReason)
+  ) {
+    errors.signatureSkipReason =
+      APPOINTMENT_FIELD_VALIDATION_MESSAGES.SIGNATURE_SKIP_REASON_REQUIRED;
+  }
+  if (
+    !input.hasSignature &&
+    !(
+      input.canSkipSignature &&
+      normaliseAppointmentText(input.signatureSkipReason)
+    )
+  ) {
+    errors.signature = APPOINTMENT_FIELD_VALIDATION_MESSAGES.SIGNATURE_REQUIRED;
+  }
+  return errors;
+}
+
+export function hasAppointmentValidationErrors(
+  errors: AppointmentFieldValidationErrors,
+) {
+  return Object.values(errors).some(Boolean);
 }
 
 export interface AppointmentSignaturePayload {

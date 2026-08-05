@@ -40,6 +40,8 @@ export class DashboardService {
 
     const { end: startOfTomorrow, start: startOfToday } =
       getBusinessDayRangeUtc(new Date(), business.timezone);
+    const quoteExpiringSoonEnd = new Date(startOfToday);
+    quoteExpiringSoonEnd.setUTCDate(quoteExpiringSoonEnd.getUTCDate() + 7);
 
     const [
       customers,
@@ -58,6 +60,10 @@ export class DashboardService {
       dispatcherMembers,
       dispatcherAppointments,
       openQuotes,
+      draftQuotes,
+      quotesAwaitingResponse,
+      acceptedQuotesNotConverted,
+      quotesExpiringSoon,
       unpaidInvoices,
       unpaidInvoiceRows,
       unreadNotifications,
@@ -183,6 +189,27 @@ export class DashboardService {
       }),
       this.prisma.quote.count({
         where: { businessId, status: { in: [...OPEN_QUOTE_STATUSES] } },
+      }),
+      this.prisma.quote.count({
+        where: { archivedAt: null, businessId, status: 'DRAFT' },
+      }),
+      this.prisma.quote.count({
+        where: {
+          archivedAt: null,
+          businessId,
+          status: { in: ['SENT', 'VIEWED'] },
+        },
+      }),
+      this.prisma.quote.count({
+        where: { archivedAt: null, businessId, status: 'ACCEPTED' },
+      }),
+      this.prisma.quote.count({
+        where: {
+          archivedAt: null,
+          businessId,
+          expiryDate: { gte: startOfToday, lt: quoteExpiringSoonEnd },
+          status: { in: ['DRAFT', 'SENT', 'VIEWED'] },
+        },
       }),
       this.prisma.invoice.count({
         where: { businessId, status: { in: [...UNPAID_INVOICE_STATUSES] } },
@@ -348,6 +375,10 @@ export class DashboardService {
         availableTechnicians,
         unassignedAppointments,
         openQuotes,
+        draftQuotes,
+        quotesAwaitingResponse,
+        acceptedQuotesNotConverted,
+        quotesExpiringSoon,
         unpaidInvoices,
         unreadNotifications,
         aiMessages,

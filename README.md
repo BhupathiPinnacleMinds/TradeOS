@@ -52,6 +52,16 @@ The platform is multi-tenant. Every domain record is scoped to a business worksp
    pnpm db:seed
    ```
 
+   For normal quote-module development after pulling existing data, run only:
+
+   ```bash
+   pnpm db:generate
+   pnpm db:migrate
+   ```
+
+   Do not run `pnpm db:seed` unless you intentionally want to refresh local demo
+   data.
+
 5. Run both applications in separate terminals:
 
    ```bash
@@ -64,6 +74,10 @@ The API defaults to `http://localhost:3000/api`. Check it with:
 ```bash
 curl http://localhost:3000/api/health
 ```
+
+Quote sending in local development uses the console email/provider seam and
+logs a quote preview URL. Real customer email delivery and public customer
+acceptance tokens require the production email/customer-portal provider setup.
 
 The local seed creates:
 

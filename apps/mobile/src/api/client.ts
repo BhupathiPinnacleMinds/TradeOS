@@ -26,6 +26,9 @@ import type {
   JobListResponse,
   JobPayload,
   JobStatus,
+  QuoteDetailResponse,
+  QuoteListResponse,
+  QuotePayload,
   InvitationPreviewResponse,
   InviteMemberResponse,
   LocalMediaUploadRequest,
@@ -128,6 +131,18 @@ export function friendlyAppointmentMutationError(error: unknown) {
     }
     if (error.code === 'APPOINTMENT_NOT_FOUND') {
       return 'Appointment could not be found.';
+    }
+    if (error.code === 'FOLLOW_UP_NOTES_REQUIRED') {
+      return 'Please describe the follow-up required.';
+    }
+    if (error.code === 'WORK_COMPLETED_REQUIRED') {
+      return 'Please enter the work completed.';
+    }
+    if (error.code === 'SIGNATURE_REQUIRED') {
+      return 'Capture the customer signature before completing this appointment.';
+    }
+    if (error.code === 'SIGNATURE_SKIP_REASON_REQUIRED') {
+      return 'Please enter a reason before skipping the customer signature.';
     }
     if (
       error.status === 404 ||
@@ -530,6 +545,80 @@ export function archiveJobRequest(token: string, jobId: string) {
 
 export function restoreJobRequest(token: string, jobId: string) {
   return apiRequest<JobDetailResponse>(`/jobs/${jobId}/restore`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function quotesRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<QuoteListResponse>(`/quotes${queryString(params)}`, {
+    token,
+  });
+}
+
+export function quoteDetailRequest(token: string, quoteId: string) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}`, { token });
+}
+
+export function createQuoteRequest(token: string, input: QuotePayload) {
+  return apiRequest<QuoteDetailResponse>('/quotes', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateQuoteRequest(
+  token: string,
+  quoteId: string,
+  input: QuotePayload,
+) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function sendQuoteRequest(token: string, quoteId: string) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/send`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function acceptQuoteRequest(
+  token: string,
+  quoteId: string,
+  acceptedByName: string,
+  acceptedByEmail?: string,
+) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/accept`, {
+    body: JSON.stringify({ acceptedByEmail, acceptedByName }),
+    method: 'POST',
+    token,
+  });
+}
+
+export function cancelQuoteRequest(
+  token: string,
+  quoteId: string,
+  reason?: string,
+) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/cancel`, {
+    body: JSON.stringify({ reason }),
+    method: 'POST',
+    token,
+  });
+}
+
+export function convertQuoteToJobRequest(token: string, quoteId: string) {
+  return apiRequest<
+    QuoteDetailResponse & { jobId: string; nextAction: string }
+  >(`/quotes/${quoteId}/convert-to-job`, {
     method: 'POST',
     token,
   });

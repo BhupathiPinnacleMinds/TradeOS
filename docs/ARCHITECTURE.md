@@ -111,6 +111,27 @@ Appointment creation navigation:
 - Do not add duplicate appointment creation routes unless the navigation architecture is intentionally migrated in one change.
 - Global appointment creation entry points must not preselect the first customer from API results. `AppointmentForm` only preselects a customer, site, job, date or technician when that value is explicitly supplied by the navigation context and validated through the tenant-scoped API.
 
+Quote architecture:
+
+- `Quote` is the customer-facing commercial offer that can be created from a
+  customer, job or appointment and converted into a job after acceptance.
+- Quote lifecycle rules are centralised in `packages/shared/src/quotes.ts` and
+  revalidated by the API. Drafts are editable, sent/viewed quotes require a
+  revision flow, accepted quotes are immutable except conversion, and terminal
+  statuses cannot be edited normally.
+- Quote totals are calculated with integer cents in the shared calculation
+  helper and recalculated server-side on every write. The mobile preview uses
+  the same helper for instant feedback, but the API remains authoritative.
+- `QuoteRevision` stores immutable snapshots before customer-facing send,
+  acceptance and revision operations so accepted/sent versions are not silently
+  overwritten.
+- Local quote send uses the existing console delivery seam and logs a
+  customer-facing preview path. Production email/customer-token delivery remains
+  a provider concern rather than direct UI/API coupling.
+- Quote PDF generation is represented by a print-ready HTML/PDF provider seam
+  for this milestone. The API returns reproducible print-ready HTML rather than
+  exposing raw storage keys or pretending production PDF infrastructure exists.
+
 Dispatcher navigation:
 
 - Dispatcher remains a top tab inside Calendar, not a separate bottom tab.

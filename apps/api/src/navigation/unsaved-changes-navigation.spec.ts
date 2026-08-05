@@ -15,6 +15,7 @@ describe('unsaved changes navigation guard', () => {
     isSaving?: boolean;
   } = {}) {
     const beforeConfirmations: string[] = [];
+    const discards: string[] = [];
     const stayResets: string[] = [];
     const dispatched: string[] = [];
     const prevented: string[] = [];
@@ -44,6 +45,9 @@ describe('unsaved changes navigation guard', () => {
       onBeforeConfirmation() {
         beforeConfirmations.push('before');
       },
+      onDiscard() {
+        discards.push('discard');
+      },
       onStay() {
         stayResets.push('stay');
       },
@@ -56,6 +60,7 @@ describe('unsaved changes navigation guard', () => {
     return {
       beforeConfirmations,
       confirmations,
+      discards,
       dispatched,
       getConfirmation: () => confirmation,
       guard,
@@ -108,6 +113,7 @@ describe('unsaved changes navigation guard', () => {
 
     expect(subject.dispatched).toEqual(['BACK']);
     expect(subject.guard.isConfirmationOpen()).toBe(false);
+    expect(subject.discards).toEqual(['discard']);
   });
 
   it('dismisses active input before opening a confirmation', () => {
@@ -221,6 +227,33 @@ describe('unsaved changes navigation guard', () => {
     ).toBe(true);
     expect(subject.dispatched).toEqual(['BACK']);
   });
+
+  it('ignores repeated Leave taps after the original action has been dispatched', () => {
+    const subject = setup();
+
+    subject.guard.handleBeforeRemove('BACK', subject.preventDefault);
+    const confirmation = subject.getConfirmation();
+    confirmation?.leave();
+    confirmation?.leave();
+
+    expect(subject.dispatched).toEqual(['BACK']);
+    expect(subject.discards).toEqual(['discard']);
+  });
+
+  it('ignores alert dismissal after Leave so the removal bypass is not cleared early', () => {
+    const subject = setup();
+
+    subject.guard.handleBeforeRemove('BACK', subject.preventDefault);
+    const confirmation = subject.getConfirmation();
+    confirmation?.leave();
+    confirmation?.stay();
+
+    expect(subject.dispatched).toEqual(['BACK']);
+    expect(
+      subject.guard.handleBeforeRemove('BACK', subject.preventDefault),
+    ).toBe(false);
+    expect(subject.stayResets).toEqual([]);
+  });
 });
 
 describe('AppointmentForm native-stack guard wiring', () => {
@@ -247,16 +280,159 @@ describe('AppointmentForm native-stack guard wiring', () => {
     const source = readFileSync(appointmentFormPath, 'utf8');
 
     expect(source).toContain('guardRef.current.handlePreventedAction');
-    expect(source).toContain(
-      'isPreventRemoveArmed && isFormDirty && !hasSaved && !isSaving',
-    );
+    expect(source).toContain('isFormDirty && !hasSaved && !isSaving');
   });
 
-  it('dismisses the keyboard before showing the leave confirmation and rearms after Stay', () => {
+  it('dismisses the keyboard before showing the leave confirmation without a state-based rearm window', () => {
     const source = readFileSync(appointmentFormPath, 'utf8');
 
     expect(source).toContain('Keyboard.dismiss()');
-    expect(source).toContain('setIsPreventRemoveArmed(false)');
-    expect(source).toContain('setIsPreventRemoveArmed(true)');
+    expect(source).not.toContain('setIsPreventRemoveArmed(false)');
+    expect(source).not.toContain('setIsPreventRemoveArmed(true)');
+    expect(source).not.toContain('isPreventRemoveArmed');
+  });
+
+  it('owns the AppointmentForm Main header button navigation path', () => {
+    const source = readFileSync(appointmentFormPath, 'utf8');
+
+    expect(source).toContain('headerLeft');
+    expect(source).toContain('ScreenBackButton');
+    expect(source).toContain('accessibilityLabel="Back to Main"');
+    expect(source).toContain('label="Main"');
+    expect(source).toContain('requestMainBack');
+    expect(source).toContain('navigation.canGoBack()');
+    expect(source).toContain('navigation.goBack()');
+    expect(source).toContain("CommonActions.navigate('Main')");
+    expect(source).toContain('APPOINTMENT_FORM_MAIN_PRESS');
+  });
+
+  it('falls back through the shared guard when AppointmentForm has no back stack', () => {
+    const source = readFileSync(appointmentFormPath, 'utf8');
+
+    expect(source).toContain(
+      'guardRef.current.handlePreventedAction(fallbackAction)',
+    );
+    expect(source).toContain('navigation.dispatch(fallbackAction)');
+  });
+});
+
+describe('AppointmentDetails field-note guard wiring', () => {
+  const appointmentDetailsPath = join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'mobile',
+    'src',
+    'screens',
+    'AppointmentDetailsScreen.tsx',
+  );
+  const screenBackButtonPath = join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'mobile',
+    'src',
+    'components',
+    'ScreenBackButton.tsx',
+  );
+
+  it('uses usePreventRemove instead of a manual beforeRemove listener', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('usePreventRemove(');
+    expect(source).not.toContain("addListener('beforeRemove'");
+    expect(source).not.toContain('addListener("beforeRemove"');
+  });
+
+  it('routes dirty field-note navigation through the shared one-shot guard', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('guardRef.current.handlePreventedAction');
+    expect(source).toContain('hasUnsavedWorkLog');
+    expect(source).toContain('canEditCurrentWorkLog');
+    expect(source).toContain("busyText !== 'Saving field notes...'");
+  });
+
+  it('dismisses the keyboard before confirmation without a state-based rearm window', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('Keyboard.dismiss()');
+    expect(source).not.toContain('setIsPreventRemoveArmed(false)');
+    expect(source).not.toContain('setIsPreventRemoveArmed(true)');
+    expect(source).toContain('workLogDirtyRef.current');
+  });
+
+  it('marks field notes clean synchronously after a successful save', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('workLogDirtyRef.current = false');
+    expect(source).toContain('guardRef.current.cleanup()');
+    expect(source).toContain('setAppointment(response.appointment)');
+  });
+
+  it('shows inline field-note and completion validation errors', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('validateAppointmentFieldWork');
+    expect(source).toContain('validateAppointmentCompletion');
+    expect(source).toContain('fieldErrors.followUpNotes');
+    expect(source).toContain('completionErrors.workCompleted');
+    expect(source).toContain('errors.signature');
+    expect(source).toContain('styles.inputError');
+    expect(source).toContain('styles.errorText');
+  });
+
+  it('uses the shared dirty helper for guard and Save button visibility', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('savedFieldNotesRef');
+    expect(source).toContain('normaliseAppointmentFieldNotes');
+    expect(source).toContain('isAppointmentFieldNotesDirty');
+    expect(source).toContain('{hasUnsavedWorkLog ? (');
+    expect(source).toContain('saveFieldNotesButton');
+    expect(source).toContain("'Saving...'");
+  });
+
+  it('owns the AppointmentDetails Main header button navigation path', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('headerLeft');
+    expect(source).toContain('ScreenBackButton');
+    expect(source).toContain('accessibilityLabel="Back to Main"');
+    expect(source).toContain('label="Main"');
+    expect(source).toContain('requestMainBack');
+    expect(source).toContain('navigation.canGoBack()');
+    expect(source).toContain('navigation.goBack()');
+    expect(source).toContain("CommonActions.navigate('Main')");
+    expect(source).toContain('APPOINTMENT_DETAILS_MAIN_PRESS');
+    expect(source).toContain('APPOINTMENT_DETAILS_GO_BACK_DISPATCHED');
+  });
+
+  it('uses a real Main fallback instead of silently doing nothing when no back stack exists', () => {
+    const source = readFileSync(appointmentDetailsPath, 'utf8');
+
+    expect(source).toContain('APPOINTMENT_DETAILS_FALLBACK_TO_MAIN');
+    expect(source).toContain(
+      'guardRef.current.handlePreventedAction(fallbackAction)',
+    );
+    expect(source).toContain('navigation.dispatch(fallbackAction)');
+  });
+
+  it('renders the shared back button as a compact chevron plus label control', () => {
+    const source = readFileSync(screenBackButtonPath, 'utf8');
+
+    expect(source).toContain('chevronFrame');
+    expect(source).toContain('borderLeftWidth: 2.25');
+    expect(source).toContain('minHeight: 44');
+    expect(source).toContain('paddingHorizontal: 12');
+    expect(source).toContain('marginRight: 7');
+    expect(source).toContain("alignItems: 'center'");
+    expect(source).toContain("justifyContent: 'center'");
+    expect(source).toContain('includeFontPadding: false');
+    expect(source).toContain('color: colours.ink');
+    expect(source).not.toContain('flex: 1');
+    expect(source).not.toContain('minWidth: 64');
   });
 });

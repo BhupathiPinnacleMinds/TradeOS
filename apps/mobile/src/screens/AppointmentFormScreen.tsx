@@ -24,11 +24,11 @@ import {
   zonedTimeToUtc,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { usePreventRemove } from '@react-navigation/native';
+import { CommonActions, usePreventRemove } from '@react-navigation/native';
 import type { NavigationAction } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -52,6 +52,7 @@ import {
   membersRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
@@ -162,6 +163,13 @@ function formatLocation(location: ResolvedLocation) {
     .join(', ');
 }
 
+function logAppointmentFormNavigation(
+  event: string,
+  details: Record<string, unknown> = {},
+) {
+  console.info(`[AppointmentForm] ${event}`, details);
+}
+
 export function AppointmentFormScreen({ navigation, route }: Props) {
   const {
     customerId,
@@ -215,13 +223,13 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const [isFormDirty, setIsFormDirty] = useState(false);
-  const [isPreventRemoveArmed, setIsPreventRemoveArmed] = useState(true);
   const cleanSnapshotRef = useRef<string | null>(null);
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const hasSavedRef = useRef(false);
   const mountedRef = useRef(true);
   const navigationRef = useRef(navigation);
+  const mainPressAttemptRef = useRef(0);
   const guardRef = useRef(
     createUnsavedChangesNavigationGuard<NavigationAction>({
       dispatch(action) {
@@ -240,29 +248,45 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         return isSavingRef.current;
       },
       onBeforeConfirmation() {
+        logAppointmentFormNavigation('APPOINTMENT_FORM_CONFIRMATION_OPEN');
         Keyboard.dismiss();
-      },
-      onStay() {
-        setIsPreventRemoveArmed(false);
-        setTimeout(() => {
-          if (mountedRef.current) {
-            setIsPreventRemoveArmed(true);
-          }
-        }, 0);
       },
       requestConfirmation({ leave, stay }) {
         Alert.alert(
           'Leave appointment?',
           'You have unsaved appointment details. Leave without saving?',
           [
-            { onPress: stay, style: 'cancel', text: 'Stay' },
             {
-              onPress: leave,
+              onPress() {
+                logAppointmentFormNavigation('APPOINTMENT_FORM_STAY_SELECTED');
+                stay();
+                logAppointmentFormNavigation(
+                  'APPOINTMENT_FORM_PENDING_ACTION_CLEARED',
+                );
+                logAppointmentFormNavigation(
+                  'APPOINTMENT_FORM_CONFIRMATION_RESET',
+                );
+              },
+              style: 'cancel',
+              text: 'Stay',
+            },
+            {
+              onPress() {
+                logAppointmentFormNavigation('APPOINTMENT_FORM_LEAVE_SELECTED');
+                leave();
+              },
               style: 'destructive',
               text: 'Leave',
             },
           ],
-          { onDismiss: stay },
+          {
+            onDismiss() {
+              logAppointmentFormNavigation(
+                'APPOINTMENT_FORM_CONFIRMATION_DISMISSED',
+              );
+              stay();
+            },
+          },
         );
       },
     }),
@@ -366,20 +390,19 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   );
 
   useEffect(() => {
-    navigation.setOptions({ title: 'New appointment' });
-  }, [navigation]);
-
-  useEffect(() => {
     navigationRef.current = navigation;
   }, [navigation]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
+      logAppointmentFormNavigation('APPOINTMENT_FORM_UNMOUNTED', {
+        routeKey: route.key,
+      });
       mountedRef.current = false;
       guardRef.current.cleanup();
     };
-  }, []);
+  }, [route.key]);
 
   useEffect(() => {
     isSavingRef.current = isSaving;
@@ -401,15 +424,70 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       !hasSaved &&
       cleanSnapshotRef.current !== null &&
       cleanSnapshotRef.current !== formSnapshot;
+    logAppointmentFormNavigation('APPOINTMENT_FORM_DIRTY', {
+      dirty: isDirtyRef.current,
+    });
     setIsFormDirty(isDirtyRef.current);
   }, [formSnapshot, hasSaved, isLoading]);
 
-  usePreventRemove(
-    isPreventRemoveArmed && isFormDirty && !hasSaved && !isSaving,
-    ({ data }) => {
-      guardRef.current.handlePreventedAction(data.action as NavigationAction);
-    },
-  );
+  const requestMainBack = useCallback(() => {
+    mainPressAttemptRef.current += 1;
+    const isRepeatMainPress = mainPressAttemptRef.current > 1;
+    const canGoBack = navigation.canGoBack();
+    logAppointmentFormNavigation('APPOINTMENT_FORM_MAIN_PRESS', {
+      canGoBack,
+      dirty: isDirtyRef.current,
+      routeKey: route.key,
+      routeName: route.name,
+    });
+    if (isRepeatMainPress && isDirtyRef.current) {
+      logAppointmentFormNavigation('APPOINTMENT_FORM_SECOND_MAIN_PRESS', {
+        routeKey: route.key,
+      });
+    }
+
+    Keyboard.dismiss();
+
+    if (canGoBack) {
+      navigation.goBack();
+      return;
+    }
+
+    const fallbackAction = CommonActions.navigate('Main');
+    if (isDirtyRef.current && !isSavingRef.current && !hasSavedRef.current) {
+      guardRef.current.handlePreventedAction(fallbackAction);
+      logAppointmentFormNavigation('APPOINTMENT_FORM_ACTION_STORED', {
+        routeKey: route.key,
+      });
+      return;
+    }
+    navigation.dispatch(fallbackAction);
+  }, [navigation, route.key, route.name]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerBackVisible: false,
+      headerLeft: () => (
+        <ScreenBackButton
+          accessibilityLabel="Back to Main"
+          label="Main"
+          onPress={requestMainBack}
+        />
+      ),
+      title: 'New appointment',
+    });
+  }, [navigation, requestMainBack]);
+
+  usePreventRemove(isFormDirty && !hasSaved && !isSaving, ({ data }) => {
+    logAppointmentFormNavigation('APPOINTMENT_FORM_GUARD_INTERCEPTED', {
+      dirty: isDirtyRef.current,
+      routeKey: route.key,
+    });
+    guardRef.current.handlePreventedAction(data.action as NavigationAction);
+    logAppointmentFormNavigation('APPOINTMENT_FORM_ACTION_STORED', {
+      routeKey: route.key,
+    });
+  });
 
   useEffect(() => {
     if (!token) return;

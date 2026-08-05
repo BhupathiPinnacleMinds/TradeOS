@@ -98,6 +98,34 @@ enum QuoteStatus {
   ACCEPTED
   DECLINED
   EXPIRED
+  CANCELLED
+  CONVERTED
+}
+
+enum QuotePricingMode {
+  GST_EXCLUSIVE
+  GST_INCLUSIVE
+}
+
+enum QuoteDiscountType {
+  NONE
+  FIXED
+  PERCENTAGE
+}
+
+enum QuoteDepositType {
+  NONE
+  FIXED
+  PERCENTAGE
+}
+
+enum QuoteLineItemType {
+  LABOUR
+  MATERIAL
+  SERVICE
+  FEE
+  DISCOUNT
+  OTHER
 }
 
 enum InvoiceStatus {
@@ -240,6 +268,8 @@ model Business {
   appointmentSignatures AppointmentSignature[]
   appointmentSequence   AppointmentSequence?
   quotes                Quote[]
+  quoteSequence         QuoteSequence?
+  quoteRevisions        QuoteRevision[]
   invoices              Invoice[]
   payments              Payment[]
   messages              Message[]
@@ -276,6 +306,8 @@ model User {
   uploadedMediaAssets           MediaAsset[]           @relation("MediaAssetUploader")
   createdJobs                   Job[]                  @relation("JobCreator")
   updatedJobs                   Job[]                  @relation("JobUpdater")
+  createdQuotes                 Quote[]                @relation("QuoteCreator")
+  updatedQuotes                 Quote[]                @relation("QuoteUpdater")
   createdAppointments           Appointment[]          @relation("AppointmentCreator")
   updatedAppointments           Appointment[]          @relation("AppointmentUpdater")
   auditLogs                     AuditLog[]             @relation("AuditActor")
@@ -401,6 +433,7 @@ model CustomerSite {
   business           Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer           Customer      @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
   appointments       Appointment[]
+  quotes             Quote[]
 
   @@unique([id, businessId])
   @@index([businessId, customerId, isArchived])
@@ -518,6 +551,7 @@ model Appointment {
   workLogs                 AppointmentWorkLog[]
   signatures               AppointmentSignature[]
   mediaAssets              MediaAsset[]
+  sourceQuotes             Quote[]                   @relation("QuoteSourceAppointment")
 
   @@unique([businessId, appointmentNumber])
   @@unique([id, businessId])
@@ -582,44 +616,113 @@ model AppointmentSequence {
 }
 
 model Quote {
-  id         String          @id @default(cuid())
-  businessId String
-  customerId String
-  jobId      String?
-  number     String
-  status     QuoteStatus     @default(DRAFT)
-  issueDate  DateTime        @default(now())
-  expiryDate DateTime?
-  subtotal   Decimal         @db.Decimal(12, 2)
-  gst        Decimal         @db.Decimal(12, 2)
-  total      Decimal         @db.Decimal(12, 2)
-  notes      String?
-  sentAt     DateTime?
-  createdAt  DateTime        @default(now())
-  updatedAt  DateTime        @updatedAt
-  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer   Customer        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  job        Job?            @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
-  lineItems  QuoteLineItem[]
+  id                  String            @id @default(cuid())
+  businessId          String
+  quoteNumber         String
+  customerId          String
+  customerSiteId      String?
+  jobId               String?
+  sourceAppointmentId String?
+  status              QuoteStatus       @default(DRAFT)
+  title               String
+  description         String?
+  issueDate           DateTime          @default(now())
+  expiryDate          DateTime?
+  currency            String            @default("AUD")
+  pricingMode         QuotePricingMode  @default(GST_EXCLUSIVE)
+  gstRateBasisPoints  Int               @default(1000)
+  subtotalCents       Int               @default(0)
+  discountType        QuoteDiscountType @default(NONE)
+  discountValue       Int               @default(0)
+  discountCents       Int               @default(0)
+  gstCents            Int               @default(0)
+  totalCents          Int               @default(0)
+  depositType         QuoteDepositType  @default(NONE)
+  depositValue        Int               @default(0)
+  depositCents        Int               @default(0)
+  customerNotes       String?
+  internalNotes       String?
+  termsAndConditions  String?
+  sentAt              DateTime?
+  viewedAt            DateTime?
+  acceptedAt          DateTime?
+  declinedAt          DateTime?
+  expiredAt           DateTime?
+  cancelledAt         DateTime?
+  convertedAt         DateTime?
+  acceptedByName      String?
+  acceptedByEmail     String?
+  acceptanceIp        String?
+  version             Int               @default(1)
+  createdBy           String?
+  updatedBy           String?
+  archivedAt          DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  business            Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer            Customer          @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  customerSite        CustomerSite?     @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: SetNull)
+  job                 Job?              @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  sourceAppointment   Appointment?      @relation("QuoteSourceAppointment", fields: [sourceAppointmentId, businessId], references: [id, businessId], onDelete: SetNull)
+  creator             User?             @relation("QuoteCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater             User?             @relation("QuoteUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  lineItems           QuoteLineItem[]
+  revisions           QuoteRevision[]
 
-  @@unique([businessId, number])
+  @@unique([businessId, quoteNumber])
   @@unique([id, businessId])
   @@index([businessId, status, issueDate])
+  @@index([businessId, expiryDate])
   @@index([businessId, customerId])
+  @@index([businessId, jobId])
+  @@index([businessId, createdBy])
 }
 
 model QuoteLineItem {
-  id          String  @id @default(cuid())
-  businessId  String
-  quoteId     String
-  description String
-  quantity    Decimal @db.Decimal(10, 2)
-  unitPrice   Decimal @db.Decimal(12, 2)
-  total       Decimal @db.Decimal(12, 2)
-  sortOrder   Int     @default(0)
-  quote       Quote   @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+  id                String            @id @default(cuid())
+  businessId        String
+  quoteId           String
+  position          Int
+  type              QuoteLineItemType @default(SERVICE)
+  name              String
+  description       String?
+  quantity          Decimal           @db.Decimal(10, 3)
+  unit              String            @default("item")
+  unitPriceCents    Int
+  taxable           Boolean           @default(true)
+  lineSubtotalCents Int               @default(0)
+  lineGstCents      Int               @default(0)
+  lineTotalCents    Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  quote             Quote             @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
 
   @@index([businessId, quoteId])
+  @@index([businessId, quoteId, position])
+}
+
+model QuoteRevision {
+  id         String      @id @default(cuid())
+  businessId String
+  quoteId    String
+  version    Int
+  status     QuoteStatus
+  snapshot   Json
+  reason     String?
+  createdBy  String?
+  createdAt  DateTime    @default(now())
+  business   Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  quote      Quote       @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, quoteId, version])
+  @@index([businessId, quoteId, createdAt])
+}
+
+model QuoteSequence {
+  businessId String   @id
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model Invoice {

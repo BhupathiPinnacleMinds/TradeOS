@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-05
+
+### Added
+
+- Quotes Module foundation with tenant-scoped quote lifecycle, cents-based AUD
+  totals, GST inclusive/exclusive calculation support, discounts, deposits,
+  revisions, send/accept/decline/cancel/convert commands and quote-to-job
+  conversion.
+- Shared quote types, permission helpers, status transitions and deterministic
+  calculation helper in `packages/shared`.
+- Quotes API module with list/detail/create/update/item/send/revise/accept/
+  decline/cancel/preview/PDF-seam/duplicate/convert endpoints.
+- Mobile Quotes list, Quote Details and multi-step Quote Form screens with
+  customer/job/appointment creation entry points.
+- Dashboard quote summary counts for drafts, awaiting response, accepted not
+  converted and expiring soon.
+
+### Notes
+
+- Local quote send uses the existing console-provider seam and logs a preview
+  URL. Production customer email delivery and public token acceptance remain
+  documented seams for a later milestone.
+
 ## 2026-07-31
 
 ### Added

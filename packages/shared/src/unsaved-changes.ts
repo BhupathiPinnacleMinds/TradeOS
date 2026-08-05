@@ -10,6 +10,7 @@ export type UnsavedChangesNavigationGuardOptions<Action> = {
   getIsSaving(): boolean;
   getIsMounted(): boolean;
   onBeforeConfirmation?(): void;
+  onDiscard?(): void;
   onStay?(): void;
   requestConfirmation(handlers: UnsavedChangesConfirmationHandlers): void;
 };
@@ -28,6 +29,7 @@ export function createUnsavedChangesNavigationGuard<Action>({
   getIsMounted,
   getIsSaving,
   onBeforeConfirmation,
+  onDiscard,
   onStay,
   requestConfirmation,
 }: UnsavedChangesNavigationGuardOptions<Action>): UnsavedChangesNavigationGuard<Action> {
@@ -73,15 +75,21 @@ export function createUnsavedChangesNavigationGuard<Action>({
         }
 
         const actionToDispatch = pendingAction;
-        resetConfirmation();
+        confirmationOpen = false;
+        pendingAction = null;
 
-        if (!actionToDispatch) return;
+        if (!actionToDispatch) {
+          leaving = false;
+          return;
+        }
 
         allowNextRemoval = true;
+        onDiscard?.();
         dispatch(actionToDispatch);
       },
       stay() {
-        if (!confirmationOpen && !pendingAction && !leaving) return;
+        if (leaving) return;
+        if (!confirmationOpen && !pendingAction) return;
         resetConfirmation();
         allowNextRemoval = false;
         onStay?.();

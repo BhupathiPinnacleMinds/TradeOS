@@ -4,7 +4,11 @@ import type {
   Job,
   MediaAsset,
 } from '@tradieos/shared';
-import { formatMediaSummary, mediaDisplayTitle } from '@tradieos/shared';
+import {
+  formatMediaSummary,
+  mediaDisplayTitle,
+  roleCanCreateQuotes,
+} from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
@@ -93,6 +97,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const canArchive = canArchiveCustomer(user?.role);
   const canEdit = canManageCustomer(user?.role);
   const canCreateCustomerJob = canCreateJob(user?.role);
+  const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
 
   async function loadCustomer() {
     if (!token) return;
@@ -290,6 +295,14 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               }
             />
           ) : null}
+          {canCreateQuote ? (
+            <QuickAction
+              label="Create Quote"
+              onPress={() =>
+                navigation.navigate('QuoteForm', { customerId: customer.id })
+              }
+            />
+          ) : null}
         </View>
 
         <Card title="Profile summary">
@@ -428,7 +441,20 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               <Text style={styles.secondaryText}>Create job for customer</Text>
             </Pressable>
           ) : null}
-          <Text style={styles.muted}>No quotes created yet.</Text>
+          <View style={styles.inlineActions}>
+            <Text style={styles.muted}>No quotes created yet.</Text>
+            {canCreateQuote ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() =>
+                  navigation.navigate('QuoteForm', { customerId: customer.id })
+                }
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryText}>Create quote</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <Text style={styles.muted}>No invoices recorded yet.</Text>
         </Card>
 
@@ -826,6 +852,7 @@ const styles = StyleSheet.create({
   },
   linkButton: { marginTop: 8 },
   linkText: { color: '#9F1239', fontWeight: '900' },
+  inlineActions: { gap: 10 },
   jobLink: {
     backgroundColor: '#F8FAFC',
     borderRadius: 14,

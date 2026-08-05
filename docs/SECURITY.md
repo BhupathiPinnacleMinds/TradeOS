@@ -99,6 +99,21 @@ where: {
 }
 ```
 
+## Quote security
+
+- Quote APIs derive `businessId` only from the authenticated JWT.
+- Every quote lookup, list, line-item mutation, send, acceptance and conversion
+  path must filter by authenticated `businessId`.
+- Client-provided quote totals are not trusted. The API recalculates subtotal,
+  discount, GST, total and deposit from line items and pricing settings.
+- Local send uses the console email/provider seam and must not expose production
+  secrets. Real customer email delivery requires the configured email provider.
+- Public customer acceptance tokens are a future seam. The current foundation
+  supports authorised office-user acceptance metadata and does not expose
+  unauthenticated internal quote APIs.
+- Quote revisions freeze customer-facing versions and prevent accepted/sent
+  versions from being silently overwritten.
+
 ## Role-based access
 
 Current roles:
