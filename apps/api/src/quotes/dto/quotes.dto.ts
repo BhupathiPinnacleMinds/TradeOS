@@ -224,6 +224,11 @@ export class QuoteReasonDto {
   @IsString()
   @MaxLength(1000)
   reason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  comment?: string;
 }
 
 export class QuoteAcceptanceDto {
@@ -236,4 +241,56 @@ export class QuoteAcceptanceDto {
   @IsEmail()
   @MaxLength(180)
   acceptedByEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
+export class SendQuoteDto {
+  @IsEmail()
+  @MaxLength(180)
+  to!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(180)
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  message!: string;
+}
+
+export class PublicQuoteAcceptanceDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
+  acceptedByName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  acceptedByTitle?: string;
+
+  @IsBoolean()
+  acceptedTerms!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
+export class PublicQuoteDeclineDto {
+  @IsOptional()
+  @IsIn(['PRICE', 'TIMING', 'SCOPE', 'OTHER_PROVIDER', 'OTHER'])
+  reason?: 'PRICE' | 'TIMING' | 'SCOPE' | 'OTHER_PROVIDER' | 'OTHER';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  comment?: string;
 }

@@ -16,6 +16,6 @@ import { STORAGE_PROVIDER, storageProviderFactory } from './storage-provider';
       useFactory: storageProviderFactory,
     },
   ],
-  exports: [MediaService],
+  exports: [MediaService, STORAGE_PROVIDER],
 })
 export class MediaModule {}

@@ -1,6 +1,11 @@
 import {
   calculateQuoteTotals,
   formatAudCents,
+  parseQuoteMoneyInput,
+  parseQuoteQuantityInput,
+  roleCanAcceptOrDeclineQuote,
+  roleCanCreateQuotes,
+  roleCanSendQuote,
   type QuoteCalculationInput,
 } from '@tradieos/shared';
 
@@ -161,5 +166,56 @@ describe('quote calculations', () => {
 
   it('formats Australian dollars from cents', () => {
     expect(formatAudCents(123456)).toBe('$1,234.56');
+  });
+
+  it('allows temporary quantity typing states without relaxing strict calculation', () => {
+    expect(parseQuoteQuantityInput('').error).toBe('Enter a quantity.');
+    expect(parseQuoteQuantityInput('.')).toMatchObject({
+      error: null,
+      isComplete: false,
+      value: null,
+    });
+    expect(parseQuoteQuantityInput('1.')).toMatchObject({
+      error: null,
+      isComplete: false,
+      value: null,
+    });
+    expect(parseQuoteQuantityInput('1.234')).toMatchObject({
+      error: null,
+      isComplete: true,
+      value: '1.234',
+    });
+    expect(parseQuoteQuantityInput('1.2345').error).toBe(
+      'Quantity can have up to 3 decimal places.',
+    );
+    expect(() =>
+      calculateQuoteTotals(
+        base({ lineItems: [{ ...base({}).lineItems[0], quantity: '1.' }] }),
+      ),
+    ).toThrow('Quantity must be a positive number with up to 3 decimals.');
+  });
+
+  it('parses quote money inputs into integer cents safely', () => {
+    expect(parseQuoteMoneyInput('120')).toMatchObject({ value: 12000 });
+    expect(parseQuoteMoneyInput('120.50')).toMatchObject({ value: 12050 });
+    expect(parseQuoteMoneyInput('.')).toMatchObject({
+      error: null,
+      isComplete: false,
+      value: null,
+    });
+    expect(parseQuoteMoneyInput('-1').error).toBe(
+      'Unit price cannot be negative.',
+    );
+    expect(parseQuoteMoneyInput('12.345').error).toBe(
+      'Enter a valid unit price.',
+    );
+  });
+
+  it('keeps technician quote permissions read-only for v1', () => {
+    expect(roleCanCreateQuotes('TECHNICIAN')).toBe(false);
+    expect(roleCanSendQuote('TECHNICIAN', 'DRAFT')).toBe(false);
+    expect(roleCanAcceptOrDeclineQuote('TECHNICIAN', 'SENT')).toBe(false);
+    expect(roleCanCreateQuotes('OWNER')).toBe(true);
+    expect(roleCanCreateQuotes('SALES')).toBe(true);
   });
 });

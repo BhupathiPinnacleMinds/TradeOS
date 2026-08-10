@@ -4,6 +4,7 @@ import type { Quote } from '@tradieos/shared';
 import {
   formatAudCents,
   formatBusinessDate,
+  roleCanAcceptOrDeclineQuote,
   roleCanCancelQuote,
   roleCanConvertQuote,
   roleCanEditQuote,
@@ -14,16 +15,20 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {
   acceptQuoteRequest,
   cancelQuoteRequest,
   convertQuoteToJobRequest,
+  duplicateQuoteRequest,
+  quotePdfUrl,
   quoteDetailRequest,
   sendQuoteRequest,
 } from '../api/client';
@@ -42,6 +47,14 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<
+    NonNullable<Awaited<ReturnType<typeof quoteDetailRequest>>['documents']>
+  >([]);
+  const [sendModalOpen, setSendModalOpen] = useState(false);
+  const [sendTo, setSendTo] = useState('');
+  const [sendSubject, setSendSubject] = useState('');
+  const [sendMessage, setSendMessage] = useState('');
+  const [publicQuoteUrl, setPublicQuoteUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -50,6 +63,8 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
     try {
       const response = await quoteDetailRequest(token, quoteId);
       setQuote(response.quote);
+      setDocuments(response.documents ?? []);
+      setPublicQuoteUrl(response.publicQuoteUrl ?? null);
       navigation.setOptions({ title: response.quote.quoteNumber });
     } catch (loadError) {
       setError(
@@ -109,6 +124,19 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
   }
 
   const role = user?.role ?? 'READ_ONLY';
+  const isConverted = quote.status === 'CONVERTED';
+
+  function openSendModal() {
+    if (!quote) return;
+    setSendTo(quote.customer.email ?? '');
+    setSendSubject(
+      `Quote ${quote.quoteNumber} from ${user?.business.name ?? 'TradieOS'}`,
+    );
+    setSendMessage(
+      `Hi ${quote.customer.displayName}, please review quote ${quote.quoteNumber}.`,
+    );
+    setSendModalOpen(true);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container} style={styles.page}>
@@ -120,10 +148,23 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.title}>{quote.title}</Text>
         <Text style={styles.muted}>{quote.customer.displayName}</Text>
         <Text style={styles.total}>{formatAudCents(quote.totalCents)}</Text>
+        {quote.job ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              navigation.navigate('JobDetails', { jobId: quote.job!.id })
+            }
+            style={styles.linkedJobPill}
+          >
+            <Text style={styles.linkedJobText}>
+              Linked job {quote.job.jobNumber}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
-        {roleCanEditQuote(role, quote.status) ? (
+        {roleCanEditQuote(role, quote.status) && !isConverted ? (
           <Action
             label="Edit draft"
             onPress={() =>
@@ -131,23 +172,14 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             }
           />
         ) : null}
-        {roleCanSendQuote(role, quote.status) ? (
+        {roleCanSendQuote(role, quote.status) && !isConverted ? (
           <Action
             busy={busyAction === 'send'}
             label="Send"
-            onPress={() =>
-              void mutate('send', async () => {
-                if (!token) return;
-                await sendQuoteRequest(token, quote.id);
-                showToast({
-                  message: 'Quote sent using local email provider.',
-                  tone: 'success',
-                });
-              })
-            }
+            onPress={openSendModal}
           />
         ) : null}
-        {roleCanReviseQuote(role, quote.status) ? (
+        {roleCanReviseQuote(role, quote.status) && !isConverted ? (
           <Action
             label="Revise"
             onPress={() =>
@@ -155,7 +187,7 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             }
           />
         ) : null}
-        {['SENT', 'VIEWED'].includes(quote.status) ? (
+        {roleCanAcceptOrDeclineQuote(role, quote.status) && !isConverted ? (
           <Action
             busy={busyAction === 'accept'}
             label="Mark accepted"
@@ -183,7 +215,7 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             }
           />
         ) : null}
-        {roleCanConvertQuote(role, quote.status) ? (
+        {roleCanConvertQuote(role, quote.status) && !isConverted ? (
           <Action
             busy={busyAction === 'convert'}
             label="Convert to Job"
@@ -203,7 +235,40 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             }
           />
         ) : null}
-        {roleCanCancelQuote(role, quote.status) ? (
+        <Action
+          busy={busyAction === 'pdf'}
+          label={isConverted ? 'Download PDF' : 'Generate PDF'}
+          onPress={() =>
+            void mutate('pdf', async () => {
+              if (!token) return;
+              const response = await fetch(quotePdfUrl(quote.id), {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (!response.ok) {
+                throw new Error('Quote PDF could not be generated.');
+              }
+              showToast({
+                message: 'Quote PDF generated.',
+                tone: 'success',
+              });
+            })
+          }
+        />
+        <Action
+          busy={busyAction === 'duplicate'}
+          label="Duplicate Quote"
+          onPress={() =>
+            void mutate('duplicate', async () => {
+              if (!token) return;
+              const response = await duplicateQuoteRequest(token, quote.id);
+              showToast({ message: 'Quote duplicated.', tone: 'success' });
+              navigation.navigate('QuoteDetails', {
+                quoteId: response.quote.id,
+              });
+            })
+          }
+        />
+        {roleCanCancelQuote(role, quote.status) && !isConverted ? (
           <Action
             destructive
             label="Cancel"
@@ -228,6 +293,24 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
           />
         ) : null}
       </View>
+
+      {quote.job ? (
+        <Section
+          title={isConverted ? 'Converted to Job' : 'Source / Linked Job'}
+        >
+          <Text style={styles.lineTitle}>{quote.job.jobNumber}</Text>
+          <Text style={styles.muted}>{quote.job.title}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              navigation.navigate('JobDetails', { jobId: quote.job!.id })
+            }
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>View Job</Text>
+          </Pressable>
+        </Section>
+      ) : null}
 
       <Section title="Details">
         <Detail
@@ -285,7 +368,130 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
           {quote.termsAndConditions || 'No terms added yet.'}
         </Text>
       </Section>
+
+      <Section title="Documents">
+        {documents.length ? (
+          documents.map((document) => (
+            <View key={document.id} style={styles.documentRow}>
+              <View>
+                <Text style={styles.lineTitle}>Quote PDF</Text>
+                <Text style={styles.muted}>
+                  {document.fileName} · Revision {document.version}
+                </Text>
+                <Text style={styles.muted}>
+                  Generated{' '}
+                  {formatBusinessDate(
+                    document.generatedAt,
+                    user?.business.timezone,
+                  )}
+                </Text>
+              </View>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.muted}>
+            Generate or send the quote to create a customer PDF.
+          </Text>
+        )}
+      </Section>
+
+      <SendQuoteModal
+        busy={busyAction === 'send'}
+        message={sendMessage}
+        onCancel={() => setSendModalOpen(false)}
+        onChangeMessage={setSendMessage}
+        onChangeSubject={setSendSubject}
+        onChangeTo={setSendTo}
+        onSend={() =>
+          void mutate('send', async () => {
+            if (!token) return;
+            const response = await sendQuoteRequest(token, quote.id, {
+              message: sendMessage,
+              subject: sendSubject,
+              to: sendTo,
+            });
+            setDocuments(response.documents ?? []);
+            setPublicQuoteUrl(response.publicQuoteUrl ?? null);
+            setSendModalOpen(false);
+            showToast({
+              message: 'Quote sent using local email provider.',
+              tone: 'success',
+            });
+          })
+        }
+        publicQuoteUrl={publicQuoteUrl}
+        subject={sendSubject}
+        to={sendTo}
+        visible={sendModalOpen}
+      />
     </ScrollView>
+  );
+}
+
+function SendQuoteModal({
+  busy,
+  message,
+  onCancel,
+  onChangeMessage,
+  onChangeSubject,
+  onChangeTo,
+  onSend,
+  publicQuoteUrl,
+  subject,
+  to,
+  visible,
+}: {
+  busy: boolean;
+  message: string;
+  onCancel(): void;
+  onChangeMessage(value: string): void;
+  onChangeSubject(value: string): void;
+  onChangeTo(value: string): void;
+  onSend(): void;
+  publicQuoteUrl: string | null;
+  subject: string;
+  to: string;
+  visible: boolean;
+}) {
+  return (
+    <Modal animationType="slide" transparent visible={visible}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalCard}>
+          <Text style={styles.sectionTitle}>Send Quote</Text>
+          <Text style={styles.inputLabel}>To</Text>
+          <TextInput
+            autoCapitalize="none"
+            keyboardType="email-address"
+            onChangeText={onChangeTo}
+            placeholder="customer@example.com"
+            style={styles.input}
+            value={to}
+          />
+          <Text style={styles.inputLabel}>Subject</Text>
+          <TextInput
+            onChangeText={onChangeSubject}
+            style={styles.input}
+            value={subject}
+          />
+          <Text style={styles.inputLabel}>Message</Text>
+          <TextInput
+            multiline
+            onChangeText={onChangeMessage}
+            style={[styles.input, styles.textArea]}
+            value={message}
+          />
+          <Text style={styles.muted}>Attachment: Quote PDF</Text>
+          <Text style={styles.muted}>
+            Secure link:{' '}
+            {publicQuoteUrl ? 'available after send' : 'created on send'}
+          </Text>
+          <View style={styles.modalActions}>
+            <Action label="Cancel" onPress={onCancel} />
+            <Action busy={busy} label="Send Quote" onPress={onSend} />
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -391,6 +597,12 @@ const styles = StyleSheet.create({
   },
   detailStrong: { fontSize: 18 },
   detailValue: { color: colours.ink, fontWeight: '800', textAlign: 'right' },
+  documentRow: {
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+  },
   errorTitle: { color: '#B91C1C', fontSize: 18, fontWeight: '900' },
   eyebrow: {
     color: colours.primary,
@@ -421,8 +633,40 @@ const styles = StyleSheet.create({
   },
   lineTitle: { color: colours.ink, fontWeight: '900' },
   lineTotal: { color: colours.ink, fontWeight: '900' },
+  linkedJobPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  linkedJobText: { color: '#047857', fontWeight: '900' },
+  input: {
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colours.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  inputLabel: { color: colours.ink, fontWeight: '900' },
   muted: { color: colours.muted, lineHeight: 20 },
   page: { backgroundColor: colours.background, flex: 1 },
+  modalActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  modalBackdrop: {
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: colours.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    gap: 12,
+    padding: 20,
+  },
   secondaryButton: {
     borderColor: colours.border,
     borderRadius: 16,
@@ -442,4 +686,5 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
   title: { color: colours.ink, fontSize: 26, fontWeight: '900' },
   total: { color: colours.ink, fontSize: 30, fontWeight: '900' },
+  textArea: { minHeight: 110, textAlignVertical: 'top' },
 });

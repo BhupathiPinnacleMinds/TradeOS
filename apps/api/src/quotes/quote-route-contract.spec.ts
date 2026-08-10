@@ -7,8 +7,16 @@ describe('quotes route contract', () => {
     'utf8',
   );
   const service = readFileSync(join(__dirname, 'quotes.service.ts'), 'utf8');
+  const pdfProvider = readFileSync(
+    join(__dirname, 'quote-pdf.provider.ts'),
+    'utf8',
+  );
   const moduleSource = readFileSync(
     join(__dirname, 'quotes.module.ts'),
+    'utf8',
+  );
+  const publicController = readFileSync(
+    join(__dirname, 'public-quotes.controller.ts'),
     'utf8',
   );
   const appModule = readFileSync(
@@ -19,6 +27,8 @@ describe('quotes route contract', () => {
   it('registers the Quotes module in the application', () => {
     expect(appModule).toContain('QuotesModule');
     expect(moduleSource).toContain('QuotesController');
+    expect(moduleSource).toContain('PublicQuotesController');
+    expect(moduleSource).toContain('MediaModule');
     expect(moduleSource).toContain('QuotesService');
   });
 
@@ -66,6 +76,28 @@ describe('quotes route contract', () => {
       'QUOTE_CANCELLED',
       'QUOTE_CONVERTED_TO_JOB',
     ].forEach((event) => expect(service).toContain(event));
-    expect(service).toContain('quoteRevision.create');
+    expect(service).toContain('quoteRevision.upsert');
+  });
+
+  it('exposes public customer quote routes without staff JWT access', () => {
+    expect(publicController).toContain('@Public()');
+    expect(publicController).toContain("@Controller('public/quotes')");
+    [
+      "@Get(':token')",
+      "@Post(':token/view')",
+      "@Post(':token/accept')",
+      "@Post(':token/decline')",
+    ].forEach((route) => expect(publicController).toContain(route));
+  });
+
+  it('uses PDF, hash-only token and local email provider seams', () => {
+    expect(service).toContain('generateAndStorePdf');
+    expect(pdfProvider).toContain('application/pdf');
+    expect(service).toContain('hashToken');
+    expect(service).toContain('tokenHash');
+    expect(service).not.toContain('rawToken: tokenHash');
+    expect(service).toContain('QUOTE_EMAIL_REQUIRED');
+    expect(service).toContain('QUOTE_PUBLIC_TOKEN_INVALID');
+    expect(service).toContain('QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED');
   });
 });

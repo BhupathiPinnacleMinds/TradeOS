@@ -62,6 +62,7 @@ export class DashboardService {
       openQuotes,
       draftQuotes,
       quotesAwaitingResponse,
+      quotesViewedNotAccepted,
       acceptedQuotesNotConverted,
       quotesExpiringSoon,
       unpaidInvoices,
@@ -199,6 +200,9 @@ export class DashboardService {
           businessId,
           status: { in: ['SENT', 'VIEWED'] },
         },
+      }),
+      this.prisma.quote.count({
+        where: { archivedAt: null, businessId, status: 'VIEWED' },
       }),
       this.prisma.quote.count({
         where: { archivedAt: null, businessId, status: 'ACCEPTED' },
@@ -377,6 +381,7 @@ export class DashboardService {
         openQuotes,
         draftQuotes,
         quotesAwaitingResponse,
+        quotesViewedNotAccepted,
         acceptedQuotesNotConverted,
         quotesExpiringSoon,
         unpaidInvoices,

@@ -167,6 +167,21 @@ export class JobsService {
       include: this.appointmentInclude(),
       orderBy: { scheduledStart: 'asc' },
     });
+    const sourceQuote = await this.prisma.quote.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        jobId: job.id,
+        status: 'CONVERTED',
+      },
+      orderBy: { convertedAt: 'desc' },
+      select: {
+        id: true,
+        quoteNumber: true,
+        status: true,
+        title: true,
+        totalCents: true,
+      },
+    });
     const appointmentIds = appointments.map((appointment) => appointment.id);
     const [activity, appointmentActivity] = await Promise.all([
       this.prisma.auditLog.findMany({
@@ -204,6 +219,7 @@ export class JobsService {
         this.toAppointment(appointment),
       ),
       job: this.toJob(job),
+      sourceQuote,
       timeline: timeline.map((entry) => ({
         action: entry.action,
         createdAt: entry.createdAt.toISOString(),

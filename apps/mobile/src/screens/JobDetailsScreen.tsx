@@ -2,11 +2,13 @@ import type {
   Appointment,
   AppointmentTransitionAction,
   Job,
+  JobDetailResponse,
   JobStatus,
   MediaAsset,
 } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
+  formatAudCents,
   formatBusinessDateTime,
   formatMediaCount,
   formatBusinessTimeRange,
@@ -96,6 +98,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const { showToast } = useToast();
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const [job, setJob] = useState<Job | null>(null);
+  const [sourceQuote, setSourceQuote] =
+    useState<JobDetailResponse['sourceQuote']>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [media, setMedia] = useState<MediaAsset[]>([]);
   const [timeline, setTimeline] = useState<
@@ -126,6 +130,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         }),
       ]);
       setJob(response.job);
+      setSourceQuote(response.sourceQuote);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       setMedia(mediaResponse.records);
@@ -149,6 +154,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     try {
       const response = await updateJobStatusRequest(token, job.id, status);
       setJob(response.job);
+      setSourceQuote(response.sourceQuote);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       showToast({
@@ -176,6 +182,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         ? await restoreJobRequest(token, job.id)
         : await archiveJobRequest(token, job.id);
       setJob(response.job);
+      setSourceQuote(response.sourceQuote);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       showToast({
@@ -337,7 +344,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         ) : null}
         {canCreateQuote ? (
           <QuickAction
-            label="Create Quote"
+            label={sourceQuote ? 'New Additional Quote' : 'Create Quote'}
             onPress={() =>
               navigation.navigate('QuoteForm', {
                 customerId: job.customerId,
@@ -575,12 +582,27 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       </Card>
 
       <Card title="Future sections">
+        {sourceQuote ? (
+          <View style={styles.sourceQuoteCard}>
+            <Text style={styles.cardTitle}>Source Quote</Text>
+            <Text style={styles.meta}>{sourceQuote.quoteNumber}</Text>
+            <Text style={styles.meta}>
+              Accepted total: {formatAudCents(sourceQuote.totalCents)}
+            </Text>
+            <ActionButton
+              label="View Quote"
+              onPress={() =>
+                navigation.navigate('QuoteDetails', { quoteId: sourceQuote.id })
+              }
+            />
+          </View>
+        ) : null}
         <Text style={styles.meta}>
           Quotes: {job.quoteCreated ? 'Created' : 'Not created yet'}
         </Text>
         {canCreateQuote && !job.quoteCreated ? (
           <ActionButton
-            label="Create quote"
+            label={sourceQuote ? 'New additional quote' : 'Create quote'}
             onPress={() =>
               navigation.navigate('QuoteForm', {
                 customerId: job.customerId,
@@ -852,6 +874,13 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  sourceQuoteCard: {
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    padding: 12,
+  },
   container: {
     backgroundColor: colours.background,
     padding: 24,

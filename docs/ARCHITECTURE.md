@@ -125,12 +125,24 @@ Quote architecture:
 - `QuoteRevision` stores immutable snapshots before customer-facing send,
   acceptance and revision operations so accepted/sent versions are not silently
   overwritten.
-- Local quote send uses the existing console delivery seam and logs a
-  customer-facing preview path. Production email/customer-token delivery remains
-  a provider concern rather than direct UI/API coupling.
-- Quote PDF generation is represented by a print-ready HTML/PDF provider seam
-  for this milestone. The API returns reproducible print-ready HTML rather than
-  exposing raw storage keys or pretending production PDF infrastructure exists.
+- Local quote send uses a quote email-provider seam. Development sends through
+  the console provider and logs the recipient, subject, PDF filename and secure
+  quote link. Production delivery remains provider-based and must not bypass
+  Tori/TradieOS confirmation rules.
+- Quote PDF generation is server-side through `QuotePdfProvider`. The current
+  deterministic provider returns real `application/pdf` bytes and stores them
+  through the existing storage abstraction so raw storage paths are never
+  exposed to clients.
+- Sending a quote freezes the current customer-facing `QuoteRevision`, stores a
+  tenant-scoped `QuotePdfDocument`, creates a hash-only
+  `QuotePublicAccessToken`, and then sends the secure public quote URL.
+- Public customer routes are separate from authenticated staff APIs under
+  `/api/public/quotes/:token`. They resolve only hash-matched, unexpired,
+  non-revoked tokens and return a frozen customer-facing quote snapshot without
+  internal notes, tenant ids, staff ids, audit metadata or storage keys.
+- Customer acceptance/decline records immutable metadata against the quote,
+  token and audit log. Accepted/declined links remain readable so customers can
+  see the final state, but cannot be used for another mutation.
 
 Dispatcher navigation:
 

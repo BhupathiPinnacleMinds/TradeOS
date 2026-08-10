@@ -243,20 +243,20 @@ enum ProcessingStatus {
 }
 
 model Business {
-  id                    String                 @id @default(cuid())
+  id                    String                   @id @default(cuid())
   name                  String
   abn                   String?
   tradeType             String?
-  gstRegistered         Boolean                @default(false)
+  gstRegistered         Boolean                  @default(false)
   phone                 String?
   email                 String?
   address               String?
   suburb                String?
   state                 String?
   postcode              String?
-  timezone              String                 @default("Australia/Melbourne")
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  timezone              String                   @default("Australia/Melbourne")
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
   users                 User[]
   members               BusinessMember[]
   customers             Customer[]
@@ -270,6 +270,8 @@ model Business {
   quotes                Quote[]
   quoteSequence         QuoteSequence?
   quoteRevisions        QuoteRevision[]
+  quotePdfDocuments     QuotePdfDocument[]
+  quotePublicTokens     QuotePublicAccessToken[]
   invoices              Invoice[]
   payments              Payment[]
   messages              Message[]
@@ -616,58 +618,66 @@ model AppointmentSequence {
 }
 
 model Quote {
-  id                  String            @id @default(cuid())
-  businessId          String
-  quoteNumber         String
-  customerId          String
-  customerSiteId      String?
-  jobId               String?
-  sourceAppointmentId String?
-  status              QuoteStatus       @default(DRAFT)
-  title               String
-  description         String?
-  issueDate           DateTime          @default(now())
-  expiryDate          DateTime?
-  currency            String            @default("AUD")
-  pricingMode         QuotePricingMode  @default(GST_EXCLUSIVE)
-  gstRateBasisPoints  Int               @default(1000)
-  subtotalCents       Int               @default(0)
-  discountType        QuoteDiscountType @default(NONE)
-  discountValue       Int               @default(0)
-  discountCents       Int               @default(0)
-  gstCents            Int               @default(0)
-  totalCents          Int               @default(0)
-  depositType         QuoteDepositType  @default(NONE)
-  depositValue        Int               @default(0)
-  depositCents        Int               @default(0)
-  customerNotes       String?
-  internalNotes       String?
-  termsAndConditions  String?
-  sentAt              DateTime?
-  viewedAt            DateTime?
-  acceptedAt          DateTime?
-  declinedAt          DateTime?
-  expiredAt           DateTime?
-  cancelledAt         DateTime?
-  convertedAt         DateTime?
-  acceptedByName      String?
-  acceptedByEmail     String?
-  acceptanceIp        String?
-  version             Int               @default(1)
-  createdBy           String?
-  updatedBy           String?
-  archivedAt          DateTime?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  business            Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer            Customer          @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  customerSite        CustomerSite?     @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: SetNull)
-  job                 Job?              @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
-  sourceAppointment   Appointment?      @relation("QuoteSourceAppointment", fields: [sourceAppointmentId, businessId], references: [id, businessId], onDelete: SetNull)
-  creator             User?             @relation("QuoteCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  updater             User?             @relation("QuoteUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
-  lineItems           QuoteLineItem[]
-  revisions           QuoteRevision[]
+  id                   String                   @id @default(cuid())
+  businessId           String
+  quoteNumber          String
+  customerId           String
+  customerSiteId       String?
+  jobId                String?
+  sourceAppointmentId  String?
+  status               QuoteStatus              @default(DRAFT)
+  title                String
+  description          String?
+  issueDate            DateTime                 @default(now())
+  expiryDate           DateTime?
+  currency             String                   @default("AUD")
+  pricingMode          QuotePricingMode         @default(GST_EXCLUSIVE)
+  gstRateBasisPoints   Int                      @default(1000)
+  subtotalCents        Int                      @default(0)
+  discountType         QuoteDiscountType        @default(NONE)
+  discountValue        Int                      @default(0)
+  discountCents        Int                      @default(0)
+  gstCents             Int                      @default(0)
+  totalCents           Int                      @default(0)
+  depositType          QuoteDepositType         @default(NONE)
+  depositValue         Int                      @default(0)
+  depositCents         Int                      @default(0)
+  customerNotes        String?
+  internalNotes        String?
+  termsAndConditions   String?
+  sentAt               DateTime?
+  viewedAt             DateTime?
+  firstViewedAt        DateTime?
+  latestViewedAt       DateTime?
+  viewCount            Int                      @default(0)
+  acceptedAt           DateTime?
+  declinedAt           DateTime?
+  declineReason        String?
+  declineComment       String?
+  expiredAt            DateTime?
+  cancelledAt          DateTime?
+  convertedAt          DateTime?
+  acceptedByName       String?
+  acceptedByEmail      String?
+  acceptedQuoteVersion Int?
+  acceptanceIp         String?
+  version              Int                      @default(1)
+  createdBy            String?
+  updatedBy            String?
+  archivedAt           DateTime?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  business             Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer             Customer                 @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  customerSite         CustomerSite?            @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: SetNull)
+  job                  Job?                     @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  sourceAppointment    Appointment?             @relation("QuoteSourceAppointment", fields: [sourceAppointmentId, businessId], references: [id, businessId], onDelete: SetNull)
+  creator              User?                    @relation("QuoteCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater              User?                    @relation("QuoteUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  lineItems            QuoteLineItem[]
+  revisions            QuoteRevision[]
+  pdfDocuments         QuotePdfDocument[]
+  publicAccessTokens   QuotePublicAccessToken[]
 
   @@unique([businessId, quoteNumber])
   @@unique([id, businessId])
@@ -702,20 +712,71 @@ model QuoteLineItem {
 }
 
 model QuoteRevision {
-  id         String      @id @default(cuid())
-  businessId String
-  quoteId    String
-  version    Int
-  status     QuoteStatus
-  snapshot   Json
-  reason     String?
-  createdBy  String?
-  createdAt  DateTime    @default(now())
-  business   Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  quote      Quote       @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+  id                 String                   @id @default(cuid())
+  businessId         String
+  quoteId            String
+  version            Int
+  status             QuoteStatus
+  snapshot           Json
+  snapshotHash       String?
+  reason             String?
+  createdBy          String?
+  createdAt          DateTime                 @default(now())
+  business           Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  quote              Quote                    @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+  pdfDocuments       QuotePdfDocument[]
+  publicAccessTokens QuotePublicAccessToken[]
 
   @@unique([businessId, quoteId, version])
+  @@unique([id, businessId])
   @@index([businessId, quoteId, createdAt])
+}
+
+model QuotePdfDocument {
+  id              String        @id @default(cuid())
+  businessId      String
+  quoteId         String
+  quoteRevisionId String
+  version         Int
+  fileName        String
+  mimeType        String        @default("application/pdf")
+  storageProvider String
+  objectKey       String
+  fileSizeBytes   Int
+  checksum        String
+  generatedAt     DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  business        Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  quote           Quote         @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+  quoteRevision   QuoteRevision @relation(fields: [quoteRevisionId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, quoteId, version])
+  @@unique([businessId, objectKey])
+  @@index([businessId, quoteRevisionId])
+}
+
+model QuotePublicAccessToken {
+  id              String        @id @default(cuid())
+  businessId      String
+  quoteId         String
+  quoteRevisionId String
+  version         Int
+  tokenHash       String
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  createdAt       DateTime      @default(now())
+  lastViewedAt    DateTime?
+  viewCount       Int           @default(0)
+  acceptedAt      DateTime?
+  declinedAt      DateTime?
+  business        Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  quote           Quote         @relation(fields: [quoteId, businessId], references: [id, businessId], onDelete: Cascade)
+  quoteRevision   QuoteRevision @relation(fields: [quoteRevisionId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([tokenHash])
+  @@index([businessId, quoteId, version])
+  @@index([businessId, quoteRevisionId])
+  @@index([expiresAt])
 }
 
 model QuoteSequence {

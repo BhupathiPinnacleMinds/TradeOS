@@ -2,6 +2,7 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   AcceptInvitation: { token: string };
+  PublicQuote: { token: string };
   Main: undefined;
   MyDay: undefined;
   Quotes: undefined;

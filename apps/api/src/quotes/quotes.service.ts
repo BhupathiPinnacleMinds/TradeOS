@@ -1,4 +1,12 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { createHash, randomBytes } from 'crypto';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type {
   AuthenticatedUser,
   Quote,
@@ -10,15 +18,17 @@ import type {
 } from '@tradieos/shared';
 import {
   QUOTE_CREATE_ROLES,
+  QUOTE_SEND_ROLES,
   QUOTE_VIEW_ROLES,
   calculateQuoteTotals,
   canTransitionQuoteStatus,
   formatAudCents,
+  parseQuoteQuantityInput,
+  roleCanAcceptOrDeclineQuote,
   roleCanCancelQuote,
   roleCanConvertQuote,
   roleCanEditQuote,
   roleCanReviseQuote,
-  roleCanSendQuote,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -27,9 +37,22 @@ import type {
   QuoteAcceptanceDto,
   QuoteLineItemDto,
   QuoteReasonDto,
+  PublicQuoteAcceptanceDto,
+  PublicQuoteDeclineDto,
   ReorderQuoteItemsDto,
+  SendQuoteDto,
   UpsertQuoteDto,
 } from './dto/quotes.dto';
+import { STORAGE_PROVIDER } from '../media/storage-provider';
+import type { StorageProvider } from '../media/storage-provider';
+import {
+  ConsoleQuoteEmailProvider,
+  type QuoteEmailProvider,
+} from './quote-email.provider';
+import {
+  DeterministicQuotePdfProvider,
+  type QuotePdfProvider,
+} from './quote-pdf.provider';
 
 const DEFAULT_PAGE_SIZE = 20;
 const QUOTE_STATUS_AUDIT_EVENTS: Partial<Record<QuoteStatus, string>> = {
@@ -48,7 +71,17 @@ type QuoteRecord = Prisma.QuoteGetPayload<{
 
 @Injectable()
 export class QuotesService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(QuotesService.name);
+  private readonly emailProvider: QuoteEmailProvider =
+    new ConsoleQuoteEmailProvider();
+  private readonly pdfProvider: QuotePdfProvider =
+    new DeterministicQuotePdfProvider();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
+  ) {}
 
   async findAll(
     currentUser: AuthenticatedUser,
@@ -97,6 +130,10 @@ export class QuotesService {
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
+    const documents = await this.prisma.quotePdfDocument.findMany({
+      where: { businessId: currentUser.businessId, quoteId: quote.id },
+      orderBy: { generatedAt: 'desc' },
+    });
 
     return {
       activity: activity.map((entry) => ({
@@ -104,71 +141,105 @@ export class QuotesService {
         createdAt: entry.createdAt.toISOString(),
         metadata: (entry.metadata as Record<string, unknown> | null) ?? null,
       })),
+      documents: documents.map((document) => this.toPdfDocument(document)),
       quote: this.toQuote(quote),
     };
   }
 
   async create(currentUser: AuthenticatedUser, dto: UpsertQuoteDto) {
-    this.assertRole(currentUser, QUOTE_CREATE_ROLES);
-    this.assertDates(dto);
-    this.assertLineItems(dto.lineItems);
-    await this.assertQuoteContext(currentUser, dto);
-    if (
-      currentUser.role === 'TECHNICIAN' &&
-      !(await this.canTechnicianCreateDraft(currentUser, dto.jobId))
-    ) {
-      throw this.domainError(
-        'QUOTE_ACCESS_DENIED',
-        'Technicians can only draft quotes for assigned jobs.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    const created = await this.prisma.$transaction(async (tx) => {
-      const quoteNumber = await this.nextQuoteNumber(
-        tx,
-        currentUser.businessId,
-        new Date(dto.issueDate),
-      );
-      const calculated = calculateQuoteTotals({
-        depositType: dto.depositType,
-        depositValue: dto.depositValue,
-        discountType: dto.discountType,
-        discountValue: dto.discountValue,
-        gstRateBasisPoints: dto.gstRateBasisPoints,
-        lineItems: dto.lineItems,
-        pricingMode: dto.pricingMode,
-      });
-      const quote = await tx.quote.create({
-        data: {
-          ...this.quoteData(currentUser, dto, calculated),
+    this.logCreate('QUOTE_CREATE_REQUEST', currentUser, dto);
+    try {
+      this.logCreate('QUOTE_CREATE_AUTH_CONTEXT', currentUser, dto);
+      this.assertRole(currentUser, QUOTE_CREATE_ROLES);
+      this.assertDates(dto);
+      this.assertLineItems(dto.lineItems);
+      this.logCreate('QUOTE_CREATE_PAYLOAD_PARSED', currentUser, dto);
+      await this.assertQuoteContext(currentUser, dto);
+      this.logCreate('QUOTE_CREATE_RELATIONS_VALIDATED', currentUser, dto);
+      const created = await this.prisma.$transaction(async (tx) => {
+        this.logCreate('QUOTE_CREATE_TRANSACTION_STARTED', currentUser, dto);
+        const quoteNumber = await this.nextQuoteNumber(
+          tx,
+          currentUser.businessId,
+          new Date(dto.issueDate),
+        );
+        this.logCreate('QUOTE_CREATE_NUMBER_ALLOCATED', currentUser, dto, {
           quoteNumber,
-          lineItems: {
-            create: calculated.lineItems.map((item, index) =>
-              this.lineItemData(currentUser.businessId, item, index),
-            ),
-          },
-        },
-        include: this.quoteInclude(),
-      });
-      await this.writeAudit(tx, currentUser, 'QUOTE_CREATED', quote, {
-        status: quote.status,
-      });
-      if (quote.jobId) {
-        await tx.job.update({
-          where: {
-            id_businessId: {
-              businessId: currentUser.businessId,
-              id: quote.jobId,
-            },
-          },
-          data: { quoteCreated: true },
         });
-      }
-      return quote;
-    });
+        const calculated = calculateQuoteTotals({
+          depositType: dto.depositType,
+          depositValue: dto.depositValue,
+          discountType: dto.discountType,
+          discountValue: dto.discountValue,
+          gstRateBasisPoints: dto.gstRateBasisPoints,
+          lineItems: dto.lineItems,
+          pricingMode: dto.pricingMode,
+        });
+        this.logCreate('QUOTE_CREATE_TOTALS_CALCULATED', currentUser, dto, {
+          discountCents: calculated.discountCents,
+          gstCents: calculated.gstCents,
+          subtotalCents: calculated.subtotalCents,
+          totalCents: calculated.totalCents,
+        });
+        const quote = await tx.quote.create({
+          data: {
+            ...this.quoteData(currentUser, dto, calculated),
+            quoteNumber,
+          },
+          include: this.quoteInclude(),
+        });
+        this.logCreate('QUOTE_CREATE_QUOTE_INSERTED', currentUser, dto, {
+          quoteId: quote.id,
+          quoteNumber: quote.quoteNumber,
+        });
+        await this.createLineItems(
+          tx,
+          currentUser.businessId,
+          quote.id,
+          calculated,
+        );
+        this.logCreate('QUOTE_CREATE_ITEMS_INSERTED', currentUser, dto, {
+          itemCount: calculated.lineItems.length,
+          quoteId: quote.id,
+        });
+        const quoteWithItems = await tx.quote.findUniqueOrThrow({
+          where: {
+            id_businessId: { businessId: currentUser.businessId, id: quote.id },
+          },
+          include: this.quoteInclude(),
+        });
+        await this.writeAudit(
+          tx,
+          currentUser,
+          'QUOTE_CREATED',
+          quoteWithItems,
+          {
+            status: quoteWithItems.status,
+          },
+        );
+        if (quoteWithItems.jobId) {
+          await tx.job.update({
+            where: {
+              id_businessId: {
+                businessId: currentUser.businessId,
+                id: quoteWithItems.jobId,
+              },
+            },
+            data: { quoteCreated: true },
+          });
+        }
+        return quoteWithItems;
+      });
+      this.logCreate('QUOTE_CREATE_TRANSACTION_COMMITTED', currentUser, dto, {
+        quoteId: created.id,
+        quoteNumber: created.quoteNumber,
+      });
 
-    return this.findOne(currentUser, created.id);
+      return this.findOne(currentUser, created.id);
+    } catch (error) {
+      this.logCreateFailure(currentUser, dto, error);
+      throw this.mapCreateFailure(error);
+    }
   }
 
   async update(
@@ -331,12 +402,15 @@ export class QuotesService {
     return this.findOne(currentUser, id);
   }
 
-  async send(currentUser: AuthenticatedUser, id: string) {
+  async send(currentUser: AuthenticatedUser, id: string, dto?: SendQuoteDto) {
     const quote = await this.getQuoteForUser(currentUser, id);
-    if (!roleCanSendQuote(currentUser.role, quote.status)) {
+    if (
+      !QUOTE_SEND_ROLES.includes(currentUser.role) ||
+      !['DRAFT', 'SENT', 'VIEWED'].includes(quote.status)
+    ) {
       throw this.domainError(
         'QUOTE_INVALID_STATUS',
-        'Only draft quotes can be sent.',
+        'This quote is not eligible to send.',
         HttpStatus.CONFLICT,
       );
     }
@@ -347,26 +421,92 @@ export class QuotesService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    const updated = await this.prisma.$transaction(async (tx) => {
-      await this.createRevision(tx, currentUser, quote, 'Initial send');
+    const to = dto?.to?.trim() || quote.customer.email?.trim();
+    if (!to) {
+      throw this.domainError(
+        'QUOTE_EMAIL_REQUIRED',
+        'Add a customer email before sending this quote.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const business = await this.getBusiness(currentUser.businessId);
+    const subject =
+      dto?.subject?.trim() ||
+      `Quote ${quote.quoteNumber} from ${business.name}`;
+    const message =
+      dto?.message?.trim() ||
+      `Hi ${quote.customer.displayName}, please review quote ${quote.quoteNumber}.`;
+    const now = new Date();
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const revision = await this.createRevision(
+        tx,
+        currentUser,
+        quote,
+        quote.status === 'DRAFT' ? 'Customer-facing send' : 'Resend',
+      );
+      const pdf = await this.generateAndStorePdf(
+        tx,
+        currentUser,
+        quote,
+        revision.id,
+        business,
+      );
+      const token = await this.createPublicToken(
+        tx,
+        currentUser.businessId,
+        quote.id,
+        revision.id,
+        quote.version,
+      );
       const next = await tx.quote.update({
         where: { id_businessId: { businessId: currentUser.businessId, id } },
-        data: { sentAt: new Date(), status: 'SENT', updatedBy: currentUser.id },
+        data: {
+          sentAt: quote.sentAt ?? now,
+          status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
+          updatedBy: currentUser.id,
+        },
         include: this.quoteInclude(),
       });
-      await this.writeAudit(tx, currentUser, 'QUOTE_SENT', next, {
-        localDelivery: true,
-        previewUrl: `/api/quotes/${id}/preview`,
-      });
-      console.info('[TradieOS quote:SEND]', {
-        customer: next.customer.email ?? next.customer.displayName,
-        quoteNumber: next.quoteNumber,
-        total: formatAudCents(next.totalCents),
-        url: `/api/quotes/${id}/preview`,
-      });
-      return next;
+      await this.writeAudit(
+        tx,
+        currentUser,
+        quote.status === 'DRAFT' ? 'QUOTE_SENT' : 'QUOTE_RESENT',
+        next,
+        {
+          pdfDocumentId: pdf.id,
+          quoteRevisionId: revision.id,
+          publicTokenId: token.id,
+          to,
+        },
+      );
+      return { pdf, token: token.rawToken, quote: next };
     });
-    return this.findOne(currentUser, updated.id);
+
+    const publicUrl = this.publicQuoteUrl(result.token);
+    const delivery = await this.emailProvider.sendQuote({
+      businessName: business.name,
+      message,
+      pdfFileName: result.pdf.fileName,
+      quoteNumber: quote.quoteNumber,
+      quoteUrl: publicUrl,
+      subject,
+      to,
+    });
+    if (delivery.status !== 'SENT') {
+      throw this.domainError(
+        'QUOTE_SEND_FAILED',
+        'Quote email could not be sent. Please try again.',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    return {
+      ...(await this.findOne(currentUser, result.quote.id)),
+      pdfDocument: this.toPdfDocument(result.pdf),
+      publicQuoteUrl: publicUrl,
+    };
   }
 
   async revise(
@@ -412,6 +552,13 @@ export class QuotesService {
     dto: QuoteAcceptanceDto,
   ) {
     const quote = await this.getQuoteForUser(currentUser, id);
+    if (!roleCanAcceptOrDeclineQuote(currentUser.role, quote.status)) {
+      throw this.domainError(
+        'QUOTE_ACCESS_DENIED',
+        'You do not have permission to mark quotes accepted.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     if (!['SENT', 'VIEWED'].includes(quote.status)) {
       throw this.domainError(
         'QUOTE_INVALID_STATUS',
@@ -433,6 +580,13 @@ export class QuotesService {
     dto: QuoteReasonDto,
   ) {
     const quote = await this.getQuoteForUser(currentUser, id);
+    if (!roleCanAcceptOrDeclineQuote(currentUser.role, quote.status)) {
+      throw this.domainError(
+        'QUOTE_ACCESS_DENIED',
+        'You do not have permission to decline quotes.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     if (!['SENT', 'VIEWED'].includes(quote.status)) {
       throw this.domainError(
         'QUOTE_INVALID_STATUS',
@@ -582,21 +736,215 @@ export class QuotesService {
 
   async preview(currentUser: AuthenticatedUser, id: string) {
     const quote = (await this.findOne(currentUser, id)).quote;
+    const business = await this.getBusiness(currentUser.businessId);
     return {
+      business,
       html: this.renderPreviewHtml(quote),
       quote,
     };
   }
 
   async pdf(currentUser: AuthenticatedUser, id: string) {
-    const quote = (await this.findOne(currentUser, id)).quote;
+    const quote = await this.getQuoteForUser(currentUser, id);
+    const business = await this.getBusiness(currentUser.businessId);
+    const revision = await this.prisma.quoteRevision.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        quoteId: quote.id,
+        version: quote.version,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const document =
+      (await this.prisma.quotePdfDocument.findFirst({
+        where: {
+          businessId: currentUser.businessId,
+          quoteId: quote.id,
+          version: quote.version,
+        },
+        orderBy: { generatedAt: 'desc' },
+      })) ??
+      (await this.prisma.$transaction(async (tx) => {
+        const frozen =
+          revision ??
+          (await this.createRevision(tx, currentUser, quote, 'PDF generated'));
+        return this.generateAndStorePdf(
+          tx,
+          currentUser,
+          quote,
+          frozen.id,
+          business,
+        );
+      }));
+    const buffer = await this.storage.readObject({
+      objectKey: document.objectKey,
+    });
     return {
-      documentType: 'QUOTE_PRINT_READY_HTML',
-      html: this.renderPreviewHtml(quote),
-      message:
-        'PDF provider seam is ready; local milestone returns reproducible print-ready HTML.',
-      quoteId: quote.id,
+      buffer,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
     };
+  }
+
+  async publicPreview(token: string, markViewed = true) {
+    const context = await this.resolvePublicToken(token);
+    const quote = this.snapshotQuote(context.revision.snapshot);
+    const business = await this.getBusiness(context.token.businessId);
+    const now = new Date();
+    const state = this.publicState(context.quote, context.token, now);
+    if (markViewed && state === 'ACTIVE') {
+      await this.prisma.$transaction(async (tx) => {
+        const firstViewedAt = context.quote.firstViewedAt ?? now;
+        const status =
+          context.quote.status === 'SENT' ? 'VIEWED' : context.quote.status;
+        await tx.quote.update({
+          where: {
+            id_businessId: {
+              businessId: context.quote.businessId,
+              id: context.quote.id,
+            },
+          },
+          data: {
+            firstViewedAt,
+            latestViewedAt: now,
+            status,
+            viewedAt: context.quote.viewedAt ?? now,
+            viewCount: { increment: 1 },
+          },
+        });
+        await tx.quotePublicAccessToken.update({
+          where: { id: context.token.id },
+          data: { lastViewedAt: now, viewCount: { increment: 1 } },
+        });
+        await tx.auditLog.create({
+          data: {
+            action: 'QUOTE_VIEWED',
+            actorUserId: null,
+            businessId: context.quote.businessId,
+            entityId: context.quote.id,
+            entityType: 'Quote',
+            metadata: {
+              publicTokenId: context.token.id,
+              quoteNumber: context.quote.quoteNumber,
+              quoteRevisionId: context.revision.id,
+              version: context.revision.version,
+            },
+          },
+        });
+      });
+    }
+    return {
+      business,
+      quote: this.publicQuote(quote),
+      state,
+    };
+  }
+
+  async publicAccept(token: string, dto: PublicQuoteAcceptanceDto) {
+    if (!dto.acceptedByName?.trim()) {
+      throw this.domainError(
+        'QUOTE_ACCEPTANCE_NAME_REQUIRED',
+        'Enter your name to accept this quote.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (!dto.acceptedTerms) {
+      throw this.domainError(
+        'QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED',
+        'Confirm that you accept the quote terms.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const context = await this.resolvePublicToken(token);
+    this.assertPublicMutationAllowed(context);
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.quote.update({
+        where: {
+          id_businessId: {
+            businessId: context.quote.businessId,
+            id: context.quote.id,
+          },
+        },
+        data: {
+          acceptedAt: now,
+          acceptedByEmail: context.quote.customer.email,
+          acceptedByName: dto.acceptedByName.trim(),
+          acceptedQuoteVersion: context.revision.version,
+          status: 'ACCEPTED',
+          updatedBy: null,
+        },
+      });
+      await tx.quotePublicAccessToken.update({
+        where: { id: context.token.id },
+        data: { acceptedAt: now },
+      });
+      await tx.auditLog.create({
+        data: {
+          action: 'QUOTE_ACCEPTED',
+          actorUserId: null,
+          businessId: context.quote.businessId,
+          entityId: context.quote.id,
+          entityType: 'Quote',
+          metadata: {
+            acceptedByName: dto.acceptedByName.trim(),
+            acceptedByTitle: dto.acceptedByTitle ?? null,
+            acceptedTotalCents: context.quote.totalCents,
+            note: dto.note ?? null,
+            publicTokenId: context.token.id,
+            quoteNumber: context.quote.quoteNumber,
+            quoteRevisionId: context.revision.id,
+            version: context.revision.version,
+          },
+        },
+      });
+    });
+    return this.publicPreview(token, false);
+  }
+
+  async publicDecline(token: string, dto: PublicQuoteDeclineDto) {
+    const context = await this.resolvePublicToken(token);
+    this.assertPublicMutationAllowed(context);
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.quote.update({
+        where: {
+          id_businessId: {
+            businessId: context.quote.businessId,
+            id: context.quote.id,
+          },
+        },
+        data: {
+          declinedAt: now,
+          declineComment: this.clean(dto.comment),
+          declineReason: dto.reason ?? null,
+          status: 'DECLINED',
+          updatedBy: null,
+        },
+      });
+      await tx.quotePublicAccessToken.update({
+        where: { id: context.token.id },
+        data: { declinedAt: now },
+      });
+      await tx.auditLog.create({
+        data: {
+          action: 'QUOTE_DECLINED',
+          actorUserId: null,
+          businessId: context.quote.businessId,
+          entityId: context.quote.id,
+          entityType: 'Quote',
+          metadata: {
+            comment: dto.comment ?? null,
+            publicTokenId: context.token.id,
+            quoteNumber: context.quote.quoteNumber,
+            quoteRevisionId: context.revision.id,
+            reason: dto.reason ?? null,
+            version: context.revision.version,
+          },
+        },
+      });
+    });
+    return this.publicPreview(token, false);
   }
 
   private async replaceQuoteContents(
@@ -618,20 +966,20 @@ export class QuotesService {
       await tx.quoteLineItem.deleteMany({
         where: { businessId: currentUser.businessId, quoteId: id },
       });
-      const quote = await tx.quote.update({
+      await tx.quote.update({
         where: { id_businessId: { businessId: currentUser.businessId, id } },
         data: {
           ...this.quoteData(currentUser, dto, calculated),
-          lineItems: {
-            create: calculated.lineItems.map((item, index) =>
-              this.lineItemData(currentUser.businessId, item, index),
-            ),
-          },
         },
         include: this.quoteInclude(),
       });
-      await this.writeAudit(tx, currentUser, action, quote, {
-        totalCents: quote.totalCents,
+      await this.createLineItems(tx, currentUser.businessId, id, calculated);
+      const quoteWithItems = await tx.quote.findUniqueOrThrow({
+        where: { id_businessId: { businessId: currentUser.businessId, id } },
+        include: this.quoteInclude(),
+      });
+      await this.writeAudit(tx, currentUser, action, quoteWithItems, {
+        totalCents: quoteWithItems.totalCents,
       });
     });
   }
@@ -715,6 +1063,7 @@ export class QuotesService {
       archivedAt: null,
       businessId: currentUser.businessId,
     };
+    const and: Prisma.QuoteWhereInput[] = [];
     if (query.status) where.status = query.status;
     if (query.customerId) where.customerId = query.customerId;
     if (query.createdBy) where.createdBy = query.createdBy;
@@ -730,22 +1079,27 @@ export class QuotesService {
     }
     if (query.search?.trim()) {
       const search = query.search.trim();
-      where.OR = [
-        { quoteNumber: { contains: search, mode: 'insensitive' } },
-        { title: { contains: search, mode: 'insensitive' } },
-        {
-          customer: { displayName: { contains: search, mode: 'insensitive' } },
-        },
-      ];
+      and.push({
+        OR: [
+          { quoteNumber: { contains: search, mode: 'insensitive' } },
+          { title: { contains: search, mode: 'insensitive' } },
+          {
+            customer: {
+              displayName: { contains: search, mode: 'insensitive' },
+            },
+          },
+        ],
+      });
     }
     if (currentUser.role === 'TECHNICIAN') {
-      where.OR = [
-        ...(where.OR ?? []),
-        { job: { assignedToUserId: currentUser.id } },
-        { sourceAppointment: { assignedUserId: currentUser.id } },
-        { createdBy: currentUser.id },
-      ];
+      and.push({
+        OR: [
+          { job: { assignedToUserId: currentUser.id } },
+          { sourceAppointment: { assignedUserId: currentUser.id } },
+        ],
+      });
     }
+    if (and.length) where.AND = and;
     return where;
   }
 
@@ -816,6 +1170,21 @@ export class QuotesService {
       return { ...data, quoteId };
     }
     return data;
+  }
+
+  private async createLineItems(
+    tx: Prisma.TransactionClient,
+    businessId: string,
+    quoteId: string,
+    calculated: ReturnType<typeof calculateQuoteTotals>,
+  ) {
+    if (!calculated.lineItems.length) return;
+    await tx.quoteLineItem.createMany({
+      data: calculated.lineItems.map((item, index) => ({
+        ...this.lineItemData(businessId, item, index, quoteId),
+        quoteId,
+      })),
+    });
   }
 
   private async rewriteItemsAndTotals(
@@ -933,21 +1302,6 @@ export class QuotesService {
     }
   }
 
-  private async canTechnicianCreateDraft(
-    currentUser: AuthenticatedUser,
-    jobId?: string | null,
-  ) {
-    if (!jobId) return false;
-    const job = await this.prisma.job.findFirst({
-      where: {
-        assignedToUserId: currentUser.id,
-        businessId: currentUser.businessId,
-        id: jobId,
-      },
-    });
-    return Boolean(job);
-  }
-
   private assertLineItems(items: QuoteLineItemPayload[]) {
     if (!items.length) {
       throw this.domainError(
@@ -957,20 +1311,18 @@ export class QuotesService {
       );
     }
     for (const item of items) {
-      if (!/^\d+(\.\d{1,3})?$/.test(String(item.quantity))) {
+      const quantity = parseQuoteQuantityInput(String(item.quantity));
+      if (quantity.error) {
         throw this.domainError(
-          'QUOTE_LINE_ITEM_INVALID',
-          'Line item quantity must be greater than zero with up to 3 decimals.',
+          'QUOTE_QUANTITY_INVALID',
+          quantity.error,
           HttpStatus.BAD_REQUEST,
         );
       }
-      if (
-        Number(item.quantity) <= 0 ||
-        !Number.isFinite(Number(item.quantity))
-      ) {
+      if (!quantity.value) {
         throw this.domainError(
-          'QUOTE_LINE_ITEM_INVALID',
-          'Line item quantity must be greater than zero.',
+          'QUOTE_QUANTITY_INVALID',
+          'Enter a quantity.',
           HttpStatus.BAD_REQUEST,
         );
       }
@@ -1043,17 +1395,329 @@ export class QuotesService {
     quote: QuoteRecord,
     reason: string,
   ) {
-    await tx.quoteRevision.create({
-      data: {
+    const snapshot = this.toQuote(quote);
+    return tx.quoteRevision.upsert({
+      create: {
         businessId: currentUser.businessId,
         createdBy: currentUser.id,
         quoteId: quote.id,
         reason,
-        snapshot: this.toQuote(quote) as unknown as Prisma.InputJsonValue,
+        snapshot: snapshot as unknown as Prisma.InputJsonValue,
+        snapshotHash: this.hashJson(snapshot),
         status: quote.status,
         version: quote.version,
       },
+      update: {},
+      where: {
+        businessId_quoteId_version: {
+          businessId: currentUser.businessId,
+          quoteId: quote.id,
+          version: quote.version,
+        },
+      },
     });
+  }
+
+  private async generateAndStorePdf(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    quote: QuoteRecord,
+    quoteRevisionId: string,
+    business: Awaited<ReturnType<QuotesService['getBusiness']>>,
+  ) {
+    const existing = await tx.quotePdfDocument.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        quoteId: quote.id,
+        version: quote.version,
+      },
+    });
+    if (existing && quote.status !== 'DRAFT') return existing;
+
+    const generated = this.pdfProvider.generateQuotePdf({
+      business,
+      quote: this.toQuote(quote),
+    });
+    const objectKey = this.storage.createObjectKey({
+      businessId: currentUser.businessId,
+      mediaType: 'PDF',
+      originalFileName: generated.fileName,
+    });
+    const metadata = await this.storage.uploadFile({
+      content: generated.buffer,
+      mimeType: generated.mimeType,
+      objectKey,
+    });
+    if (existing) {
+      return tx.quotePdfDocument.update({
+        where: { id: existing.id },
+        data: {
+          checksum: metadata.checksum ?? generated.checksum,
+          fileName: generated.fileName,
+          fileSizeBytes: metadata.contentLength || generated.buffer.length,
+          generatedAt: new Date(),
+          mimeType: generated.mimeType,
+          objectKey,
+          quoteRevisionId,
+          storageProvider: this.storage.name,
+        },
+      });
+    }
+    return tx.quotePdfDocument.create({
+      data: {
+        businessId: currentUser.businessId,
+        checksum: metadata.checksum ?? generated.checksum,
+        fileName: generated.fileName,
+        fileSizeBytes: metadata.contentLength || generated.buffer.length,
+        mimeType: generated.mimeType,
+        objectKey,
+        quoteId: quote.id,
+        quoteRevisionId,
+        storageProvider: this.storage.name,
+        version: quote.version,
+      },
+    });
+  }
+
+  private async createPublicToken(
+    tx: Prisma.TransactionClient,
+    businessId: string,
+    quoteId: string,
+    quoteRevisionId: string,
+    version: number,
+  ) {
+    await tx.quotePublicAccessToken.updateMany({
+      where: {
+        acceptedAt: null,
+        businessId,
+        declinedAt: null,
+        quoteId,
+        revokedAt: null,
+        version: { lt: version },
+      },
+      data: { revokedAt: new Date() },
+    });
+    const rawToken = randomBytes(32).toString('base64url');
+    const tokenHash = this.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const token = await tx.quotePublicAccessToken.create({
+      data: {
+        businessId,
+        expiresAt,
+        quoteId,
+        quoteRevisionId,
+        tokenHash,
+        version,
+      },
+    });
+    return { ...token, rawToken };
+  }
+
+  private async resolvePublicToken(rawToken: string) {
+    if (!rawToken?.trim()) {
+      throw this.domainError(
+        'QUOTE_PUBLIC_TOKEN_INVALID',
+        'This quote link is not valid.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const tokenHash = this.hashToken(rawToken);
+    const token = await this.prisma.quotePublicAccessToken.findUnique({
+      where: { tokenHash },
+      include: {
+        quote: { include: this.quoteInclude() },
+        quoteRevision: true,
+      },
+    });
+    if (!token) {
+      throw this.domainError(
+        'QUOTE_PUBLIC_TOKEN_INVALID',
+        'This quote link is not valid.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (token.revokedAt) {
+      throw this.domainError(
+        'QUOTE_SUPERSEDED',
+        'A newer quote revision is available. Please use the latest quote link.',
+        HttpStatus.GONE,
+      );
+    }
+    if (token.expiresAt < new Date()) {
+      throw this.domainError(
+        'QUOTE_PUBLIC_TOKEN_EXPIRED',
+        'This quote link has expired.',
+        HttpStatus.GONE,
+      );
+    }
+    return {
+      quote: token.quote,
+      revision: token.quoteRevision,
+      token,
+    };
+  }
+
+  private assertPublicMutationAllowed(
+    context: Awaited<ReturnType<QuotesService['resolvePublicToken']>>,
+  ) {
+    const now = new Date();
+    if (context.quote.expiryDate && context.quote.expiryDate < now) {
+      throw this.domainError(
+        'QUOTE_EXPIRED',
+        'This quote has expired. Please contact the business.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (context.quote.status === 'ACCEPTED' || context.token.acceptedAt) {
+      throw this.domainError(
+        'QUOTE_ALREADY_ACCEPTED',
+        'This quote has already been accepted.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (context.quote.status === 'DECLINED' || context.token.declinedAt) {
+      throw this.domainError(
+        'QUOTE_ALREADY_DECLINED',
+        'This quote has already been declined.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (context.quote.status === 'EXPIRED') {
+      throw this.domainError(
+        'QUOTE_EXPIRED',
+        'This quote has expired. Please contact the business.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (context.revision.version !== context.quote.version) {
+      throw this.domainError(
+        'QUOTE_SUPERSEDED',
+        'A newer quote revision is available. Please use the latest quote link.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (!['SENT', 'VIEWED'].includes(context.quote.status)) {
+      throw this.domainError(
+        'QUOTE_INVALID_STATUS',
+        'This quote cannot be accepted or declined.',
+        HttpStatus.CONFLICT,
+      );
+    }
+  }
+
+  private publicState(
+    quote: QuoteRecord,
+    token: { acceptedAt: Date | null; declinedAt: Date | null },
+    now: Date,
+  ) {
+    if (quote.status === 'CONVERTED') return 'CONVERTED';
+    if (quote.status === 'ACCEPTED' || token.acceptedAt) return 'ACCEPTED';
+    if (quote.status === 'DECLINED' || token.declinedAt) return 'DECLINED';
+    if (quote.expiryDate && quote.expiryDate < now) return 'EXPIRED';
+    if (quote.status === 'EXPIRED') return 'EXPIRED';
+    if (quote.status === 'CANCELLED') return 'CANCELLED';
+    return 'ACTIVE';
+  }
+
+  private publicQuote(quote: Quote) {
+    return {
+      acceptedAt: quote.acceptedAt,
+      acceptedByName: quote.acceptedByName,
+      customer: {
+        displayName: quote.customer.displayName,
+        email: quote.customer.email,
+        phone: quote.customer.phone,
+      },
+      customerNotes: quote.customerNotes,
+      customerSite: quote.customerSite,
+      declinedAt: quote.declinedAt,
+      depositCents: quote.depositCents,
+      description: quote.description,
+      discountCents: quote.discountCents,
+      expiryDate: quote.expiryDate,
+      gstCents: quote.gstCents,
+      issueDate: quote.issueDate,
+      lineItems: quote.lineItems.map((item) => ({
+        lineTotalCents: item.lineTotalCents,
+        name: item.name,
+        quantity: item.quantity,
+        taxable: item.taxable,
+        type: item.type,
+        unit: item.unit,
+        unitPriceCents: item.unitPriceCents,
+      })),
+      pricingMode: quote.pricingMode,
+      quoteNumber: quote.quoteNumber,
+      status: quote.status,
+      subtotalCents: quote.subtotalCents,
+      termsAndConditions: quote.termsAndConditions,
+      title: quote.title,
+      totalCents: quote.totalCents,
+      version: quote.version,
+    };
+  }
+
+  private snapshotQuote(snapshot: Prisma.JsonValue): Quote {
+    return snapshot as unknown as Quote;
+  }
+
+  private toPdfDocument(document: {
+    id: string;
+    fileName: string;
+    fileSizeBytes: number;
+    generatedAt: Date;
+    mimeType: string;
+    version: number;
+  }) {
+    return {
+      fileName: document.fileName,
+      fileSizeBytes: document.fileSizeBytes,
+      generatedAt: document.generatedAt.toISOString(),
+      id: document.id,
+      mimeType: document.mimeType,
+      version: document.version,
+    };
+  }
+
+  private publicQuoteUrl(token: string) {
+    const base =
+      this.config.get<string>('PUBLIC_APP_URL') ??
+      this.config.get<string>('EXPO_PUBLIC_APP_URL') ??
+      'http://localhost:8081';
+    return `${base.replace(/\/$/, '')}/quote/${encodeURIComponent(token)}`;
+  }
+
+  private hashToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private hashJson(value: unknown) {
+    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  }
+
+  private async getBusiness(businessId: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        abn: true,
+        address: true,
+        email: true,
+        id: true,
+        name: true,
+        phone: true,
+        postcode: true,
+        state: true,
+        suburb: true,
+      },
+    });
+    if (!business) {
+      throw this.domainError(
+        'BUSINESS_NOT_FOUND',
+        'Business workspace could not be found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    return business;
   }
 
   private async writeAudit(
@@ -1123,6 +1787,7 @@ export class QuotesService {
       acceptedAt: quote.acceptedAt?.toISOString() ?? null,
       acceptedByEmail: quote.acceptedByEmail,
       acceptedByName: quote.acceptedByName,
+      acceptedQuoteVersion: quote.acceptedQuoteVersion,
       archivedAt: quote.archivedAt?.toISOString() ?? null,
       businessId: quote.businessId,
       cancelledAt: quote.cancelledAt?.toISOString() ?? null,
@@ -1146,6 +1811,8 @@ export class QuotesService {
         : null,
       customerSiteId: quote.customerSiteId,
       declinedAt: quote.declinedAt?.toISOString() ?? null,
+      declineComment: quote.declineComment,
+      declineReason: quote.declineReason,
       depositCents: quote.depositCents,
       depositType: quote.depositType,
       depositValue: quote.depositValue,
@@ -1160,8 +1827,10 @@ export class QuotesService {
       id: quote.id,
       internalNotes: quote.internalNotes,
       issueDate: quote.issueDate.toISOString(),
+      firstViewedAt: quote.firstViewedAt?.toISOString() ?? null,
       job: quote.job,
       jobId: quote.jobId,
+      latestViewedAt: quote.latestViewedAt?.toISOString() ?? null,
       lineItems: quote.lineItems.map((item) => this.toLineItem(item)),
       pricingMode: quote.pricingMode,
       quoteNumber: quote.quoteNumber,
@@ -1175,6 +1844,7 @@ export class QuotesService {
       updatedAt: quote.updatedAt.toISOString(),
       updatedBy: quote.updatedBy,
       version: quote.version,
+      viewCount: quote.viewCount,
       viewedAt: quote.viewedAt?.toISOString() ?? null,
     };
   }
@@ -1243,6 +1913,106 @@ export class QuotesService {
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;');
+  }
+
+  private logCreate(
+    event: string,
+    currentUser: AuthenticatedUser,
+    dto: UpsertQuoteDto,
+    metadata: Record<string, unknown> = {},
+  ) {
+    if (!this.shouldLogCreateDiagnostics()) return;
+    this.logger.log({
+      event,
+      ...this.safeCreateMetadata(currentUser, dto),
+      ...metadata,
+    });
+  }
+
+  private logCreateFailure(
+    currentUser: AuthenticatedUser,
+    dto: UpsertQuoteDto,
+    error: unknown,
+  ) {
+    if (!this.shouldLogCreateDiagnostics()) return;
+    const errorRecord = this.errorRecord(error);
+    this.logger.error({
+      event: 'QUOTE_CREATE_FAILED',
+      ...this.safeCreateMetadata(currentUser, dto),
+      ...errorRecord,
+    });
+  }
+
+  private safeCreateMetadata(
+    currentUser: AuthenticatedUser,
+    dto: UpsertQuoteDto,
+  ) {
+    return {
+      businessId: currentUser.businessId,
+      customerId: dto.customerId,
+      customerSiteId: dto.customerSiteId ?? null,
+      jobId: dto.jobId ?? null,
+      lineItems: dto.lineItems.map((item, index) => ({
+        index,
+        quantity: item.quantity,
+        taxable: item.taxable,
+        type: item.type,
+        unit: item.unit,
+        unitPriceCents: item.unitPriceCents,
+      })),
+      lineItemCount: dto.lineItems.length,
+      pricingMode: dto.pricingMode,
+      role: currentUser.role,
+      sourceAppointmentId: dto.sourceAppointmentId ?? null,
+      titleLength: dto.title?.length ?? 0,
+      userId: currentUser.id,
+    };
+  }
+
+  private errorRecord(error: unknown) {
+    const record = error as {
+      code?: unknown;
+      name?: unknown;
+      stack?: unknown;
+      message?: unknown;
+      meta?: unknown;
+    };
+    return {
+      errorCode: typeof record.code === 'string' ? record.code : undefined,
+      errorMessage:
+        typeof record.message === 'string' ? record.message : undefined,
+      errorName: typeof record.name === 'string' ? record.name : undefined,
+      meta: record.meta,
+      stack: typeof record.stack === 'string' ? record.stack : undefined,
+    };
+  }
+
+  private mapCreateFailure(error: unknown) {
+    if (error instanceof HttpException) return error;
+    const record = this.errorRecord(error);
+    if (record.errorCode === 'P2002') {
+      return this.domainError(
+        'QUOTE_NUMBER_CONFLICT',
+        'Quote number conflict. Please try saving again.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (record.errorCode === 'P2003') {
+      return this.domainError(
+        'QUOTE_RELATION_MISMATCH',
+        'Quote customer, site, job or appointment details no longer match.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.domainError(
+      'QUOTE_CREATE_FAILED',
+      'Quote could not be saved. Please try again.',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  private shouldLogCreateDiagnostics() {
+    return !['production', 'test'].includes(process.env.NODE_ENV ?? '');
   }
 
   private domainError(code: string, message: string, status: HttpStatus) {

@@ -29,6 +29,7 @@ import type {
   QuoteDetailResponse,
   QuoteListResponse,
   QuotePayload,
+  PublicQuoteResponse,
   InvitationPreviewResponse,
   InviteMemberResponse,
   LocalMediaUploadRequest,
@@ -583,11 +584,60 @@ export function updateQuoteRequest(
   });
 }
 
-export function sendQuoteRequest(token: string, quoteId: string) {
+export function quotePdfUrl(quoteId: string) {
+  return buildApiRequestUrl(`/quotes/${quoteId}/pdf`);
+}
+
+export function sendQuoteRequest(
+  token: string,
+  quoteId: string,
+  input?: { message: string; subject: string; to: string },
+) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/send`, {
+    body: input ? JSON.stringify(input) : undefined,
     method: 'POST',
     token,
   });
+}
+
+export function publicQuoteRequest(publicToken: string) {
+  return apiRequest<PublicQuoteResponse>(
+    `/public/quotes/${encodeURIComponent(publicToken)}`,
+  );
+}
+
+export function publicQuoteAcceptRequest(
+  publicToken: string,
+  input: {
+    acceptedByName: string;
+    acceptedByTitle?: string;
+    acceptedTerms: boolean;
+    note?: string;
+  },
+) {
+  return apiRequest<PublicQuoteResponse>(
+    `/public/quotes/${encodeURIComponent(publicToken)}/accept`,
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+    },
+  );
+}
+
+export function publicQuoteDeclineRequest(
+  publicToken: string,
+  input: {
+    comment?: string;
+    reason?: 'PRICE' | 'TIMING' | 'SCOPE' | 'OTHER_PROVIDER' | 'OTHER';
+  },
+) {
+  return apiRequest<PublicQuoteResponse>(
+    `/public/quotes/${encodeURIComponent(publicToken)}/decline`,
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+    },
+  );
 }
 
 export function acceptQuoteRequest(
@@ -619,6 +669,13 @@ export function convertQuoteToJobRequest(token: string, quoteId: string) {
   return apiRequest<
     QuoteDetailResponse & { jobId: string; nextAction: string }
   >(`/quotes/${quoteId}/convert-to-job`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function duplicateQuoteRequest(token: string, quoteId: string) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/duplicate`, {
     method: 'POST',
     token,
   });

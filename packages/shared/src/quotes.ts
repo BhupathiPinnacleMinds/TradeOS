@@ -69,8 +69,6 @@ export const QUOTE_CREATE_ROLES: BusinessRole[] = [
   'OWNER',
   'ADMIN',
   'OFFICE_MANAGER',
-  'SCHEDULER',
-  'TECHNICIAN',
   'SALES',
 ];
 
@@ -101,6 +99,13 @@ export const QUOTE_CANCEL_ROLES: BusinessRole[] = [
   'OFFICE_MANAGER',
 ];
 
+export const QUOTE_ACCEPT_DECLINE_ROLES: BusinessRole[] = [
+  'OWNER',
+  'ADMIN',
+  'OFFICE_MANAGER',
+  'SALES',
+];
+
 export function roleCanViewQuotes(role: BusinessRole) {
   return QUOTE_VIEW_ROLES.includes(role);
 }
@@ -129,6 +134,16 @@ export function roleCanCancelQuote(role: BusinessRole, status: QuoteStatus) {
   return (
     QUOTE_CANCEL_ROLES.includes(role) &&
     ['DRAFT', 'SENT', 'VIEWED'].includes(status)
+  );
+}
+
+export function roleCanAcceptOrDeclineQuote(
+  role: BusinessRole,
+  status: QuoteStatus,
+) {
+  return (
+    QUOTE_ACCEPT_DECLINE_ROLES.includes(role) &&
+    ['SENT', 'VIEWED'].includes(status)
   );
 }
 
@@ -209,13 +224,19 @@ export interface Quote {
   termsAndConditions: string | null;
   sentAt: string | null;
   viewedAt: string | null;
+  firstViewedAt: string | null;
+  latestViewedAt: string | null;
+  viewCount: number;
   acceptedAt: string | null;
   declinedAt: string | null;
+  declineReason: string | null;
+  declineComment: string | null;
   expiredAt: string | null;
   cancelledAt: string | null;
   convertedAt: string | null;
   acceptedByName: string | null;
   acceptedByEmail: string | null;
+  acceptedQuoteVersion: number | null;
   version: number;
   createdBy: string | null;
   updatedBy: string | null;
@@ -239,6 +260,68 @@ export interface QuoteListResponse {
 export interface QuoteDetailResponse {
   quote: Quote;
   activity: AuditLogEntry[];
+  documents?: QuoteDocumentSummary[];
+  publicQuoteUrl?: string;
+}
+
+export interface QuoteDocumentSummary {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  generatedAt: string;
+  version: number;
+}
+
+export interface PublicQuoteResponse {
+  business: {
+    id: string;
+    name: string;
+    abn: string | null;
+    phone: string | null;
+    email: string | null;
+    address: string | null;
+    suburb: string | null;
+    state: string | null;
+    postcode: string | null;
+  };
+  quote: {
+    acceptedAt: string | null;
+    acceptedByName: string | null;
+    customer: {
+      displayName: string;
+      email: string | null;
+      phone: string | null;
+    };
+    customerNotes: string | null;
+    customerSite: QuoteSiteSummary | null;
+    declinedAt: string | null;
+    depositCents: number;
+    description: string | null;
+    discountCents: number;
+    expiryDate: string | null;
+    gstCents: number;
+    issueDate: string;
+    lineItems: Array<{
+      lineTotalCents: number;
+      name: string;
+      quantity: string;
+      taxable: boolean;
+      type: QuoteLineItemType;
+      unit: string;
+      unitPriceCents: number;
+    }>;
+    pricingMode: QuotePricingMode;
+    quoteNumber: string;
+    status: QuoteStatus;
+    subtotalCents: number;
+    termsAndConditions: string | null;
+    title: string;
+    totalCents: number;
+    version: number;
+  };
+  state:
+    'ACTIVE' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'CANCELLED' | 'CONVERTED';
 }
 
 export interface QuoteLineItemPayload {
@@ -319,6 +402,119 @@ export function formatAudCents(cents: number) {
   return `${sign}$${Math.floor(absolute / 100).toLocaleString('en-AU')}.${String(
     absolute % 100,
   ).padStart(2, '0')}`;
+}
+
+export type QuoteQuantityInputValidationCode =
+  'REQUIRED' | 'MALFORMED' | 'NOT_POSITIVE' | 'TOO_MANY_DECIMALS';
+
+export interface QuoteInputParseResult<T> {
+  error: string | null;
+  errorCode: QuoteQuantityInputValidationCode | 'NEGATIVE' | null;
+  isComplete: boolean;
+  value: T | null;
+}
+
+export function parseQuoteQuantityInput(
+  value: string,
+): QuoteInputParseResult<string> {
+  const text = value.trim();
+  if (!text) {
+    return {
+      error: 'Enter a quantity.',
+      errorCode: 'REQUIRED',
+      isComplete: false,
+      value: null,
+    };
+  }
+  if (text === '.' || /^\d+\.$/.test(text)) {
+    return { error: null, errorCode: null, isComplete: false, value: null };
+  }
+  if (text.startsWith('-')) {
+    return {
+      error: 'Quantity must be greater than 0.',
+      errorCode: 'NOT_POSITIVE',
+      isComplete: true,
+      value: null,
+    };
+  }
+  if (/^\d+\.\d{4,}$/.test(text)) {
+    return {
+      error: 'Quantity can have up to 3 decimal places.',
+      errorCode: 'TOO_MANY_DECIMALS',
+      isComplete: true,
+      value: null,
+    };
+  }
+  if (!/^\d+(\.\d{1,3})?$/.test(text)) {
+    return {
+      error: 'Enter a valid quantity.',
+      errorCode: 'MALFORMED',
+      isComplete: true,
+      value: null,
+    };
+  }
+  if (Number(text) <= 0 || !Number.isFinite(Number(text))) {
+    return {
+      error: 'Quantity must be greater than 0.',
+      errorCode: 'NOT_POSITIVE',
+      isComplete: true,
+      value: null,
+    };
+  }
+  return {
+    error: null,
+    errorCode: null,
+    isComplete: true,
+    value: normaliseQuantity(text),
+  };
+}
+
+export function validateQuoteQuantityInput(value: string) {
+  return parseQuoteQuantityInput(value).error;
+}
+
+export function parseQuoteMoneyInput(
+  value: string,
+): QuoteInputParseResult<number> {
+  const text = value.trim();
+  if (!text) {
+    return {
+      error: 'Enter a unit price.',
+      errorCode: 'REQUIRED',
+      isComplete: false,
+      value: null,
+    };
+  }
+  if (text === '.' || /^\d+\.$/.test(text)) {
+    return { error: null, errorCode: null, isComplete: false, value: null };
+  }
+  if (text.startsWith('-')) {
+    return {
+      error: 'Unit price cannot be negative.',
+      errorCode: 'NEGATIVE',
+      isComplete: true,
+      value: null,
+    };
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) {
+    return {
+      error: 'Enter a valid unit price.',
+      errorCode: 'MALFORMED',
+      isComplete: true,
+      value: null,
+    };
+  }
+  const [dollars, cents = ''] = text.split('.');
+  return {
+    error: null,
+    errorCode: null,
+    isComplete: true,
+    value: Number(dollars) * 100 + Number(cents.padEnd(2, '0')),
+  };
+}
+
+export function validateQuoteMoneyInput(value: string) {
+  return parseQuoteMoneyInput(value).error;
 }
 
 export function calculateQuoteTotals(

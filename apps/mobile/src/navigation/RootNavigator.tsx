@@ -24,6 +24,7 @@ import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { QuoteDetailsScreen } from '../screens/QuoteDetailsScreen';
 import { QuoteFormScreen } from '../screens/QuoteFormScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
+import { PublicQuoteScreen } from '../screens/PublicQuoteScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TeamScreen } from '../screens/TeamScreen';
@@ -46,6 +47,16 @@ function getInviteTokenFromLocation() {
       ? ''
       : globalThis.location.pathname;
   const match = pathname.match(/^\/invite\/([^/]+)$/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function getPublicQuoteTokenFromLocation() {
+  const pathname =
+    typeof globalThis.location === 'undefined'
+      ? ''
+      : globalThis.location.pathname;
+  const match = pathname.match(/^\/quote\/([^/]+)$/);
 
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
@@ -100,6 +111,7 @@ function MainTabs() {
 export function RootNavigator() {
   const { isLoading, token, user } = useAuth();
   const inviteToken = getInviteTokenFromLocation();
+  const publicQuoteToken = getPublicQuoteTokenFromLocation();
 
   if (isLoading) {
     return (
@@ -121,7 +133,13 @@ export function RootNavigator() {
 
   return (
     <Stack.Navigator
-      initialRouteName={!token && inviteToken ? 'AcceptInvitation' : undefined}
+      initialRouteName={
+        !token && publicQuoteToken
+          ? 'PublicQuote'
+          : !token && inviteToken
+            ? 'AcceptInvitation'
+            : undefined
+      }
       screenOptions={{
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colours.background },
@@ -144,7 +162,7 @@ export function RootNavigator() {
               options={{ title: 'Quote' }}
             />
           ) : null}
-          {canAccessStackRoute(user?.role, 'Quotes') ? (
+          {canAccessStackRoute(user?.role, 'QuoteForm') ? (
             <Stack.Screen
               name="QuoteForm"
               component={QuoteFormScreen}
@@ -250,6 +268,14 @@ export function RootNavigator() {
               component={AcceptInvitationScreen}
               initialParams={{ token: inviteToken }}
               options={{ title: 'Accept invitation' }}
+            />
+          ) : null}
+          {publicQuoteToken ? (
+            <Stack.Screen
+              name="PublicQuote"
+              component={PublicQuoteScreen}
+              initialParams={{ token: publicQuoteToken }}
+              options={{ title: 'Quote' }}
             />
           ) : null}
           <Stack.Screen

@@ -102,6 +102,13 @@ export interface JobDetailResponse {
   job: Job;
   activity: AuditLogEntry[];
   appointments: Appointment[];
+  sourceQuote: {
+    id: string;
+    quoteNumber: string;
+    title: string;
+    totalCents: number;
+    status: string;
+  } | null;
   timeline: Array<{
     id: string;
     action: string;

@@ -72,6 +72,62 @@ such as `/media/:id/file`, not absolute browser URLs. Clients must join those
 paths with the configured API base URL exactly once and include JWT
 authentication when fetching protected file bytes.
 
+### Quotes customer-facing Phase 2
+
+Authenticated office quote APIs remain under `/api/quotes`.
+
+```http
+GET /api/quotes/:id/preview
+GET /api/quotes/:id/pdf
+POST /api/quotes/:id/send
+POST /api/quotes/:id/revise
+POST /api/quotes/:id/convert-to-job
+```
+
+`GET /api/quotes/:id/pdf` returns `application/pdf` bytes with a safe filename
+such as `Quote-Q-2026-001007.pdf`.
+
+`POST /api/quotes/:id/send` accepts:
+
+```json
+{
+  "to": "customer@example.com",
+  "subject": "Quote Q-2026-001007 from Demo Tradie Co",
+  "message": "Please review your quote."
+}
+```
+
+Sending freezes the customer-facing quote revision, stores a quote PDF document
+through the storage provider, creates a hash-only public access token and sends
+the secure link through the configured quote email provider. Local development
+uses the console provider only; do not claim real email delivery unless a
+production provider is configured.
+
+Public customer quote APIs do not require JWT login:
+
+```http
+GET /api/public/quotes/:token
+POST /api/public/quotes/:token/view
+POST /api/public/quotes/:token/accept
+POST /api/public/quotes/:token/decline
+```
+
+Public responses expose only customer-facing quote content. They must not expose
+business ids, staff user ids, audit metadata, internal notes or storage keys.
+
+Structured quote public errors include:
+
+- `QUOTE_PUBLIC_TOKEN_INVALID`
+- `QUOTE_PUBLIC_TOKEN_EXPIRED`
+- `QUOTE_SUPERSEDED`
+- `QUOTE_ALREADY_ACCEPTED`
+- `QUOTE_ALREADY_DECLINED`
+- `QUOTE_EXPIRED`
+- `QUOTE_EMAIL_REQUIRED`
+- `QUOTE_SEND_FAILED`
+- `QUOTE_ACCEPTANCE_NAME_REQUIRED`
+- `QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED`
+
 Mobile native camera, photo library and document uploads use the same endpoint
 sequence. The app first validates selected file type/size locally, then creates
 an upload target, uploads real files through binary `multipart/form-data` to

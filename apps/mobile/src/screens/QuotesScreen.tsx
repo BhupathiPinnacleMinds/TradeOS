@@ -5,6 +5,7 @@ import {
   QUOTE_STATUSES,
   formatAudCents,
   formatBusinessDate,
+  roleCanCreateQuotes,
 } from '@tradieos/shared';
 import { useCallback, useState } from 'react';
 import {
@@ -27,6 +28,7 @@ type Navigation = NativeStackNavigationProp<RootStackParamList>;
 export function QuotesScreen() {
   const navigation = useNavigation<Navigation>();
   const { token, user } = useAuth();
+  const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [status, setStatus] = useState<QuoteStatus | ''>('');
   const [search, setSearch] = useState('');
@@ -90,13 +92,15 @@ export function QuotesScreen() {
               Draft, send and convert accepted quotes into jobs.
             </Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => navigation.navigate('QuoteForm')}
-            style={styles.primaryButton}
-          >
-            <Text style={styles.primaryButtonText}>+ New</Text>
-          </Pressable>
+          {canCreateQuote ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate('QuoteForm')}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>+ New</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <TextInput
@@ -144,10 +148,13 @@ export function QuotesScreen() {
           </View>
         ) : quotes.length === 0 ? (
           <View style={styles.stateCard}>
-            <Text style={styles.emptyTitle}>No quotes yet</Text>
+            <Text style={styles.emptyTitle}>
+              {status ? `No ${status.toLowerCase()} quotes` : 'No quotes yet'}
+            </Text>
             <Text style={styles.muted}>
-              Create a draft quote from here, a customer, a job or an
-              appointment.
+              {canCreateQuote
+                ? 'Create a draft quote from here, a customer, a job or an appointment.'
+                : 'Quotes connected to your work will appear here.'}
             </Text>
           </View>
         ) : (
@@ -168,6 +175,9 @@ export function QuotesScreen() {
               </View>
               <Text style={styles.cardTitle}>{quote.title}</Text>
               <Text style={styles.muted}>{quote.customer.displayName}</Text>
+              {isExpiringSoon(quote) ? (
+                <Text style={styles.warning}>Expiring soon</Text>
+              ) : null}
               <View style={styles.cardFooter}>
                 <Text style={styles.total}>
                   {formatAudCents(quote.totalCents)}
@@ -183,9 +193,17 @@ export function QuotesScreen() {
                 </Text>
               </View>
               {quote.job ? (
-                <Text style={styles.linked}>
-                  Linked job: {quote.job.jobNumber}
-                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    navigation.navigate('JobDetails', { jobId: quote.job!.id })
+                  }
+                  style={styles.linkedPill}
+                >
+                  <Text style={styles.linked}>
+                    Linked job: {quote.job.jobNumber}
+                  </Text>
+                </Pressable>
               ) : null}
             </Pressable>
           ))
@@ -225,6 +243,14 @@ function statusStyle(status: QuoteStatus) {
     return styles.statusTerminal;
   }
   return styles.statusDraft;
+}
+
+function isExpiringSoon(quote: Quote) {
+  if (!quote.expiryDate || !['SENT', 'VIEWED'].includes(quote.status)) {
+    return false;
+  }
+  const remainingMs = new Date(quote.expiryDate).getTime() - Date.now();
+  return remainingMs > 0 && remainingMs <= 3 * 24 * 60 * 60 * 1000;
 }
 
 const styles = StyleSheet.create({
@@ -276,7 +302,16 @@ const styles = StyleSheet.create({
     gap: 16,
     justifyContent: 'space-between',
   },
-  linked: { color: colours.primary, fontSize: 13, fontWeight: '800' },
+  linked: { color: '#047857', fontSize: 13, fontWeight: '900' },
+  linkedPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
   muted: { color: colours.muted, lineHeight: 20 },
   page: { backgroundColor: colours.background, flex: 1 },
   primaryButton: {
@@ -329,4 +364,5 @@ const styles = StyleSheet.create({
   subtitle: { color: colours.muted, maxWidth: 260 },
   title: { color: colours.ink, fontSize: 28, fontWeight: '900' },
   total: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  warning: { color: '#B45309', fontSize: 13, fontWeight: '900' },
 });

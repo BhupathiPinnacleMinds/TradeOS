@@ -29,6 +29,7 @@ export interface DashboardSummaryResponse {
     openQuotes: number;
     draftQuotes: number;
     quotesAwaitingResponse: number;
+    quotesViewedNotAccepted: number;
     acceptedQuotesNotConverted: number;
     quotesExpiringSoon: number;
     unpaidInvoices: number;

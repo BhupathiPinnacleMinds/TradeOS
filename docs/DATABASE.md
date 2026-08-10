@@ -620,6 +620,10 @@ Important fields:
 - AppointmentWorkLog belongs to a business, appointment, job and technician
   user. It is unique per business/appointment.
 - Quote belongs to customer and may belong to a job.
+- Quote revisions freeze customer-facing quote snapshots for send, PDF and
+  acceptance. `QuotePdfDocument` stores tenant-scoped PDF metadata and storage
+  keys behind the storage provider. `QuotePublicAccessToken` stores only hashed
+  public tokens for secure customer access.
 - Invoice belongs to customer and may belong to a job.
 - Payment belongs to invoice.
 - Notification belongs to user and business.
@@ -661,3 +665,10 @@ Timezone default migration:
 
 - `20260724123000_business_timezone_default_melbourne` updates the Prisma
   default for new business workspaces from Sydney to Melbourne.
+
+Quotes Phase 2 migration:
+
+- `20260810170000_quotes_customer_facing_phase2` adds quote PDF document
+  metadata, hash-only public access tokens, immutable snapshot hashes, customer
+  view counters, accepted-version tracking and decline reason/comment fields.
+  The migration is additive and does not reset or seed existing data.

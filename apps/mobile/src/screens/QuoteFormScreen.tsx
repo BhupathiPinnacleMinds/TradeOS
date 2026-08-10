@@ -4,6 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type {
   Customer,
   Job,
+  QuoteLineItemType,
   QuoteLineItemPayload,
   QuotePayload,
 } from '@tradieos/shared';
@@ -11,6 +12,9 @@ import {
   calculateQuoteTotals,
   createUnsavedChangesNavigationGuard,
   formatAudCents,
+  parseQuoteMoneyInput,
+  parseQuoteQuantityInput,
+  roleCanCreateQuotes,
 } from '@tradieos/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -40,14 +44,22 @@ import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'QuoteForm'>;
+type FormLineItem = Omit<
+  QuoteLineItemPayload,
+  'quantity' | 'unitPriceCents'
+> & {
+  quantityInput: string;
+  unitPriceInput: string;
+};
 
 const units = ['hour', 'item', 'metre', 'square metre', 'litre', 'fixed'];
 
 export function QuoteFormScreen({ navigation, route }: Props) {
   const { appointmentId, customerId, customerSiteId, jobId, quoteId } =
     route.params ?? {};
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { showToast } = useToast();
+  const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const [step, setStep] = useState(0);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -76,14 +88,14 @@ export function QuoteFormScreen({ navigation, route }: Props) {
   const [termsAndConditions, setTermsAndConditions] = useState(
     'Quote valid until the expiry date. Work will be scheduled after acceptance.',
   );
-  const [lineItems, setLineItems] = useState<QuoteLineItemPayload[]>([
+  const [lineItems, setLineItems] = useState<FormLineItem[]>([
     {
       name: 'Labour',
-      quantity: '1',
+      quantityInput: '1',
       taxable: true,
       type: 'LABOUR',
       unit: 'hour',
-      unitPriceCents: 12000,
+      unitPriceInput: '120.00',
     },
   ]);
   const [isLoading, setIsLoading] = useState(Boolean(quoteId));
@@ -136,14 +148,15 @@ export function QuoteFormScreen({ navigation, route }: Props) {
   const selectedSite = selectedCustomer?.sites.find(
     (site) => site.id === selectedSiteId,
   );
+  const parsedLineItems = useMemo(() => parseLineItems(lineItems), [lineItems]);
   const calculations = useMemo(
     () =>
       calculateQuoteTotals({
         depositType,
-        depositValue: Number(depositValue || 0),
+        depositValue: safeIntegerInput(depositValue),
         discountType,
-        discountValue: Number(discountValue || 0),
-        lineItems,
+        discountValue: safeIntegerInput(discountValue),
+        lineItems: parsedLineItems.validItems,
         pricingMode,
       }),
     [
@@ -151,7 +164,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
       depositValue,
       discountType,
       discountValue,
-      lineItems,
+      parsedLineItems.validItems,
       pricingMode,
     ],
   );
@@ -223,7 +236,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
   });
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !canCreateQuote) return;
     const authToken = token;
     let mounted = true;
     async function load() {
@@ -270,11 +283,11 @@ export function QuoteFormScreen({ navigation, route }: Props) {
             quote.lineItems.map((item) => ({
               description: item.description ?? undefined,
               name: item.name,
-              quantity: item.quantity,
+              quantityInput: item.quantity,
               taxable: item.taxable,
               type: item.type,
               unit: item.unit,
-              unitPriceCents: item.unitPriceCents,
+              unitPriceInput: centsToMoneyInput(item.unitPriceCents),
             })),
           );
           navigation.setOptions({ title: `Edit ${quote.quoteNumber}` });
@@ -297,7 +310,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
     };
-  }, [customerId, navigation, quoteId, showToast, token]);
+  }, [canCreateQuote, customerId, navigation, quoteId, showToast, token]);
 
   useEffect(() => {
     if (!isLoading && cleanSnapshotRef.current === null) {
@@ -305,7 +318,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     }
   }, [isLoading, snapshot]);
 
-  function updateLine(index: number, patch: Partial<QuoteLineItemPayload>) {
+  function updateLine(index: number, patch: Partial<FormLineItem>) {
     setLineItems((current) =>
       current.map((item, itemIndex) =>
         itemIndex === index ? { ...item, ...patch } : item,
@@ -318,20 +331,27 @@ export function QuoteFormScreen({ navigation, route }: Props) {
       ...current,
       {
         name: 'New item',
-        quantity: '1',
+        quantityInput: '1',
         taxable: true,
         type: 'SERVICE',
         unit: 'item',
-        unitPriceCents: 0,
+        unitPriceInput: '0.00',
       },
     ]);
   }
 
   async function save(sendAfterSave = false) {
-    if (!token) return;
-    if (!selectedCustomerId || !title.trim() || lineItems.length === 0) {
+    if (!token || isSaving || savingRef.current) return;
+    const validationError = validateBeforeSave({
+      hasLineItems: lineItems.length > 0,
+      lineItems: parsedLineItems,
+      selectedCustomerId,
+      title,
+    });
+    if (validationError) {
+      setStep(validationError.step);
       showToast({
-        message: 'Select a customer, title and at least one line item.',
+        message: validationError.message,
         tone: 'error',
       });
       return;
@@ -343,16 +363,16 @@ export function QuoteFormScreen({ navigation, route }: Props) {
         customerNotes,
         customerSiteId: selectedSiteId || undefined,
         depositType,
-        depositValue: Number(depositValue || 0),
+        depositValue: safeIntegerInput(depositValue),
         description,
         discountType,
-        discountValue: Number(discountValue || 0),
+        discountValue: safeIntegerInput(discountValue),
         expiryDate: expiryDate || undefined,
         issueDate,
         jobId: selectedJobId || undefined,
-        lineItems,
+        lineItems: parsedLineItems.validItems,
         pricingMode,
-        sourceAppointmentId: appointmentId,
+        sourceAppointmentId: appointmentId || undefined,
         termsAndConditions,
         title,
       };
@@ -379,6 +399,38 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function goNext() {
+    const validationError = validateStep({
+      lineItems: parsedLineItems,
+      selectedCustomerId,
+      step,
+      title,
+    });
+    if (validationError) {
+      setStep(validationError.step);
+      showToast({ message: validationError.message, tone: 'error' });
+      return;
+    }
+    setStep((current) => Math.min(3, current + 1));
+  }
+
+  if (!canCreateQuote) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorTitle}>Quote creation unavailable</Text>
+        <Text style={styles.muted}>
+          You don&apos;t have permission to create quotes.
+        </Text>
+        <Pressable
+          onPress={() => navigation.goBack()}
+          style={styles.secondaryButton}
+        >
+          <Text style={styles.secondaryButtonText}>Back</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   if (isLoading) {
@@ -470,9 +522,10 @@ export function QuoteFormScreen({ navigation, route }: Props) {
                 <Field
                   label="Quantity"
                   keyboardType="decimal-pad"
-                  value={String(item.quantity)}
+                  error={parsedLineItems.errors[index]?.quantity ?? null}
+                  value={item.quantityInput}
                   onChangeText={(value) =>
-                    updateLine(index, { quantity: value })
+                    updateLine(index, { quantityInput: value })
                   }
                 />
                 <Picker
@@ -482,11 +535,12 @@ export function QuoteFormScreen({ navigation, route }: Props) {
                   onChange={(unit) => updateLine(index, { unit })}
                 />
                 <Field
-                  label="Unit price cents"
-                  keyboardType="number-pad"
-                  value={String(item.unitPriceCents)}
+                  label="Unit price"
+                  keyboardType="decimal-pad"
+                  error={parsedLineItems.errors[index]?.unitPrice ?? null}
+                  value={item.unitPriceInput}
                   onChangeText={(value) =>
-                    updateLine(index, { unitPriceCents: Number(value || 0) })
+                    updateLine(index, { unitPriceInput: value })
                   }
                 />
                 <Pressable
@@ -615,10 +669,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
             <Text style={styles.secondaryButtonText}>Back</Text>
           </Pressable>
           {step < 3 ? (
-            <Pressable
-              onPress={() => setStep((current) => Math.min(3, current + 1))}
-              style={styles.primaryButton}
-            >
+            <Pressable onPress={goNext} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>Next</Text>
             </Pressable>
           ) : (
@@ -636,6 +687,122 @@ export function QuoteFormScreen({ navigation, route }: Props) {
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+function parseLineItems(lineItems: FormLineItem[]) {
+  const errors: Array<{ quantity: string | null; unitPrice: string | null }> =
+    [];
+  const validItems: QuoteLineItemPayload[] = [];
+
+  lineItems.forEach((item) => {
+    const quantity = parseQuoteQuantityInput(item.quantityInput);
+    const unitPrice = parseQuoteMoneyInput(item.unitPriceInput);
+    errors.push({
+      quantity: quantity.error,
+      unitPrice: unitPrice.error,
+    });
+    if (quantity.value && unitPrice.value !== null) {
+      validItems.push({
+        description: item.description,
+        id: item.id,
+        name: item.name,
+        quantity: quantity.value,
+        taxable: item.taxable,
+        type: item.type as QuoteLineItemType,
+        unit: item.unit,
+        unitPriceCents: unitPrice.value,
+      });
+    }
+  });
+
+  return { errors, validItems };
+}
+
+function validateBeforeSave({
+  hasLineItems,
+  lineItems,
+  selectedCustomerId,
+  title,
+}: {
+  hasLineItems: boolean;
+  lineItems: ReturnType<typeof parseLineItems>;
+  selectedCustomerId: string;
+  title: string;
+}) {
+  if (!selectedCustomerId) {
+    return { message: 'Select a customer.', step: 0 };
+  }
+  if (!title.trim()) {
+    return { message: 'Enter a quote title.', step: 0 };
+  }
+  if (!hasLineItems) {
+    return { message: 'Add at least one line item.', step: 1 };
+  }
+  const firstInvalidLineIndex = lineItems.errors.findIndex(
+    (error) => error.quantity || error.unitPrice,
+  );
+  if (firstInvalidLineIndex >= 0) {
+    const error = lineItems.errors[firstInvalidLineIndex]!;
+    return {
+      message:
+        error.quantity ??
+        error.unitPrice ??
+        'Check the first invalid line item.',
+      step: 1,
+    };
+  }
+  if (lineItems.validItems.length < lineItems.errors.length) {
+    return { message: 'Complete each line item before saving.', step: 1 };
+  }
+  return null;
+}
+
+function validateStep({
+  lineItems,
+  selectedCustomerId,
+  step,
+  title,
+}: {
+  lineItems: ReturnType<typeof parseLineItems>;
+  selectedCustomerId: string;
+  step: number;
+  title: string;
+}) {
+  if (step === 0) {
+    if (!selectedCustomerId) return { message: 'Select a customer.', step: 0 };
+    if (!title.trim()) return { message: 'Enter a quote title.', step: 0 };
+  }
+  if (step === 1) {
+    const firstInvalidLineIndex = lineItems.errors.findIndex(
+      (error) => error.quantity || error.unitPrice,
+    );
+    if (firstInvalidLineIndex >= 0) {
+      const error = lineItems.errors[firstInvalidLineIndex]!;
+      return {
+        message:
+          error.quantity ??
+          error.unitPrice ??
+          'Check the first invalid line item.',
+        step: 1,
+      };
+    }
+    if (lineItems.validItems.length < lineItems.errors.length) {
+      return { message: 'Complete each line item before continuing.', step: 1 };
+    }
+  }
+  return null;
+}
+
+function centsToMoneyInput(cents: number) {
+  return `${Math.floor(cents / 100)}.${String(Math.abs(cents % 100)).padStart(
+    2,
+    '0',
+  )}`;
+}
+
+function safeIntegerInput(value: string) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
 }
 
 function StepTabs({
@@ -668,9 +835,11 @@ function StepTabs({
 }
 
 function Field({
+  error,
   label,
   ...props
 }: {
+  error?: string | null;
   keyboardType?: 'decimal-pad' | 'number-pad';
   label: string;
   multiline?: boolean;
@@ -683,8 +852,13 @@ function Field({
       <TextInput
         {...props}
         placeholderTextColor={colours.muted}
-        style={[styles.input, props.multiline && styles.textArea]}
+        style={[
+          styles.input,
+          props.multiline && styles.textArea,
+          error && styles.inputError,
+        ]}
       />
+      {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
   );
 }
@@ -766,6 +940,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   field: { gap: 8 },
+  fieldError: { color: '#DC2626', fontSize: 12, fontWeight: '700' },
   footer: {
     flexDirection: 'row',
     gap: 12,
@@ -779,6 +954,7 @@ const styles = StyleSheet.create({
     color: colours.ink,
     padding: 13,
   },
+  inputError: { borderColor: '#DC2626' },
   label: { color: colours.ink, fontWeight: '800' },
   lineEditor: {
     borderColor: colours.border,
@@ -849,6 +1025,7 @@ const styles = StyleSheet.create({
   steps: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   textArea: { minHeight: 92, textAlignVertical: 'top' },
   title: { color: colours.ink, fontSize: 28, fontWeight: '900' },
+  errorTitle: { color: colours.ink, fontSize: 22, fontWeight: '900' },
   toggle: {
     alignItems: 'center',
     backgroundColor: '#EEF2FF',

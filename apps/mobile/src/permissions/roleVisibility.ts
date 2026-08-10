@@ -22,7 +22,7 @@ export interface MoreDestination {
 
 type ProtectedStackRoute = Exclude<
   keyof RootStackParamList,
-  'Login' | 'Register' | 'AcceptInvitation' | 'Main'
+  'Login' | 'Register' | 'AcceptInvitation' | 'PublicQuote' | 'Main'
 >;
 
 const roles = {
@@ -36,14 +36,7 @@ const roles = {
   jobCreate: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
   jobArchive: ['OWNER', 'ADMIN', 'OFFICE_MANAGER'],
   jobManage: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
-  quoteCreate: [
-    'OWNER',
-    'ADMIN',
-    'OFFICE_MANAGER',
-    'SCHEDULER',
-    'SALES',
-    'TECHNICIAN',
-  ],
+  quoteCreate: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SALES'],
   quoteView: [
     'OWNER',
     'ADMIN',
@@ -263,6 +256,10 @@ export function canCreateCustomer(role?: BusinessRole | null) {
 
 export function canCreateJob(role?: BusinessRole | null) {
   return allows(role, roles.jobCreate);
+}
+
+export function canCreateQuote(role?: BusinessRole | null) {
+  return allows(role, roles.quoteCreate);
 }
 
 export function canArchiveCustomer(role?: BusinessRole | null) {

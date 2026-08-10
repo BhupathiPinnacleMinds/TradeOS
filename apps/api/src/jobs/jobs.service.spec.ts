@@ -53,6 +53,7 @@ type MockPrisma = {
     findUnique: jest.Mock;
     update: jest.Mock;
   };
+  quote: { findFirst: jest.Mock };
   user: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -167,6 +168,7 @@ function createService() {
         .mockResolvedValue({ businessId: 'business-1', nextNumber: 7 }),
       update: jest.fn(),
     },
+    quote: { findFirst: jest.fn().mockResolvedValue(null) },
     user: {
       findFirst: jest.fn().mockResolvedValue({ id: 'tech-1' }),
     },

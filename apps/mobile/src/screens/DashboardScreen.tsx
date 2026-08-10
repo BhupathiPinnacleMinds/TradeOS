@@ -221,6 +221,10 @@ export function DashboardScreen() {
             tone="warning"
             value={summary?.counts.quotesAwaitingResponse}
           />
+          <MetricCard
+            label="Viewed, not accepted"
+            value={summary?.counts.quotesViewedNotAccepted}
+          />
         </View>
 
         <View style={styles.grid}>

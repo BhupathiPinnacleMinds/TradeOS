@@ -7,7 +7,9 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import {
@@ -16,6 +18,7 @@ import {
   QuoteLineItemDto,
   QuoteReasonDto,
   ReorderQuoteItemsDto,
+  SendQuoteDto,
   UpsertQuoteDto,
 } from './dto/quotes.dto';
 import { QuotesService } from './quotes.service';
@@ -95,8 +98,12 @@ export class QuotesController {
   }
 
   @Post(':id/send')
-  send(@CurrentUser() currentUser: AuthenticatedUser, @Param('id') id: string) {
-    return this.quotes.send(currentUser, id);
+  send(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto?: SendQuoteDto,
+  ) {
+    return this.quotes.send(currentUser, id, dto);
   }
 
   @Post(':id/revise')
@@ -152,8 +159,18 @@ export class QuotesController {
   }
 
   @Get(':id/pdf')
-  pdf(@CurrentUser() currentUser: AuthenticatedUser, @Param('id') id: string) {
-    return this.quotes.pdf(currentUser, id);
+  async pdf(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Res() response: Response,
+  ) {
+    const pdf = await this.quotes.pdf(currentUser, id);
+    response.setHeader('Content-Type', pdf.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${pdf.fileName}"`,
+    );
+    response.send(pdf.buffer);
   }
 
   @Post(':id/duplicate')

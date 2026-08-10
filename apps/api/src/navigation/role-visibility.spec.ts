@@ -4,6 +4,7 @@ import {
   canCreateAppointment,
   canCreateCustomer,
   canCreateJob,
+  canCreateQuote,
   canManageDispatcher,
   canManageTeam,
   canViewBusinessSettings,
@@ -48,12 +49,14 @@ describe('mobile role visibility matrix', () => {
     expect(moreRoutes).not.toContain('Settings');
     expect(canCreateCustomer(role)).toBe(false);
     expect(canCreateJob(role)).toBe(false);
+    expect(canCreateQuote(role)).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
     expect(canManageDispatcher(role)).toBe(false);
     expect(canManageTeam(role)).toBe(false);
     expect(canAccessStackRoute(role, 'CustomerForm')).toBe(false);
     expect(canAccessStackRoute(role, 'JobForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentForm')).toBe(false);
+    expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
     expect(canAccessStackRoute(role, 'Team')).toBe(false);
   });
 
@@ -63,6 +66,7 @@ describe('mobile role visibility matrix', () => {
     expect(canAccessStackRoute(role, 'AppointmentForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentReassign')).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
+    expect(canCreateQuote(role)).toBe(false);
     expect(canManageDispatcher(role)).toBe(false);
   });
 
@@ -76,6 +80,8 @@ describe('mobile role visibility matrix', () => {
     expect(moreRoutes).not.toContain('Settings');
     expect(canAccessStackRoute(role, 'Invoices')).toBe(false);
     expect(canAccessStackRoute(role, 'Settings')).toBe(false);
+    expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
+    expect(canCreateQuote(role)).toBe(false);
     expect(canViewBusinessSettings(role)).toBe(false);
   });
 
@@ -86,9 +92,11 @@ describe('mobile role visibility matrix', () => {
     expect(canAccessStackRoute(role, 'JobForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentReassign')).toBe(false);
+    expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
     expect(canCreateCustomer(role)).toBe(false);
     expect(canCreateJob(role)).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
+    expect(canCreateQuote(role)).toBe(false);
   });
 
   it('shows sales only permitted customer and sales areas', () => {
@@ -104,6 +112,7 @@ describe('mobile role visibility matrix', () => {
     expect(canCreateCustomer(role)).toBe(true);
     expect(canCreateJob(role)).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
+    expect(canCreateQuote(role)).toBe(true);
     expect(canAccessStackRoute(role, 'Invoices')).toBe(false);
     expect(canAccessStackRoute(role, 'Team')).toBe(false);
   });
@@ -114,6 +123,7 @@ describe('mobile role visibility matrix', () => {
     expect(canCreateCustomer(role)).toBe(true);
     expect(canCreateJob(role)).toBe(true);
     expect(canCreateAppointment(role)).toBe(true);
+    expect(canCreateQuote(role)).toBe(true);
     expect(canManageDispatcher(role)).toBe(true);
     expect(canManageTeam(role)).toBe(true);
     expect(canViewBusinessSettings(role)).toBe(true);

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-10
+
+### Added
+
+- Quotes Phase 2 customer-facing foundation with server-side PDF generation,
+  quote PDF storage metadata, secure hash-only public quote tokens, public
+  customer quote view, customer accept/decline routes and local console quote
+  email delivery.
+- Mobile Quote Details send modal, PDF generation action, quote documents
+  section, converted-job card and unauthenticated public quote screen for
+  secure quote links.
+- Job Details now surfaces the accepted source quote for jobs converted from a
+  quote while preserving a separate additional-quote path for future variation
+  work.
+- Dashboard quote metric for viewed quotes that have not yet been accepted.
+
+### Security
+
+- Public quote links store only token hashes in the database and expose frozen
+  customer-facing quote snapshots, never internal notes, tenant ids, staff ids,
+  storage keys or audit metadata.
+
+### Notes
+
+- Local development still uses a console email provider. This milestone does
+  not claim real production email delivery until a production provider is
+  configured.
+
 ## 2026-08-05
 
 ### Added
