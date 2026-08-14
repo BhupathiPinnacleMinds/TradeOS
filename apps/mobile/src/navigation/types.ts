@@ -1,8 +1,11 @@
+import type { InvoiceStatus } from '@tradieos/shared';
+
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   AcceptInvitation: { token: string };
   PublicQuote: { token: string };
+  PublicInvoice: { token: string };
   Main: undefined;
   MyDay: undefined;
   Quotes: undefined;
@@ -16,7 +19,23 @@ export type RootStackParamList = {
         quoteId?: string;
       }
     | undefined;
-  Invoices: undefined;
+  Invoices: { status?: InvoiceStatus | 'OUTSTANDING' } | undefined;
+  AccountsReceivable:
+    | {
+        customerId?: string;
+        status?: 'OUTSTANDING' | 'OVERDUE' | 'DUE_SOON' | 'PAID';
+      }
+    | undefined;
+  InvoiceDetails: { invoiceId: string };
+  InvoiceForm:
+    | {
+        customerId?: string;
+        customerSiteId?: string;
+        invoiceId?: string;
+        jobId?: string;
+        sourceQuoteId?: string;
+      }
+    | undefined;
   Notifications: undefined;
   Settings: undefined;
   Customers: undefined;

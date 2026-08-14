@@ -135,6 +135,10 @@ export class UpsertQuoteDto {
 
   @IsOptional()
   @IsString()
+  relatedJobId?: string | null;
+
+  @IsOptional()
+  @IsString()
   jobId?: string | null;
 
   @IsOptional()

@@ -10,6 +10,8 @@ const quote: Quote = {
   businessId: 'business-1',
   cancelledAt: null,
   convertedAt: null,
+  convertedJob: null,
+  convertedJobId: null,
   createdAt: '2026-08-10T00:00:00.000Z',
   createdBy: 'user-1',
   currency: 'AUD',
@@ -93,6 +95,12 @@ const quote: Quote = {
   ],
   pricingMode: 'GST_EXCLUSIVE',
   quoteNumber: 'Q-2026-001006',
+  relatedJob: {
+    id: 'job-1',
+    jobNumber: 'JOB-2026-000012',
+    title: 'Laundry Leak',
+  },
+  relatedJobId: 'job-1',
   sentAt: null,
   sourceAppointmentId: null,
   status: 'DRAFT',
@@ -132,5 +140,60 @@ describe('DeterministicQuotePdfProvider', () => {
     expect(first.buffer.subarray(0, 8).toString('utf8')).toBe('%PDF-1.4');
     expect(first.checksum).toBe(second.checksum);
     expect(first.buffer.equals(second.buffer)).toBe(true);
+  });
+
+  it('renders saved discounted totals from the frozen quote snapshot', () => {
+    const provider = new DeterministicQuotePdfProvider();
+    const result = provider.generateQuotePdf({
+      business: {
+        abn: '12345678901',
+        address: '1 Collins Street',
+        email: 'hello@example.com',
+        name: 'Demo Tradie Co',
+        phone: '0399990000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      },
+      quote: {
+        ...quote,
+        discountCents: 5000,
+        discountType: 'FIXED',
+        discountValue: 5000,
+        gstCents: 2800,
+        totalCents: 30800,
+      },
+    });
+    const pdfText = result.buffer.toString('utf8');
+
+    expect(pdfText).toContain('Discount: $50.00');
+    expect(pdfText).toContain('GST: $28.00');
+    expect(pdfText).toContain('Total: $308.00');
+  });
+
+  it('supports multi-page quote PDFs for long terms', () => {
+    const provider = new DeterministicQuotePdfProvider();
+    const result = provider.generateQuotePdf({
+      business: {
+        abn: '12345678901',
+        address: '1 Collins Street',
+        email: 'hello@example.com',
+        name: 'Demo Tradie Co',
+        phone: '0399990000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      },
+      quote: {
+        ...quote,
+        termsAndConditions: 'Detailed customer-facing terms. '.repeat(300),
+      },
+    });
+    const pdfText = result.buffer.toString('utf8');
+
+    const pageCount = pdfText.match(/\/Type \/Page\b/g)?.length ?? 0;
+
+    expect(pdfText).toContain('/Type /Pages');
+    expect(pageCount).toBeGreaterThan(1);
   });
 });

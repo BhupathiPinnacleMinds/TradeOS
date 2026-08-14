@@ -48,6 +48,7 @@ import {
   createJobRequest,
   customerDetailRequest,
   customersRequest,
+  friendlyAppointmentCreateError,
   jobDetailRequest,
   membersRequest,
 } from '../api/client';
@@ -794,10 +795,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       });
     } catch (error) {
       showToast({
-        message:
-          error instanceof Error
-            ? error.message
-            : "We couldn't save this appointment.",
+        message: friendlyAppointmentCreateError(error),
         tone: 'error',
       });
     } finally {

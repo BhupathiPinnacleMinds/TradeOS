@@ -33,11 +33,15 @@ export interface DashboardSummaryResponse {
     acceptedQuotesNotConverted: number;
     quotesExpiringSoon: number;
     unpaidInvoices: number;
+    draftInvoices: number;
+    overdueInvoices: number;
+    paidInvoicesToday: number;
     unreadNotifications: number;
     aiMessages: number;
   };
   money: {
     outstandingInvoicesCents: number;
+    paidTodayCents: number;
   };
   todayJobs: Array<{
     id: string;

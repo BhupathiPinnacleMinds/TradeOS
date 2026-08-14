@@ -44,7 +44,12 @@ Current Prisma models include:
 - QuoteSequence
 - Invoice
 - InvoiceLineItem
+- InvoiceReceiptDocument
+- ReceiptSequence
 - Payment
+- BusinessCommunicationSettings
+- CustomerCommunicationPreference
+- CustomerCommunication
 - Message
 - Notification
 - AiConversation
@@ -56,15 +61,41 @@ Current Prisma models include:
 
 Future documentation names may use `QuoteItem`, `InvoiceItem`, and `MessageDraft`; in the current implementation, quote/invoice items are represented by line item models, and message drafts are represented through `Message.status`.
 
+## Customer communications data model
+
+`CustomerCommunication` is the tenant-scoped communication history and reminder
+record. It includes `businessId`, `customerId`, channel, type, status, recipient,
+subject/message/preview, optional job/appointment/quote/invoice/payment links,
+`scheduledFor`, sent/failed/cancelled timestamps and a deterministic
+`idempotencyKey`.
+
+Database protection:
+
+- `@@unique([businessId, idempotencyKey])` prevents duplicate reminders/sends
+  caused by retries, app restarts or processor reruns.
+- Query indexes cover customer history, scheduled processing and entity-level
+  history (`relatedAppointmentId`, `relatedQuoteId`, `relatedInvoiceId`,
+  `relatedPaymentId`).
+- `BusinessCommunicationSettings` stores business defaults such as appointment
+  reminder lead time, quote follow-up delay and invoice reminder delays.
+- `CustomerCommunicationPreference` stores per-customer `emailEnabled` and
+  `smsEnabled` flags without changing historical communication records.
+
 ## Quote data model
 
 The Quotes foundation upgrades the earlier placeholder quote records into a
 tenant-scoped Australian quoting model.
 
-- `Quote` includes `businessId`, `quoteNumber`, customer/site/job/appointment
-  links, lifecycle status, issue/expiry dates, AUD currency, GST pricing mode,
-  integer-cent subtotal/discount/GST/total/deposit fields, customer/internal
-  notes, terms, acceptance metadata, conversion metadata and archive metadata.
+- `Quote` includes `businessId`, `quoteNumber`, customer/site/appointment
+  links, explicit related/converted job links, lifecycle status, issue/expiry
+  dates, AUD currency, GST pricing mode, integer-cent
+  subtotal/discount/GST/total/deposit fields, customer/internal notes, terms,
+  acceptance metadata, conversion metadata and archive metadata.
+- `Quote.relatedJobId` means the job existed before the quote.
+  `Quote.convertedJobId` means the quote created the job. `Job.sourceQuoteId`
+  points back to the accepted source quote for jobs created from quotes. Legacy
+  `Quote.jobId` is retained only for compatibility while historical data is
+  migrated.
 - `QuoteLineItem` stores labour/material/service/fee/other lines with decimal
   quantity, unit, integer-cent unit price and server-calculated integer-cent
   line totals.
@@ -406,7 +437,9 @@ Important fields:
 - id
 - businessId
 - customerId
-- jobId
+- relatedJobId
+- convertedJobId
+- jobId (legacy compatibility)
 - number
 - status
 - issueDate
@@ -434,24 +467,42 @@ Important fields:
 
 ### Invoice
 
-Represents an invoice for a customer.
+Represents a tenant-scoped Australian invoice for a customer.
 
 Important fields:
 
 - id
 - businessId
 - customerId
+- customerSiteId
 - jobId
-- number
+- sourceQuoteId
+- invoiceNumber
 - status
+- title
+- description
 - issueDate
 - dueDate
-- subtotal
-- gst
-- total
-- amountPaid
-- notes
+- currency
+- pricingMode
+- gstRateBasisPoints
+- subtotalCents
+- discountType
+- discountValue
+- discountCents
+- gstCents
+- totalCents
+- creditAppliedCents
+- amountPaidCents
+- balanceDueCents
+- customerNotes
+- internalNotes
+- paymentTerms
 - sentAt
+- viewedAt
+- paidAt
+- voidedAt
+- version
 
 ### InvoiceItem / InvoiceLineItem
 
@@ -462,26 +513,72 @@ Important fields:
 - id
 - businessId
 - invoiceId
+- position
+- type
+- name
 - description
 - quantity
-- unitPrice
-- total
-- sortOrder
+- unit
+- unitPriceCents
+- taxable
+- lineSubtotalCents
+- lineGstCents
+- lineTotalCents
 
-### Payment
+### InvoicePayment / Payment
 
-Represents an invoice payment.
+Represents an append-only invoice payment record. The Prisma model is named
+`InvoicePayment` and maps to the existing `Payment` table to preserve local
+data.
 
 Important fields:
 
 - id
 - businessId
 - invoiceId
-- amount
-- status
+- amountCents
 - method
 - reference
-- paidAt
+- receivedAt
+- notes
+- createdBy
+- reversedAt
+- reversalReason
+
+### InvoiceReceiptDocument
+
+Represents a generated customer-facing receipt PDF for a specific invoice
+payment.
+
+Important fields:
+
+- id
+- businessId
+- invoiceId
+- paymentId
+- receiptNumber
+- fileName
+- mimeType
+- fileSizeBytes
+- objectKey
+- checksum
+- generatedAt
+- createdBy
+- createdAt
+
+Rules:
+
+- Receipt rows are always scoped by `businessId`.
+- Receipt PDFs are generated on demand and stored behind the storage provider.
+- API responses expose receipt metadata and authenticated download URLs only,
+  never storage object keys.
+- Receipt documents link to `InvoicePayment` by compound payment/business
+  relation to prevent cross-tenant access.
+
+### ReceiptSequence
+
+Stores the next business-local receipt number used to generate receipt numbers
+such as `RCT-2026-000001`. Each business has at most one receipt sequence row.
 
 ### MessageDraft / Message
 
@@ -625,7 +722,8 @@ Important fields:
   keys behind the storage provider. `QuotePublicAccessToken` stores only hashed
   public tokens for secure customer access.
 - Invoice belongs to customer and may belong to a job.
-- Payment belongs to invoice.
+- Payment belongs to invoice. `InvoiceReceiptDocument` belongs to invoice and
+  payment, and `ReceiptSequence` belongs to business.
 - Notification belongs to user and business.
 - AI conversation belongs to user and business.
 - Audit log belongs to business and may belong to an actor user.
@@ -641,6 +739,7 @@ Current examples:
 - job status/start date by business
 - quote status/issue date by business
 - invoice status/due date by business
+- invoice receipt payment and receipt number by business
 - notification user/status by business
 - AI conversation user/update time by business
 - business member role/status by business
@@ -672,3 +771,29 @@ Quotes Phase 2 migration:
   metadata, hash-only public access tokens, immutable snapshot hashes, customer
   view counters, accepted-version tracking and decline reason/comment fields.
   The migration is additive and does not reset or seed existing data.
+
+Quote/job relationship direction migration:
+
+- `20260811102000_quote_job_relationship_direction` adds
+  `Quote.relatedJobId`, `Quote.convertedJobId` and `Job.sourceQuoteId`.
+  Existing converted quotes with a legacy `jobId` are backfilled to
+  `convertedJobId`; existing non-converted quotes with a legacy `jobId` are
+  backfilled to `relatedJobId`; jobs deterministically linked to converted
+  quotes are backfilled with `sourceQuoteId`. The legacy `Quote.jobId` is kept
+  temporarily for compatibility and should not drive new UX.
+
+Invoice module foundation migration:
+
+- `20260811130000_invoice_module_foundation` upgrades the original invoice and
+  payment placeholders into the invoices foundation. Existing Decimal invoice
+  and payment amounts are backfilled into integer cents, invoice numbers move to
+  `invoiceNumber`, payments become append-only `InvoicePayment` records, and
+  invoice PDF/public-token/sequence tables are added. The migration is
+  data-preserving and does not seed or reset the database.
+
+Accounts Receivable Phase 2 migration:
+
+- `20260811143000_accounts_receivable_phase_2` adds
+  `InvoiceReceiptDocument`, `ReceiptSequence` and the compound
+  `Payment(id,businessId)` uniqueness required for tenant-safe payment receipt
+  links. The migration is additive and does not seed, reset or delete data.

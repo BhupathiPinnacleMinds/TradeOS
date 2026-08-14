@@ -10,6 +10,37 @@ TradieOS uses a REST API built with NestJS. API routes are prefixed with:
 
 ## Current implemented endpoints
 
+### Customer communications
+
+Customer communications are tenant-scoped records for appointment
+confirmations/reminders, quote follow-ups, invoice reminders, payment
+confirmations and manual office messages. Phase 1 uses a local-safe provider:
+records are persisted and intended deliveries are logged, but no real SMS/email
+vendor is connected.
+
+```http
+GET /api/communications
+GET /api/communications/:id
+POST /api/communications/manual
+POST /api/communications/process-due
+GET /api/communications/settings
+PATCH /api/communications/settings
+GET /api/communications/customers/:customerId/preferences
+PATCH /api/communications/customers/:customerId/preferences
+```
+
+Supported `GET /api/communications` filters include `customerId`,
+`appointmentId`, `quoteId`, `invoiceId`, `status`, `type` and `pageSize`.
+Every query is scoped by the authenticated user's `businessId`.
+
+`POST /api/communications/process-due` is the local/manual scheduler seam for
+development and operations. Production scheduling should call the same service
+from a server-side cron/worker; it must not depend on the mobile app being open.
+Expected communication errors use structured codes such as
+`COMMUNICATION_RECIPIENT_MISSING`, `COMMUNICATION_EMAIL_DISABLED`,
+`COMMUNICATION_SMS_DISABLED`, `COMMUNICATION_ACCESS_DENIED` and
+`COMMUNICATION_SEND_FAILED`.
+
 ### Business timezone rule
 
 Every API stores appointment, job, invoice, notification and audit timestamps as
@@ -87,6 +118,12 @@ POST /api/quotes/:id/convert-to-job
 `GET /api/quotes/:id/pdf` returns `application/pdf` bytes with a safe filename
 such as `Quote-Q-2026-001007.pdf`.
 
+Authenticated mobile clients open generated quote PDFs by downloading this
+endpoint to local secure cache and launching the local file. Existing
+`QuotePdfDocument` metadata is returned by `GET /api/quotes/:id`, so clients can
+show a View PDF action without exposing storage paths or regenerating the file
+unnecessarily.
+
 `POST /api/quotes/:id/send` accepts:
 
 ```json
@@ -122,6 +159,7 @@ Structured quote public errors include:
 - `QUOTE_SUPERSEDED`
 - `QUOTE_ALREADY_ACCEPTED`
 - `QUOTE_ALREADY_DECLINED`
+- `QUOTE_ALREADY_RELATED_TO_JOB`
 - `QUOTE_EXPIRED`
 - `QUOTE_EMAIL_REQUIRED`
 - `QUOTE_SEND_FAILED`
@@ -162,6 +200,29 @@ GET /api/quotes/:id/pdf
 POST /api/quotes/:id/duplicate
 ```
 
+Quote responses expose directionally explicit job relationships:
+
+```json
+{
+  "relatedJobId": "job_existing_123",
+  "convertedJobId": null,
+  "relatedJob": {
+    "id": "job_existing_123",
+    "jobNumber": "JOB-2026-000012",
+    "title": "Laundry leak"
+  },
+  "convertedJob": null
+}
+```
+
+`relatedJob` means the job already existed before the quote. `convertedJob`
+means the quote was accepted and converted into that job. The legacy `job`
+field remains for backward compatibility only.
+
+`POST /api/quotes/:id/convert-to-job` rejects accepted quotes that already have
+`relatedJobId` with `QUOTE_ALREADY_RELATED_TO_JOB` so an existing job does not
+accidentally get duplicated.
+
 Quote lifecycle:
 
 ```text
@@ -178,12 +239,82 @@ Money rules:
 - Stored totals use integer cents.
 - GST defaults to 10% (`1000` basis points).
 - Discounts and deposits use either fixed cents or percentage basis points.
+- Mobile forms show fixed discounts/deposits as dollars and percentages as
+  percentages, then convert them to the stored cents/basis-point units before
+  sending the API payload.
 - The API recalculates line totals, subtotal, discount, GST, total and deposit
+
+### Invoices
+
+Invoices are tenant-scoped financial documents. Every invoice, invoice line item,
+invoice payment record, generated PDF and public access token is scoped by
+authenticated `businessId`; clients must never send or trust `businessId` in
+request payloads.
+
+Protected staff APIs:
+
+```text
+GET /api/invoices
+POST /api/invoices
+GET /api/invoices/accounts-receivable
+GET /api/invoices/:id
+PATCH /api/invoices/:id
+POST /api/invoices/:id/send
+POST /api/invoices/:id/payments
+GET /api/invoices/:id/payments/:paymentId/receipt
+POST /api/invoices/:id/void
+GET /api/invoices/:id/pdf
+```
+
+Accounts Receivable returns real invoice/payment data, not cached dashboard
+values. It accepts optional `search`, `customerId`, `status`, `dateFrom` and
+`dateTo` filters. `status` may be `OUTSTANDING`, `OVERDUE`, `DUE_SOON` or
+`PAID`. Totals are integer cents:
+
+- outstanding and overdue totals are based on positive `balanceDueCents`;
+- due-soon covers invoices due within the next seven business-local days;
+- paid-this-month is summed from non-reversed `InvoicePayment.receivedAt` rows;
+- all sections remain scoped to the authenticated `businessId`.
+
+Payment receipts are generated on demand from the invoice/payment snapshot,
+stored behind the storage provider and returned as `application/pdf`. Receipt
+PDFs use the public receipt number, invoice number, customer and payment
+details; they do not expose internal database IDs or storage object keys.
+
+Public customer invoice APIs do not require JWT login:
+
+```text
+GET /api/public/invoices/:token
+POST /api/public/invoices/:token/view
+```
+
+Invoice totals use integer cents and are recalculated by the API on every write.
+`OVERDUE` is treated as a derived display state when a sent/viewed/part-paid
+invoice has a past due date and a positive balance. The persisted status remains
+the business lifecycle state to avoid a background scheduler requirement.
+
+Local invoice sending uses the console email provider only. It records `sentAt`,
+stores a generated PDF, creates a hash-only public token and logs audit events,
+but does not claim real email delivery.
+
+Structured invoice errors include:
+
+- `INVOICE_NOT_FOUND`
+- `INVOICE_ACCESS_DENIED`
+- `INVOICE_INVALID_STATUS`
+- `INVOICE_LINE_ITEM_INVALID`
+- `INVOICE_DUE_DATE_INVALID`
+- `INVOICE_PAYMENT_INVALID`
+- `INVOICE_PAYMENT_EXCEEDS_BALANCE`
+- `INVOICE_ALREADY_PAID`
+- `INVOICE_VOID`
+- `INVOICE_PDF_GENERATION_FAILED`
+- `INVOICE_SEND_FAILED`
   server-side and rejects invalid line items.
 
 Local send behaviour uses the console email/provider seam and logs a preview
-URL. Public customer token acceptance and production PDF generation are
-documented seams, not completed production infrastructure in this milestone.
+URL. Production email delivery remains a provider seam and is not enabled by the
+local console provider.
 
 ### Health
 
@@ -267,6 +398,14 @@ appointments.
 
 Dashboard dispatcher counts are summary-only and include technicians currently
 working, available technicians, and unassigned appointments for today.
+
+Dashboard invoice metrics are tenant-scoped and cents-based. Outstanding is the
+sum of positive `balanceDueCents` for sent/viewed/partially-paid/overdue
+invoices only; drafts, paid invoices and void invoices are excluded. Overdue
+invoices are derived from `dueDate < business-local today`, positive balance
+and an unpaid lifecycle status. Paid today is based on actual
+`InvoicePayment.receivedAt` rows for the business-local day, not invoice totals
+or the invoice `paidAt` timestamp.
 
 Dashboard "today" and "late" calculations are based on the logged-in business
 timezone, not the API server timezone.

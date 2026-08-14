@@ -223,7 +223,14 @@ function createService() {
   };
   const notifications =
     notificationMocks as unknown as AppointmentNotificationsService;
+  const communications = {
+    appointmentCancelled: jest.fn(),
+    appointmentCompleted: jest.fn(),
+    appointmentCreated: jest.fn(),
+    appointmentRescheduled: jest.fn(),
+  };
   return {
+    communications,
     notificationMocks,
     notifications,
     prisma,
@@ -231,6 +238,7 @@ function createService() {
       prisma as never,
       scheduling,
       notifications,
+      communications as never,
     ),
   };
 }
@@ -271,9 +279,45 @@ describe('AppointmentsService', () => {
     });
 
     expect(prisma.appointmentSequence.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { businessId: 'business-1' } }),
+      expect.objectContaining({
+        data: { nextNumber: 5 },
+        where: { businessId: 'business-1' },
+      }),
     );
+    const createCalls = prisma.appointment.create.mock
+      .calls as unknown as AppointmentCreateCall[];
+    expect(createCalls[0][0].data.appointmentNumber).toBe('APT-2026-000004');
     expect(prisma.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('repairs stale appointment sequences before creating appointments', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointmentSequence.findUnique.mockResolvedValueOnce({
+      businessId: 'business-1',
+      nextNumber: 1,
+    });
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ appointmentNumber: 'APT-2026-000010' }),
+    );
+
+    await service.create(owner, {
+      appointmentType: 'INSPECTION',
+      assignedUserId: 'tech-1',
+      jobId: 'job-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(prisma.appointmentSequence.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { nextNumber: 12 },
+        where: { businessId: 'business-1' },
+      }),
+    );
+    const createCalls = prisma.appointment.create.mock
+      .calls as unknown as AppointmentCreateCall[];
+    expect(createCalls[0][0].data.appointmentNumber).toBe('APT-2026-000011');
   });
 
   it('creates appointments with a customer default address snapshot', async () => {
@@ -294,6 +338,32 @@ describe('AppointmentsService', () => {
     expect(createCalls[0][0].data.addressLine1).toBe('99 Default Road');
     expect(createCalls[0][0].data.locationSource).toBe('CUSTOMER_DEFAULT');
     expect(createCalls[0][0].data.postcode).toBe('2150');
+  });
+
+  it('creates a 120-minute Sydney afternoon appointment with correct UTC start and end', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    await service.create(owner, {
+      appointmentType: 'INSPECTION',
+      assignedUserId: 'tech-1',
+      estimatedDurationMinutes: 120,
+      jobId: 'job-1',
+      locationSource: 'CUSTOMER_DEFAULT',
+      scheduledEnd: '2026-08-13T05:25:00.000Z',
+      scheduledStart: '2026-08-13T03:25:00.000Z',
+      status: 'SCHEDULED',
+    });
+
+    const createCalls = prisma.appointment.create.mock
+      .calls as unknown as AppointmentCreateCall[];
+    expect(createCalls[0][0].data.estimatedDurationMinutes).toBe(120);
+    expect(createCalls[0][0].data.scheduledStart).toEqual(
+      new Date('2026-08-13T03:25:00.000Z'),
+    );
+    expect(createCalls[0][0].data.scheduledEnd).toEqual(
+      new Date('2026-08-13T05:25:00.000Z'),
+    );
   });
 
   it('creates appointments with a selected service-site snapshot', async () => {
@@ -320,6 +390,44 @@ describe('AppointmentsService', () => {
     expect(createCalls[0][0].data.addressLine1).toBe('44 Queen Street');
     expect(createCalls[0][0].data.customerSiteId).toBe('site-1');
     expect(createCalls[0][0].data.locationSource).toBe('CUSTOMER_SITE');
+  });
+
+  it('returns a 404 domain error when the selected service site does not belong to the job customer', async () => {
+    const { prisma, service } = createService();
+    prisma.customerSite.findFirst.mockResolvedValueOnce(null);
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        assignedUserId: 'tech-1',
+        customerSiteId: 'site-from-another-customer',
+        jobId: 'job-1',
+        locationSource: 'CUSTOMER_SITE',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      })
+      .catch((error) => {
+        expectDomainError(error, 'CUSTOMER_SITE_NOT_FOUND');
+        expect((error as HttpException).getStatus()).toBe(404);
+      });
+  });
+
+  it('returns a 404 domain error when the selected technician is inactive or outside the tenant', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst.mockResolvedValueOnce(null);
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        assignedUserId: 'inactive-tech',
+        jobId: 'job-1',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      })
+      .catch((error) => {
+        expectDomainError(error, 'ASSIGNEE_NOT_FOUND');
+        expect((error as HttpException).getStatus()).toBe(404);
+      });
   });
 
   it('rejects invalid manual appointment postcodes', async () => {
@@ -405,6 +513,12 @@ describe('AppointmentsService', () => {
         notifyNewTechnician: jest.fn(),
         notifyOldTechnician: jest.fn(),
       } as unknown as AppointmentNotificationsService,
+      {
+        appointmentCancelled: jest.fn(),
+        appointmentCompleted: jest.fn(),
+        appointmentCreated: jest.fn(),
+        appointmentRescheduled: jest.fn(),
+      } as never,
     );
 
     await blockedService.findOne(technician, 'appointment-1').catch((error) => {
@@ -1045,6 +1159,84 @@ describe('AppointmentsService', () => {
     expect(result.appointment.status).toBe('CONFIRMED');
     expect(prisma.appointment.update).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('persists scheduled to cancelled transitions and returns the updated appointment', async () => {
+    const { communications, prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'SCHEDULED' }),
+    );
+    prisma.appointment.update.mockImplementationOnce(
+      ({ data }: { data: { status: string } }) =>
+        Promise.resolve(appointment({ status: data.status })),
+    );
+
+    const result = await service.transition(
+      owner,
+      'appointment-1',
+      'CANCELLED',
+    );
+
+    expect(result.appointment.status).toBe('CANCELLED');
+    const updateCalls = prisma.appointment.update.mock
+      .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+    expect(updateCalls[0][0].data).toMatchObject({
+      status: 'CANCELLED',
+      updatedBy: owner.id,
+    });
+    expect(communications.appointmentCancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it('reschedules to an explicit date/time and persists the selected duration', async () => {
+    const { communications, prisma, service } = createService();
+    const existing = appointment({
+      scheduledEnd: new Date('2026-08-16T23:00:00.000Z'),
+      scheduledStart: new Date('2026-08-16T21:00:00.000Z'),
+      status: 'SCHEDULED',
+    });
+    prisma.appointment.findFirst.mockResolvedValueOnce(existing);
+    prisma.appointment.count.mockResolvedValueOnce(0);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.update.mockImplementationOnce(
+      ({
+        data,
+      }: {
+        data: {
+          estimatedDurationMinutes: number;
+          scheduledEnd: Date;
+          scheduledStart: Date;
+        };
+      }) =>
+        Promise.resolve(
+          appointment({
+            estimatedDurationMinutes: data.estimatedDurationMinutes,
+            scheduledEnd: data.scheduledEnd,
+            scheduledStart: data.scheduledStart,
+            status: 'SCHEDULED',
+          }),
+        ),
+    );
+
+    const result = await service.update(owner, 'appointment-1', {
+      accessInstructions: 'Use side gate',
+      addressLine1: '12 King Street',
+      appointmentType: 'INSPECTION',
+      assignedUserId: 'tech-1',
+      estimatedDurationMinutes: 60,
+      jobId: 'job-1',
+      locationSource: 'CUSTOMER_DEFAULT',
+      postcode: '2150',
+      scheduledEnd: '2026-08-17T23:00:00.000Z',
+      scheduledStart: '2026-08-17T22:00:00.000Z',
+      state: 'NSW',
+      status: 'SCHEDULED',
+      suburb: 'Parramatta',
+    });
+
+    expect(result.appointment.scheduledStart).toBe('2026-08-17T22:00:00.000Z');
+    expect(result.appointment.scheduledEnd).toBe('2026-08-17T23:00:00.000Z');
+    expect(result.appointment.estimatedDurationMinutes).toBe(60);
+    expect(communications.appointmentRescheduled).toHaveBeenCalledTimes(1);
   });
 
   it('allows an assigned technician to start travel only after confirmation', async () => {

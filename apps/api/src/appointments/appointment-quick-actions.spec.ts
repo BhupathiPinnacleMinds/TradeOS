@@ -10,6 +10,10 @@ function actionIds(input: Parameters<typeof getAppointmentQuickActions>[0]) {
   return getAppointmentQuickActions(input).map((action) => action.id);
 }
 
+function actionLabels(input: Parameters<typeof getAppointmentQuickActions>[0]) {
+  return getAppointmentQuickActions(input).map((action) => action.label);
+}
+
 describe('getAppointmentQuickActions', () => {
   it('shows scheduled appointment actions when contact and address exist', () => {
     expect(
@@ -28,6 +32,18 @@ describe('getAppointmentQuickActions', () => {
       'reschedule',
       'cancel',
     ]);
+  });
+
+  it('labels destructive cancellation explicitly', () => {
+    expect(
+      actionLabels({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: false,
+        role: 'OWNER',
+        status: 'SCHEDULED',
+      }),
+    ).toContain('Cancel appointment');
   });
 
   it('shows confirmed appointment actions', () => {

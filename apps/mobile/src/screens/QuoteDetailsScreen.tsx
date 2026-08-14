@@ -15,6 +15,7 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -32,6 +33,7 @@ import {
   quoteDetailRequest,
   sendQuoteRequest,
 } from '../api/client';
+import { downloadAuthenticatedQuotePdf } from '../api/quoteDocuments';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
@@ -125,6 +127,12 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
 
   const role = user?.role ?? 'READ_ONLY';
   const isConverted = quote.status === 'CONVERTED';
+  const hasRelatedJob = Boolean(quote.relatedJob);
+  const relationshipJob = quote.convertedJob ?? quote.relatedJob ?? quote.job;
+  const activeDocument =
+    documents.find((document) => document.version === quote.version) ??
+    documents[0] ??
+    null;
 
   function openSendModal() {
     if (!quote) return;
@@ -138,6 +146,16 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
     setSendModalOpen(true);
   }
 
+  async function openPdf(fileName?: string) {
+    if (!token || !quote) return;
+    const localUri = await downloadAuthenticatedQuotePdf(
+      token,
+      quote.id,
+      fileName ?? `Quote-${quote.quoteNumber}.pdf`,
+    );
+    await Linking.openURL(localUri);
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container} style={styles.page}>
       <View style={styles.hero}>
@@ -148,16 +166,18 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.title}>{quote.title}</Text>
         <Text style={styles.muted}>{quote.customer.displayName}</Text>
         <Text style={styles.total}>{formatAudCents(quote.totalCents)}</Text>
-        {quote.job ? (
+        {relationshipJob ? (
           <Pressable
             accessibilityRole="button"
             onPress={() =>
-              navigation.navigate('JobDetails', { jobId: quote.job!.id })
+              navigation.navigate('JobDetails', { jobId: relationshipJob.id })
             }
             style={styles.linkedJobPill}
           >
             <Text style={styles.linkedJobText}>
-              Linked job {quote.job.jobNumber}
+              {quote.convertedJob
+                ? `Converted to ${relationshipJob.jobNumber}`
+                : `Related to ${relationshipJob.jobNumber}`}
             </Text>
           </Pressable>
         ) : null}
@@ -215,7 +235,9 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             }
           />
         ) : null}
-        {roleCanConvertQuote(role, quote.status) && !isConverted ? (
+        {roleCanConvertQuote(role, quote.status) &&
+        !isConverted &&
+        !hasRelatedJob ? (
           <Action
             busy={busyAction === 'convert'}
             label="Convert to Job"
@@ -237,9 +259,13 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
         ) : null}
         <Action
           busy={busyAction === 'pdf'}
-          label={isConverted ? 'Download PDF' : 'Generate PDF'}
+          label={activeDocument ? 'View PDF' : 'Generate PDF'}
           onPress={() =>
             void mutate('pdf', async () => {
+              if (activeDocument) {
+                await openPdf(activeDocument.fileName);
+                return;
+              }
               if (!token) return;
               const response = await fetch(quotePdfUrl(quote.id), {
                 headers: { Authorization: `Bearer ${token}` },
@@ -294,16 +320,16 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
         ) : null}
       </View>
 
-      {quote.job ? (
+      {relationshipJob ? (
         <Section
-          title={isConverted ? 'Converted to Job' : 'Source / Linked Job'}
+          title={quote.convertedJob ? 'Converted to Job' : 'Related Job'}
         >
-          <Text style={styles.lineTitle}>{quote.job.jobNumber}</Text>
-          <Text style={styles.muted}>{quote.job.title}</Text>
+          <Text style={styles.lineTitle}>{relationshipJob.jobNumber}</Text>
+          <Text style={styles.muted}>{relationshipJob.title}</Text>
           <Pressable
             accessibilityRole="button"
             onPress={() =>
-              navigation.navigate('JobDetails', { jobId: quote.job!.id })
+              navigation.navigate('JobDetails', { jobId: relationshipJob.id })
             }
             style={styles.secondaryButton}
           >
@@ -329,7 +355,16 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
           label="Pricing"
           value={quote.pricingMode.replaceAll('_', ' ')}
         />
-        <Detail label="Linked job" value={quote.job?.jobNumber ?? 'None'} />
+        <Detail
+          label="Job relationship"
+          value={
+            quote.convertedJob
+              ? `Converted to ${quote.convertedJob.jobNumber}`
+              : quote.relatedJob
+                ? `Related to ${quote.relatedJob.jobNumber}`
+                : 'None'
+          }
+        />
       </Section>
 
       <Section title="Line items">
@@ -373,7 +408,7 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
         {documents.length ? (
           documents.map((document) => (
             <View key={document.id} style={styles.documentRow}>
-              <View>
+              <View style={styles.documentContent}>
                 <Text style={styles.lineTitle}>Quote PDF</Text>
                 <Text style={styles.muted}>
                   {document.fileName} · Revision {document.version}
@@ -386,6 +421,23 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
                   )}
                 </Text>
               </View>
+              <Pressable
+                accessibilityLabel={`View ${document.fileName}`}
+                accessibilityRole="button"
+                disabled={busyAction === `pdf-${document.id}`}
+                onPress={() =>
+                  void mutate(`pdf-${document.id}`, async () => {
+                    await openPdf(document.fileName);
+                  })
+                }
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {busyAction === `pdf-${document.id}`
+                    ? 'Opening...'
+                    : 'View PDF'}
+                </Text>
+              </Pressable>
             </View>
           ))
         ) : (
@@ -598,11 +650,16 @@ const styles = StyleSheet.create({
   detailStrong: { fontSize: 18 },
   detailValue: { color: colours.ink, fontWeight: '800', textAlign: 'right' },
   documentRow: {
+    alignItems: 'center',
     borderColor: colours.border,
     borderRadius: 16,
     borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
     padding: 12,
   },
+  documentContent: { flex: 1, gap: 4 },
   errorTitle: { color: '#B91C1C', fontSize: 18, fontWeight: '900' },
   eyebrow: {
     color: colours.primary,
@@ -668,13 +725,17 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   secondaryButton: {
-    borderColor: colours.border,
+    alignItems: 'center',
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: colours.primary,
     borderRadius: 16,
     borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  secondaryButtonText: { color: colours.ink, fontWeight: '800' },
+  secondaryButtonText: { color: colours.primary, fontWeight: '800' },
   section: {
     backgroundColor: colours.card,
     borderColor: colours.border,

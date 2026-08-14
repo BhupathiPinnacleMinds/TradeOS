@@ -18,6 +18,35 @@ Quote action visibility should use the shared helpers in
 `packages/shared/src/quotes.ts`; mobile route visibility remains centralised in
 `apps/mobile/src/permissions/roleVisibility.ts`.
 
+## Invoice permissions
+
+- `OWNER`, `ADMIN` and `ACCOUNTANT` have full invoice/payment access.
+- `OFFICE_MANAGER` can create/edit draft invoices, send invoices, record
+  payments and void invoices according to status policy.
+- `SALES` can create, view and send invoices, but cannot record or reverse
+  payments by default.
+- `SCHEDULER` can view invoices but cannot create, send, void or record
+  payments.
+- `TECHNICIAN` can view invoices related to assigned work but cannot edit,
+  send, void or record payments.
+- `READ_ONLY` can view invoices only.
+
+Accounts Receivable visibility is stricter than invoice visibility:
+
+- `OWNER`, `ADMIN`, `OFFICE_MANAGER`, `ACCOUNTANT` and `READ_ONLY` can view the
+  Accounts Receivable screen and payment receipts.
+- `SCHEDULER`, `TECHNICIAN`, `SALES` and legacy `STAFF` cannot access Accounts
+  Receivable routes, summaries or receipt download endpoints.
+- Payment recording remains limited to `OWNER`, `ADMIN`, `OFFICE_MANAGER` and
+  `ACCOUNTANT`.
+
+Invoice action visibility should use `getInvoiceAvailableActions` and the
+supporting shared helpers in `packages/shared/src/invoices.ts`; mobile route
+visibility remains centralised in
+`apps/mobile/src/permissions/roleVisibility.ts`. The API remains authoritative,
+so hiding an action in the UI is never a substitute for service-level role and
+status checks.
+
 ## Media & document permissions
 
 - `OWNER` and `ADMIN` can upload, edit metadata, archive and restore any media

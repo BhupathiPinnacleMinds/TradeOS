@@ -1,5 +1,19 @@
 # UI/UX Guidelines
 
+## Customer communications UX
+
+- Customer Details shows a compact Communications section with channel, type,
+  status, date/time and a short customer-safe preview.
+- Office users may use Send message from Customer Details. Phase 1 records the
+  communication through the local-safe provider; it must not imply a real vendor
+  delivered SMS/email.
+- Communication Settings belongs in Settings as a compact defaults section. Do
+  not build a complex workflow-builder UI for Phase 1.
+- Appointment, Quote and Invoice detail screens may show compact communication
+  history/status, but lifecycle buttons must stay focused on the primary entity.
+- Failed communication states should be clear and calm. Do not expose raw
+  provider exceptions, public-token hashes, database IDs or internal notes.
+
 ## Quotes UX
 
 - Quotes use list, detail and multi-step form screens.
@@ -11,7 +25,41 @@
   when present. Detailed lifecycle actions belong on Quote Details.
 - Empty, error and loading states must never fall back to fake quote data.
 - Quote creation entry points are More -> Quotes, Customer Details, Job Details
-  and Appointment Details.
+
+## Invoices UX
+
+- Invoices use list, detail and multi-step draft form screens, aligned with the
+  Quotes architecture.
+- Invoice creation entry points are More -> Invoices, Customer Details and Job
+  Details. Creating from Job Details pre-populates customer, job and source quote
+  context where available.
+- The invoice form is split into Scope, Items, Terms and Review steps. It keeps
+  numeric input as safe strings while editing and converts to integer cents only
+  when calculating or saving.
+- Invoice cards show invoice number, status, customer, total, balance due, due
+  date and linked job. Overdue invoices should be highlighted clearly but not
+  alarmingly.
+- Invoice Details owns lifecycle actions. Draft invoices show Edit/Send/PDF/Void
+  actions. Sent/viewed/part-paid invoices expose PDF, resend and record payment
+  where permitted. Paid and void invoices are view-oriented.
+- Invoice Details action buttons must be derived from
+  `getInvoiceAvailableActions` so role/status/balance rules stay aligned with
+  the API. Do not add inline status checks for new invoice actions when a shared
+  domain helper can describe the same rule.
+- Record Payment uses an explicit confirmation modal. Payments are appended and
+  never silently mutate historical amounts.
+- Accounts Receivable is the collection-focused view for outstanding, overdue,
+  due-soon and paid invoices. Dashboard financial cards should navigate to this
+  screen rather than duplicating detailed invoice lists.
+- Invoice Details should show a clear paid state, a payment-history section and
+  receipt actions for each payment. Receipt buttons may say `Generate receipt`
+  before a receipt exists and `View receipt` after one has been generated.
+- Customer Details and Job Details may show compact financial summaries, but
+  detailed collection workflows belong in Accounts Receivable and Invoice
+  Details.
+- Public invoice pages expose customer-safe invoice, item, totals, amount-paid
+  and balance-due details only. Internal notes, tenant ids, audit entries and
+  storage paths must not appear in the UI.
 
 ## Media & document UX
 
@@ -197,9 +245,10 @@ can use.
 | Sales                                | Dashboard, Customers, Quotes, Tori, More |
 | Read Only                            | Dashboard, Calendar, More                |
 
-Customers, quotes, invoices, notifications, team and settings live under More.
-Calendar carries the detailed scheduling experience, while Dashboard shows
-appointment summaries only.
+Customers, quotes, invoices, accounts receivable, notifications, team and
+settings live under More according to role permissions. Calendar carries the
+detailed scheduling experience, while Dashboard shows appointment and financial
+summaries only.
 
 Forbidden screens and actions must be hidden from navigation, cards, menus and
 FABs. If a stale route or manual navigation attempt targets a forbidden screen,

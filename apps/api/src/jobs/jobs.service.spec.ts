@@ -53,7 +53,8 @@ type MockPrisma = {
     findUnique: jest.Mock;
     update: jest.Mock;
   };
-  quote: { findFirst: jest.Mock };
+  invoice: { findMany: jest.Mock };
+  quote: { findFirst: jest.Mock; findMany: jest.Mock };
   user: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -101,6 +102,7 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
     requiresInvoice: true,
     invoiceCreated: false,
     quoteCreated: false,
+    sourceQuoteId: null,
     isArchived: false,
     archivedAt: null,
     createdBy: 'owner-1',
@@ -168,7 +170,13 @@ function createService() {
         .mockResolvedValue({ businessId: 'business-1', nextNumber: 7 }),
       update: jest.fn(),
     },
-    quote: { findFirst: jest.fn().mockResolvedValue(null) },
+    invoice: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    quote: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     user: {
       findFirst: jest.fn().mockResolvedValue({ id: 'tech-1' }),
     },
@@ -230,7 +238,7 @@ describe('JobsService', () => {
 
     expect(prisma.jobSequence.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { nextNumber: { increment: 1 } },
+        data: { nextNumber: 8 },
         where: { businessId: 'business-1' },
       }),
     );
@@ -238,6 +246,30 @@ describe('JobsService', () => {
       [{ data: { jobNumber: string } }],
     ];
     expect(createArg.data.jobNumber).toBe('JOB-2026-000007');
+  });
+
+  it('repairs stale job sequences before creating jobs', async () => {
+    const { prisma, service } = createService();
+    prisma.jobSequence.findUnique.mockResolvedValueOnce({
+      businessId: 'business-1',
+      nextNumber: 1,
+    });
+    prisma.job.findFirst
+      .mockResolvedValueOnce(job({ jobNumber: 'JOB-2026-000012' }))
+      .mockResolvedValueOnce(job({ jobNumber: 'JOB-2026-000013' }));
+
+    await service.create(owner, payload());
+
+    expect(prisma.jobSequence.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { nextNumber: 14 },
+        where: { businessId: 'business-1' },
+      }),
+    );
+    const [[createArg]] = prisma.job.create.mock.calls as [
+      [{ data: { jobNumber: string } }],
+    ];
+    expect(createArg.data.jobNumber).toBe('JOB-2026-000013');
   });
 
   it('rejects end time before start time', async () => {
@@ -270,6 +302,48 @@ describe('JobsService', () => {
       ([arg]) => arg.data.action === 'JOB_COMPLETED',
     );
     expect(auditCall).toBeDefined();
+  });
+
+  it('returns source quote and multiple related quotes from structured relationships', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(
+      job({ sourceQuoteId: 'quote-source' }),
+    );
+    prisma.quote.findFirst.mockResolvedValueOnce({
+      id: 'quote-source',
+      quoteNumber: 'Q-2026-000010',
+      status: 'ACCEPTED',
+      title: 'Original accepted quote',
+      totalCents: 61600,
+    });
+    prisma.quote.findMany.mockResolvedValueOnce([
+      {
+        id: 'quote-related-1',
+        quoteNumber: 'Q-2026-000011',
+        status: 'SENT',
+        title: 'Additional work',
+        totalCents: 13200,
+      },
+      {
+        id: 'quote-related-2',
+        quoteNumber: 'Q-2026-000012',
+        status: 'DRAFT',
+        title: 'Variation draft',
+        totalCents: 25000,
+      },
+    ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.sourceQuote?.id).toBe('quote-source');
+    expect(result.relatedQuotes).toHaveLength(2);
+    const findManyCalls = prisma.quote.findMany.mock.calls as unknown as Array<
+      [{ where: { businessId: string; relatedJobId: string } }]
+    >;
+    expect(findManyCalls[0]?.[0].where).toMatchObject({
+      businessId: owner.businessId,
+      relatedJobId: 'job-1',
+    });
   });
 
   it('blocks accountant write/archive access', async () => {

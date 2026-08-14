@@ -1,20 +1,30 @@
 import type {
   Customer,
+  CustomerCommunication,
+  CustomerCommunicationChannel,
   CustomerSitePayload,
+  Invoice,
   Job,
   MediaAsset,
 } from '@tradieos/shared';
 import {
+  formatBusinessDateTime,
+  formatAudCents,
   formatMediaSummary,
   mediaDisplayTitle,
+  roleCanCreateInvoices,
   roleCanCreateQuotes,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,11 +36,14 @@ import {
   archiveMediaRequest,
   archiveCustomerRequest,
   archiveCustomerSiteRequest,
+  customerCommunicationsRequest,
   createCustomerSiteRequest,
   customerDetailRequest,
+  invoicesRequest,
   mediaRequest,
   restoreCustomerRequest,
   restoreMediaRequest,
+  sendManualCustomerCommunicationRequest,
 } from '../api/client';
 import {
   canArchiveMediaInUi,
@@ -68,15 +81,49 @@ function formatDate(date: string | null) {
   }).format(new Date(date));
 }
 
+function communicationDateLabel(
+  communication: CustomerCommunication,
+  timezone: string,
+) {
+  if (communication.status === 'SCHEDULED' && communication.scheduledFor) {
+    return `Scheduled for ${formatBusinessDateTime(
+      communication.scheduledFor,
+      timezone,
+    )}`;
+  }
+  if (communication.sentAt) {
+    return `Sent ${formatBusinessDateTime(communication.sentAt, timezone)}`;
+  }
+  if (communication.failedAt) {
+    return `Failed ${formatBusinessDateTime(communication.failedAt, timezone)}`;
+  }
+  if (communication.cancelledAt) {
+    return `Cancelled ${formatBusinessDateTime(
+      communication.cancelledAt,
+      timezone,
+    )}`;
+  }
+  return `Recorded ${formatBusinessDateTime(communication.createdAt, timezone)}`;
+}
+
 export function CustomerDetailsScreen({ navigation, route }: Props) {
   const { customerId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const loadRequestIdRef = useRef(0);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [activity, setActivity] = useState<
     Array<{ action: string; createdAt: string }>
   >([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [communications, setCommunications] = useState<CustomerCommunication[]>(
+    [],
+  );
+  const [communicationsError, setCommunicationsError] = useState<string | null>(
+    null,
+  );
+  const [isCommunicationsLoading, setIsCommunicationsLoading] = useState(false);
   const [media, setMedia] = useState<MediaAsset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
@@ -84,6 +131,11 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [messageModal, setMessageModal] = useState(false);
+  const [messageChannel, setMessageChannel] =
+    useState<CustomerCommunicationChannel>('EMAIL');
+  const [messageSubject, setMessageSubject] = useState('');
+  const [messageBody, setMessageBody] = useState('');
   const [siteModal, setSiteModal] = useState(false);
   const [siteForm, setSiteForm] = useState<CustomerSitePayload>({
     addressLine1: '',
@@ -98,33 +150,83 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const canEdit = canManageCustomer(user?.role);
   const canCreateCustomerJob = canCreateJob(user?.role);
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
+  const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
+  const canSendMessage = ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SALES'].includes(
+    user?.role ?? '',
+  );
+  const customerFinancialSummary = invoices.reduce(
+    (summary, invoice) => ({
+      invoiceCount: summary.invoiceCount + 1,
+      outstandingCents: summary.outstandingCents + invoice.balanceDueCents,
+      overdueCents:
+        summary.overdueCents +
+        (invoice.displayStatus === 'OVERDUE' ? invoice.balanceDueCents : 0),
+      paidCents: summary.paidCents + invoice.amountPaidCents,
+    }),
+    {
+      invoiceCount: 0,
+      outstandingCents: 0,
+      overdueCents: 0,
+      paidCents: 0,
+    },
+  );
 
-  async function loadCustomer() {
+  const loadCustomer = useCallback(async () => {
     if (!token) return;
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
+    const isLatestRequest = () => loadRequestIdRef.current === requestId;
     setIsLoading(true);
+    setIsCommunicationsLoading(true);
+    setCommunicationsError(null);
     try {
-      const [response, mediaResponse] = await Promise.all([
+      const [response, mediaResponse, invoiceResponse] = await Promise.all([
         customerDetailRequest(token, customerId),
         mediaRequest(token, {
           archived: showArchivedMedia ? 'true' : undefined,
           customerId,
         }),
+        invoicesRequest(token, { customerId, page: 1, pageSize: 100 }),
       ]);
+      if (!isLatestRequest()) return;
       setCustomer(response.customer);
       setActivity(response.activity);
       setJobs(response.jobs);
       setMedia(mediaResponse.records);
+      setInvoices(invoiceResponse.records);
       navigation.setOptions({ title: response.customer.displayName });
+
+      try {
+        const communicationsResponse = await customerCommunicationsRequest(
+          token,
+          { customerId, pageSize: 8 },
+        );
+        if (!isLatestRequest()) return;
+        setCommunications(communicationsResponse.records);
+        setCommunicationsError(null);
+      } catch {
+        if (!isLatestRequest()) return;
+        setCommunications([]);
+        setCommunicationsError(
+          "We couldn't load this customer's communications. Try again shortly.",
+        );
+      }
     } catch {
+      if (!isLatestRequest()) return;
       showToast({ message: "We couldn't load this customer.", tone: 'error' });
     } finally {
-      setIsLoading(false);
+      if (isLatestRequest()) {
+        setIsLoading(false);
+        setIsCommunicationsLoading(false);
+      }
     }
-  }
+  }, [customerId, navigation, showArchivedMedia, showToast, token]);
 
-  useEffect(() => {
-    void loadCustomer();
-  }, [customerId, showArchivedMedia, token]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadCustomer();
+    }, [loadCustomer]),
+  );
 
   async function archiveOrRestore() {
     if (!token || !customer) return;
@@ -242,6 +344,34 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
     }
   }
 
+  async function sendMessage() {
+    if (!token || !customer || isBusy) return;
+    setIsBusy(true);
+    try {
+      await sendManualCustomerCommunicationRequest(token, {
+        channel: messageChannel,
+        customerId: customer.id,
+        message: messageBody,
+        subject: messageSubject || undefined,
+      });
+      setMessageModal(false);
+      setMessageSubject('');
+      setMessageBody('');
+      await loadCustomer();
+      showToast({ message: 'Customer message recorded.', tone: 'success' });
+    } catch (error) {
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "We couldn't record this message.",
+        tone: 'error',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <View style={styles.loadingPage}>
@@ -303,6 +433,12 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               }
             />
           ) : null}
+          {canSendMessage ? (
+            <QuickAction
+              label="Send Message"
+              onPress={() => setMessageModal(true)}
+            />
+          ) : null}
         </View>
 
         <Card title="Profile summary">
@@ -325,6 +461,38 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
             {customer.sites.length} service location
             {customer.sites.length === 1 ? '' : 's'}
           </Text>
+        </Card>
+
+        <Card title="Communications">
+          {isCommunicationsLoading ? (
+            <Text style={styles.muted}>Loading communications...</Text>
+          ) : null}
+          {communicationsError ? (
+            <Text style={styles.errorText}>{communicationsError}</Text>
+          ) : null}
+          {!isCommunicationsLoading &&
+          !communicationsError &&
+          communications.length === 0 ? (
+            <Text style={styles.muted}>
+              No customer communications recorded yet.
+            </Text>
+          ) : null}
+          {communications.map((communication) => (
+            <CommunicationRow
+              communication={communication}
+              key={communication.id}
+              timezone={user?.business.timezone ?? 'Australia/Sydney'}
+            />
+          ))}
+          {canSendMessage ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMessageModal(true)}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryText}>Send message</Text>
+            </Pressable>
+          ) : null}
         </Card>
 
         <Card title="Contact details">
@@ -401,6 +569,44 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
           ) : null}
         </Card>
 
+        <Card title="Financial summary">
+          <View style={styles.financialGrid}>
+            <View style={styles.financialMetric}>
+              <Text style={styles.financialValue}>
+                {formatAudCents(customerFinancialSummary.outstandingCents)}
+              </Text>
+              <Text style={styles.muted}>Outstanding</Text>
+            </View>
+            <View style={styles.financialMetric}>
+              <Text style={styles.financialValue}>
+                {formatAudCents(customerFinancialSummary.overdueCents)}
+              </Text>
+              <Text style={styles.muted}>Overdue</Text>
+            </View>
+            <View style={styles.financialMetric}>
+              <Text style={styles.financialValue}>
+                {formatAudCents(customerFinancialSummary.paidCents)}
+              </Text>
+              <Text style={styles.muted}>Paid</Text>
+            </View>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              navigation.navigate('AccountsReceivable', {
+                customerId: customer.id,
+                status: 'OUTSTANDING',
+              })
+            }
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryText}>
+              View {customerFinancialSummary.invoiceCount} invoice
+              {customerFinancialSummary.invoiceCount === 1 ? '' : 's'}
+            </Text>
+          </Pressable>
+        </Card>
+
         <Card title="Future history">
           {jobs.length === 0 ? (
             <Text style={styles.muted}>
@@ -455,7 +661,44 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               </Pressable>
             ) : null}
           </View>
-          <Text style={styles.muted}>No invoices recorded yet.</Text>
+          {invoices.length ? (
+            <View style={styles.inlineActions}>
+              {invoices.map((invoice) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={invoice.id}
+                  onPress={() =>
+                    navigation.navigate('InvoiceDetails', {
+                      invoiceId: invoice.id,
+                    })
+                  }
+                  style={styles.jobLink}
+                >
+                  <Text style={styles.siteTitle}>
+                    {invoice.invoiceNumber} · {invoice.title}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {invoice.displayStatus} ·{' '}
+                    {formatAudCents(invoice.totalCents)} · Balance{' '}
+                    {formatAudCents(invoice.balanceDueCents)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.muted}>No invoices recorded yet.</Text>
+          )}
+          {canCreateInvoice ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                navigation.navigate('InvoiceForm', { customerId: customer.id })
+              }
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryText}>Create invoice</Text>
+            </Pressable>
+          ) : null}
         </Card>
 
         <Card title="Photos & documents">
@@ -591,6 +834,18 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
         setForm={setSiteForm}
         visible={siteModal}
       />
+      <ManualMessageModal
+        body={messageBody}
+        channel={messageChannel}
+        isBusy={isBusy}
+        onChangeBody={setMessageBody}
+        onChangeChannel={setMessageChannel}
+        onChangeSubject={setMessageSubject}
+        onClose={() => setMessageModal(false)}
+        onSave={() => void sendMessage()}
+        subject={messageSubject}
+        visible={messageModal}
+      />
       <MediaRemovalConfirmation
         busy={Boolean(busyMediaId)}
         media={mediaToRemove}
@@ -638,6 +893,166 @@ function Card({
       <Text style={styles.cardTitle}>{title}</Text>
       {children}
     </View>
+  );
+}
+
+function CommunicationRow({
+  communication,
+  timezone,
+}: {
+  communication: CustomerCommunication;
+  timezone: string;
+}) {
+  const timestampLabel = communicationDateLabel(communication, timezone);
+  return (
+    <View style={styles.communicationRow}>
+      <View style={styles.communicationHeader}>
+        <Text style={styles.communicationType}>
+          {label(communication.type)}
+        </Text>
+        <Text
+          style={[
+            styles.communicationStatus,
+            communication.status === 'FAILED' && styles.communicationFailed,
+            communication.status === 'SENT' && styles.communicationSent,
+          ]}
+        >
+          {communication.status}
+        </Text>
+      </View>
+      <Text style={styles.meta}>
+        {communication.channel} · {timestampLabel}
+      </Text>
+      <Text numberOfLines={2} style={styles.meta}>
+        {communication.subject ??
+          communication.preview ??
+          communication.message}
+      </Text>
+    </View>
+  );
+}
+
+function ManualMessageModal({
+  body,
+  channel,
+  isBusy,
+  onChangeBody,
+  onChangeChannel,
+  onChangeSubject,
+  onClose,
+  onSave,
+  subject,
+  visible,
+}: {
+  body: string;
+  channel: CustomerCommunicationChannel;
+  isBusy: boolean;
+  onChangeBody(value: string): void;
+  onChangeChannel(value: CustomerCommunicationChannel): void;
+  onChangeSubject(value: string): void;
+  onClose(): void;
+  onSave(): void;
+  subject: string;
+  visible: boolean;
+}) {
+  return (
+    <Modal transparent visible={visible} animationType="slide">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalKeyboardContainer}
+      >
+        <Pressable
+          accessibilityLabel="Dismiss keyboard"
+          onPress={Keyboard.dismiss}
+          style={styles.modalBackdrop}
+        >
+          <Pressable style={styles.modalCard}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardDismissMode={
+                Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+              }
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>Send customer message</Text>
+              <Text style={styles.modalBody}>
+                Phase 1 uses the local-safe provider: messages are recorded and
+                logged for development, not sent via a real vendor.
+              </Text>
+              <View style={styles.stateRow}>
+                {(['EMAIL', 'SMS'] as const).map((option) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={option}
+                    onPress={() => onChangeChannel(option)}
+                    style={[
+                      styles.stateChip,
+                      channel === option && styles.stateChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.stateText,
+                        channel === option && styles.stateTextActive,
+                      ]}
+                    >
+                      {option}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {channel === 'EMAIL' ? (
+                <TextInput
+                  accessibilityLabel="Message subject"
+                  onChangeText={onChangeSubject}
+                  placeholder="Subject"
+                  placeholderTextColor={colours.muted}
+                  returnKeyType="next"
+                  style={styles.input}
+                  value={subject}
+                />
+              ) : null}
+              <TextInput
+                accessibilityLabel="Message"
+                multiline
+                onChangeText={onChangeBody}
+                placeholder="Write a short customer-safe message"
+                placeholderTextColor={colours.muted}
+                scrollEnabled
+                style={[styles.input, styles.messageInput]}
+                value={body}
+              />
+              <View style={styles.modalActions}>
+                <Pressable
+                  disabled={isBusy}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onClose();
+                  }}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  disabled={isBusy || body.trim().length === 0}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onSave();
+                  }}
+                  style={[
+                    styles.quickAction,
+                    (isBusy || body.trim().length === 0) &&
+                      styles.disabledButton,
+                  ]}
+                >
+                  <Text style={styles.quickText}>Record message</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -822,6 +1237,32 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  communicationFailed: { backgroundColor: '#FEE2E2', color: '#991B1B' },
+  communicationHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  communicationRow: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 12,
+  },
+  communicationSent: { backgroundColor: '#DCFCE7', color: '#166534' },
+  communicationStatus: {
+    backgroundColor: '#E0E7FF',
+    borderRadius: 999,
+    color: colours.primary,
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  communicationType: { color: colours.ink, flex: 1, fontWeight: '900' },
   container: { padding: 24, paddingBottom: 44 },
   dangerButton: {
     alignItems: 'center',
@@ -853,6 +1294,25 @@ const styles = StyleSheet.create({
   linkButton: { marginTop: 8 },
   linkText: { color: '#9F1239', fontWeight: '900' },
   inlineActions: { gap: 10 },
+  financialGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  financialMetric: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 120,
+    padding: 12,
+  },
+  financialValue: {
+    color: colours.ink,
+    fontSize: 18,
+    fontWeight: '900',
+  },
   jobLink: {
     backgroundColor: '#F8FAFC',
     borderRadius: 14,
@@ -884,6 +1344,7 @@ const styles = StyleSheet.create({
   loadingText: { color: colours.ink, fontWeight: '900' },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   modalActions: {
+    alignItems: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
@@ -901,12 +1362,16 @@ const styles = StyleSheet.create({
   modalCard: {
     backgroundColor: colours.card,
     borderRadius: 22,
+    maxHeight: '88%',
     maxWidth: 560,
     padding: 20,
     width: '100%',
   },
+  modalKeyboardContainer: { flex: 1 },
+  modalScrollContent: { paddingBottom: 4 },
   modalTitle: { color: colours.ink, fontSize: 22, fontWeight: '900' },
   muted: { color: colours.muted, lineHeight: 21, marginTop: 8 },
+  errorText: { color: '#BE123C', lineHeight: 21, marginTop: 8 },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
   mediaIcon: { fontSize: 28 },
   mediaName: { color: colours.ink, fontWeight: '900' },
@@ -922,9 +1387,13 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingRight: 60,
   },
+  messageInput: { minHeight: 120, textAlignVertical: 'top' },
   quickAction: {
+    alignItems: 'center',
     backgroundColor: colours.primary,
     borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -932,14 +1401,19 @@ const styles = StyleSheet.create({
   quickText: { color: '#FFFFFF', fontWeight: '900' },
   restoreButton: { backgroundColor: colours.primary },
   secondaryButton: {
-    borderColor: colours.border,
+    alignItems: 'center',
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: colours.primary,
     borderRadius: 999,
     borderWidth: 1,
+    justifyContent: 'center',
     marginTop: 12,
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  secondaryText: { color: colours.muted, fontWeight: '900' },
+  secondaryText: { color: colours.primary, fontWeight: '900' },
+  disabledButton: { opacity: 0.45 },
   siteCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 14,

@@ -108,11 +108,35 @@ where: {
   discount, GST, total and deposit from line items and pricing settings.
 - Local send uses the console email/provider seam and must not expose production
   secrets. Real customer email delivery requires the configured email provider.
-- Public customer acceptance tokens are a future seam. The current foundation
-  supports authorised office-user acceptance metadata and does not expose
-  unauthenticated internal quote APIs.
+- Public customer quote tokens are hash-only, expire, can be revoked, and are
+  resolved only through customer-safe public routes. Raw public tokens must not
+  be stored in the database or returned by authenticated detail endpoints except
+  as newly generated provider output for the sending workflow.
+- Public quote responses must not expose internal notes, actor IDs, tenant IDs,
+  audit metadata or storage object keys. Superseded, expired, revoked and
+  terminal mutation states must be rejected with structured domain errors.
 - Quote revisions freeze customer-facing versions and prevent accepted/sent
   versions from being silently overwritten.
+
+## Invoice, payment and receipt security
+
+- Invoice and Accounts Receivable APIs derive `businessId` only from the
+  authenticated JWT and must filter every invoice, payment, PDF document,
+  receipt document and audit query by that business.
+- Client-provided invoice totals are not trusted. The API recalculates subtotal,
+  GST, discount, amount paid and balance due in integer cents.
+- Payment writes are append-only and limited to permitted financial roles.
+  Accounts Receivable visibility is stricter than invoice visibility and
+  excludes schedulers, technicians, sales and legacy staff.
+- Payment receipt downloads resolve the invoice and payment within the same
+  authenticated business before generating or returning a PDF.
+- Receipt PDFs expose customer-safe receipt number, invoice number, customer and
+  payment details only. They must not include internal database IDs, tenant IDs,
+  audit metadata or storage object keys.
+- Public customer invoice tokens follow the same hash-only model as quotes.
+  Public invoice responses expose customer-safe invoice, amount-paid and
+  balance-due data only; internal notes, tenant IDs, actor IDs, audit metadata
+  and storage paths remain private.
 
 ## Role-based access
 

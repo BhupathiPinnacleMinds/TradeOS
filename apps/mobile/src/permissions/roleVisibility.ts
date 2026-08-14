@@ -6,6 +6,7 @@ import type {
 
 export type MainTabRoute = keyof MainTabsParamList;
 export type MoreDestinationRoute =
+  | 'AccountsReceivable'
   | 'Customers'
   | 'Jobs'
   | 'MyDay'
@@ -22,7 +23,12 @@ export interface MoreDestination {
 
 type ProtectedStackRoute = Exclude<
   keyof RootStackParamList,
-  'Login' | 'Register' | 'AcceptInvitation' | 'PublicQuote' | 'Main'
+  | 'Login'
+  | 'Register'
+  | 'AcceptInvitation'
+  | 'PublicQuote'
+  | 'PublicInvoice'
+  | 'Main'
 >;
 
 const roles = {
@@ -38,6 +44,24 @@ const roles = {
   jobManage: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
   quoteCreate: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SALES'],
   quoteView: [
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+  ],
+  invoiceCreate: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'ACCOUNTANT', 'SALES'],
+  accountsReceivable: [
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'ACCOUNTANT',
+    'READ_ONLY',
+  ],
+  invoiceView: [
     'OWNER',
     'ADMIN',
     'OFFICE_MANAGER',
@@ -66,6 +90,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ACCOUNTANT: [
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
+    { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   ADMIN: [
@@ -73,6 +98,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
+    { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
     { label: 'Team', route: 'Team' },
     { label: 'Settings', route: 'Settings' },
@@ -82,6 +108,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
+    { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
     { label: 'Settings', route: 'Settings' },
   ],
@@ -90,6 +117,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
+    { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
     { label: 'Team', route: 'Team' },
     { label: 'Settings', route: 'Settings' },
@@ -99,16 +127,19 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Jobs', route: 'Jobs' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
+    { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   SALES: [
     { label: 'Customers', route: 'Customers' },
+    { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   SCHEDULER: [
     { label: 'My Day', route: 'MyDay' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
+    { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   STAFF: [
@@ -133,6 +164,7 @@ const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
     'TECHNICIAN',
     'READ_ONLY',
   ],
+  AccountsReceivable: roles.accountsReceivable,
   AppointmentForm: roles.appointmentCreate,
   AppointmentReassign: roles.appointmentManage,
   MediaEvidence: [
@@ -172,7 +204,9 @@ const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
     'SALES',
     'READ_ONLY',
   ],
-  Invoices: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'ACCOUNTANT', 'READ_ONLY'],
+  InvoiceDetails: roles.invoiceView,
+  InvoiceForm: roles.invoiceCreate,
+  Invoices: roles.invoiceView.filter((role) => role !== 'TECHNICIAN'),
   JobDetails: [
     'OWNER',
     'ADMIN',
@@ -260,6 +294,10 @@ export function canCreateJob(role?: BusinessRole | null) {
 
 export function canCreateQuote(role?: BusinessRole | null) {
   return allows(role, roles.quoteCreate);
+}
+
+export function canCreateInvoice(role?: BusinessRole | null) {
+  return allows(role, roles.invoiceCreate);
 }
 
 export function canArchiveCustomer(role?: BusinessRole | null) {

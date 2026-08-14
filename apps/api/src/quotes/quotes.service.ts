@@ -31,6 +31,7 @@ import {
   roleCanReviseQuote,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
+import { CustomerCommunicationsService } from '../communications/communications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   ListQuotesQueryDto,
@@ -81,6 +82,7 @@ export class QuotesService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
+    private readonly communications: CustomerCommunicationsService,
   ) {}
 
   async findAll(
@@ -134,7 +136,6 @@ export class QuotesService {
       where: { businessId: currentUser.businessId, quoteId: quote.id },
       orderBy: { generatedAt: 'desc' },
     });
-
     return {
       activity: activity.map((entry) => ({
         ...entry,
@@ -217,16 +218,26 @@ export class QuotesService {
             status: quoteWithItems.status,
           },
         );
-        if (quoteWithItems.jobId) {
+        if (quoteWithItems.relatedJobId) {
           await tx.job.update({
             where: {
               id_businessId: {
                 businessId: currentUser.businessId,
-                id: quoteWithItems.jobId,
+                id: quoteWithItems.relatedJobId,
               },
             },
             data: { quoteCreated: true },
           });
+          await this.writeAudit(
+            tx,
+            currentUser,
+            'QUOTE_CREATED_FOR_JOB',
+            quoteWithItems,
+            {
+              relatedJobId: quoteWithItems.relatedJobId,
+              status: quoteWithItems.status,
+            },
+          );
         }
         return quoteWithItems;
       });
@@ -501,6 +512,12 @@ export class QuotesService {
         HttpStatus.BAD_GATEWAY,
       );
     }
+    await this.communications.quoteSent({
+      businessId: currentUser.businessId,
+      createdBy: currentUser.id,
+      publicUrl,
+      quoteId: result.quote.id,
+    });
 
     return {
       ...(await this.findOne(currentUser, result.quote.id)),
@@ -571,6 +588,25 @@ export class QuotesService {
       acceptedByEmail: dto.acceptedByEmail ?? null,
       acceptedByName: dto.acceptedByName,
     });
+    if (updated.relatedJobId) {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'QUOTE_ACCEPTED_FOR_EXISTING_JOB',
+          actorUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          entityId: updated.id,
+          entityType: 'Quote',
+          metadata: {
+            quoteNumber: updated.quoteNumber,
+            relatedJobId: updated.relatedJobId,
+          },
+        },
+      });
+    }
+    await this.communications.quoteFinalised(
+      currentUser.businessId,
+      updated.id,
+    );
     return this.findOne(currentUser, updated.id);
   }
 
@@ -602,6 +638,10 @@ export class QuotesService {
             .join('\n')
         : quote.internalNotes,
     });
+    await this.communications.quoteFinalised(
+      currentUser.businessId,
+      updated.id,
+    );
     return this.findOne(currentUser, updated.id);
   }
 
@@ -626,6 +666,10 @@ export class QuotesService {
             .join('\n')
         : quote.internalNotes,
     });
+    await this.communications.quoteFinalised(
+      currentUser.businessId,
+      updated.id,
+    );
     return this.findOne(currentUser, updated.id);
   }
 
@@ -642,6 +686,13 @@ export class QuotesService {
       throw this.domainError(
         'QUOTE_ALREADY_CONVERTED',
         'This quote has already been converted.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (quote.relatedJobId) {
+      throw this.domainError(
+        'QUOTE_ALREADY_RELATED_TO_JOB',
+        'This accepted quote is already related to an existing job.',
         HttpStatus.CONFLICT,
       );
     }
@@ -663,6 +714,7 @@ export class QuotesService {
           quoteCreated: true,
           requiresQuote: false,
           scheduledStart: new Date(),
+          sourceQuoteId: quote.id,
           status: 'NEW',
           title: quote.title,
           createdBy: currentUser.id,
@@ -671,6 +723,7 @@ export class QuotesService {
       const updated = await tx.quote.update({
         where: { id_businessId: { businessId: currentUser.businessId, id } },
         data: {
+          convertedJobId: job.id,
           convertedAt: new Date(),
           jobId: job.id,
           status: 'CONVERTED',
@@ -724,7 +777,7 @@ export class QuotesService {
       gstRateBasisPoints: quote.gstRateBasisPoints,
       internalNotes: quote.internalNotes ?? undefined,
       issueDate: new Date().toISOString(),
-      jobId: quote.jobId,
+      relatedJobId: quote.relatedJobId,
       lineItems: quote.lineItems.map((item) => this.toPayload(item)),
       pricingMode: quote.pricingMode,
       sourceAppointmentId: quote.sourceAppointmentId,
@@ -899,6 +952,10 @@ export class QuotesService {
         },
       });
     });
+    await this.communications.quoteFinalised(
+      context.quote.businessId,
+      context.quote.id,
+    );
     return this.publicPreview(token, false);
   }
 
@@ -944,6 +1001,10 @@ export class QuotesService {
         },
       });
     });
+    await this.communications.quoteFinalised(
+      context.quote.businessId,
+      context.quote.id,
+    );
     return this.publicPreview(token, false);
   }
 
@@ -1095,6 +1156,8 @@ export class QuotesService {
       and.push({
         OR: [
           { job: { assignedToUserId: currentUser.id } },
+          { relatedJob: { assignedToUserId: currentUser.id } },
+          { convertedJob: { assignedToUserId: currentUser.id } },
           { sourceAppointment: { assignedUserId: currentUser.id } },
         ],
       });
@@ -1115,6 +1178,7 @@ export class QuotesService {
     dto: UpsertQuoteDto,
     calculated: ReturnType<typeof calculateQuoteTotals>,
   ): Omit<Prisma.QuoteUncheckedCreateInput, 'quoteNumber'> {
+    const relatedJobId = this.relatedJobId(dto);
     return {
       businessId: currentUser.businessId,
       currency: 'AUD',
@@ -1133,7 +1197,8 @@ export class QuotesService {
       gstRateBasisPoints: dto.gstRateBasisPoints ?? 1000,
       internalNotes: this.clean(dto.internalNotes),
       issueDate: new Date(dto.issueDate),
-      jobId: dto.jobId || null,
+      jobId: relatedJobId,
+      relatedJobId,
       pricingMode: dto.pricingMode,
       sourceAppointmentId: dto.sourceAppointmentId || null,
       status: 'DRAFT',
@@ -1144,6 +1209,10 @@ export class QuotesService {
       updatedBy: currentUser.id,
       createdBy: currentUser.id,
     };
+  }
+
+  private relatedJobId(dto: UpsertQuoteDto) {
+    return dto.relatedJobId || dto.jobId || null;
   }
 
   private lineItemData(
@@ -1254,12 +1323,13 @@ export class QuotesService {
         );
       }
     }
-    if (dto.jobId) {
+    const relatedJobId = this.relatedJobId(dto);
+    if (relatedJobId) {
       const job = await this.prisma.job.findFirst({
         where: {
           businessId: currentUser.businessId,
           customerId: dto.customerId,
-          id: dto.jobId,
+          id: relatedJobId,
           isArchived: false,
         },
       });
@@ -1658,7 +1728,16 @@ export class QuotesService {
   }
 
   private snapshotQuote(snapshot: Prisma.JsonValue): Quote {
-    return snapshot as unknown as Quote;
+    const quote = snapshot as unknown as Quote;
+    return {
+      ...quote,
+      convertedJob: quote.convertedJob ?? null,
+      convertedJobId: quote.convertedJobId ?? null,
+      job: quote.job ?? null,
+      jobId: quote.jobId ?? null,
+      relatedJob: quote.relatedJob ?? null,
+      relatedJobId: quote.relatedJobId ?? null,
+    };
   }
 
   private toPdfDocument(document: {
@@ -1730,6 +1809,8 @@ export class QuotesService {
       | 'quoteNumber'
       | 'customerId'
       | 'jobId'
+      | 'relatedJobId'
+      | 'convertedJobId'
       | 'sourceAppointmentId'
       | 'status'
     >,
@@ -1744,8 +1825,10 @@ export class QuotesService {
         entityType: 'Quote',
         metadata: {
           customerId: quote.customerId,
+          convertedJobId: quote.convertedJobId,
           jobId: quote.jobId,
           quoteNumber: quote.quoteNumber,
+          relatedJobId: quote.relatedJobId,
           sourceAppointmentId: quote.sourceAppointmentId,
           ...metadata,
         },
@@ -1766,6 +1849,8 @@ export class QuotesService {
       },
       customerSite: true,
       job: { select: { id: true, jobNumber: true, title: true } },
+      relatedJob: { select: { id: true, jobNumber: true, title: true } },
+      convertedJob: { select: { id: true, jobNumber: true, title: true } },
       lineItems: { orderBy: { position: 'asc' as const } },
     };
   }
@@ -1810,6 +1895,8 @@ export class QuotesService {
           }
         : null,
       customerSiteId: quote.customerSiteId,
+      convertedJob: quote.convertedJob,
+      convertedJobId: quote.convertedJobId,
       declinedAt: quote.declinedAt?.toISOString() ?? null,
       declineComment: quote.declineComment,
       declineReason: quote.declineReason,
@@ -1834,6 +1921,8 @@ export class QuotesService {
       lineItems: quote.lineItems.map((item) => this.toLineItem(item)),
       pricingMode: quote.pricingMode,
       quoteNumber: quote.quoteNumber,
+      relatedJob: quote.relatedJob,
+      relatedJobId: quote.relatedJobId,
       sentAt: quote.sentAt?.toISOString() ?? null,
       sourceAppointmentId: quote.sourceAppointmentId,
       status: quote.status,
@@ -1952,6 +2041,7 @@ export class QuotesService {
       customerId: dto.customerId,
       customerSiteId: dto.customerSiteId ?? null,
       jobId: dto.jobId ?? null,
+      relatedJobId: dto.relatedJobId ?? dto.jobId ?? null,
       lineItems: dto.lineItems.map((item, index) => ({
         index,
         quantity: item.quantity,

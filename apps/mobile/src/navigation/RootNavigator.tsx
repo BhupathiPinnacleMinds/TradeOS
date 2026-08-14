@@ -2,6 +2,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
+import { AccountsReceivableScreen } from '../screens/AccountsReceivableScreen';
 import { AcceptInvitationScreen } from '../screens/AcceptInvitationScreen';
 import { AppointmentDetailsScreen } from '../screens/AppointmentDetailsScreen';
 import { AppointmentFormScreen } from '../screens/AppointmentFormScreen';
@@ -12,6 +13,8 @@ import { CustomerFormScreen } from '../screens/CustomerFormScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
+import { InvoiceDetailsScreen } from '../screens/InvoiceDetailsScreen';
+import { InvoiceFormScreen } from '../screens/InvoiceFormScreen';
 import { JobDetailsScreen } from '../screens/JobDetailsScreen';
 import { JobFormScreen } from '../screens/JobFormScreen';
 import { JobsScreen } from '../screens/JobsScreen';
@@ -25,6 +28,7 @@ import { QuoteDetailsScreen } from '../screens/QuoteDetailsScreen';
 import { QuoteFormScreen } from '../screens/QuoteFormScreen';
 import { QuotesScreen } from '../screens/QuotesScreen';
 import { PublicQuoteScreen } from '../screens/PublicQuoteScreen';
+import { PublicInvoiceScreen } from '../screens/PublicInvoiceScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TeamScreen } from '../screens/TeamScreen';
@@ -57,6 +61,16 @@ function getPublicQuoteTokenFromLocation() {
       ? ''
       : globalThis.location.pathname;
   const match = pathname.match(/^\/quote\/([^/]+)$/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function getPublicInvoiceTokenFromLocation() {
+  const pathname =
+    typeof globalThis.location === 'undefined'
+      ? ''
+      : globalThis.location.pathname;
+  const match = pathname.match(/^\/invoice\/([^/]+)$/);
 
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
@@ -112,6 +126,7 @@ export function RootNavigator() {
   const { isLoading, token, user } = useAuth();
   const inviteToken = getInviteTokenFromLocation();
   const publicQuoteToken = getPublicQuoteTokenFromLocation();
+  const publicInvoiceToken = getPublicInvoiceTokenFromLocation();
 
   if (isLoading) {
     return (
@@ -136,9 +151,11 @@ export function RootNavigator() {
       initialRouteName={
         !token && publicQuoteToken
           ? 'PublicQuote'
-          : !token && inviteToken
-            ? 'AcceptInvitation'
-            : undefined
+          : !token && publicInvoiceToken
+            ? 'PublicInvoice'
+            : !token && inviteToken
+              ? 'AcceptInvitation'
+              : undefined
       }
       screenOptions={{
         headerShadowVisible: false,
@@ -171,6 +188,27 @@ export function RootNavigator() {
           ) : null}
           {canAccessStackRoute(user?.role, 'Invoices') ? (
             <Stack.Screen name="Invoices" component={InvoicesScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'AccountsReceivable') ? (
+            <Stack.Screen
+              name="AccountsReceivable"
+              component={AccountsReceivableScreen}
+              options={{ title: 'Accounts Receivable' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'InvoiceDetails') ? (
+            <Stack.Screen
+              name="InvoiceDetails"
+              component={InvoiceDetailsScreen}
+              options={{ title: 'Invoice' }}
+            />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'InvoiceForm') ? (
+            <Stack.Screen
+              name="InvoiceForm"
+              component={InvoiceFormScreen}
+              options={{ title: 'New invoice' }}
+            />
           ) : null}
           {canAccessStackRoute(user?.role, 'Notifications') ? (
             <Stack.Screen
@@ -276,6 +314,14 @@ export function RootNavigator() {
               component={PublicQuoteScreen}
               initialParams={{ token: publicQuoteToken }}
               options={{ title: 'Quote' }}
+            />
+          ) : null}
+          {publicInvoiceToken ? (
+            <Stack.Screen
+              name="PublicInvoice"
+              component={PublicInvoiceScreen}
+              initialParams={{ token: publicInvoiceToken }}
+              options={{ title: 'Invoice' }}
             />
           ) : null}
           <Stack.Screen

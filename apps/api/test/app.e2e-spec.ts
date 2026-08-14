@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import type {
   AppointmentTransitionAction,
+  CustomerCommunicationListResponse,
   HealthResponse,
   MediaListResponse,
 } from '@tradieos/shared';
@@ -35,6 +36,9 @@ describe('Health endpoint (e2e)', () => {
         },
         mediaAsset: {
           count: jest.fn().mockResolvedValue(0),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        customerCommunication: {
           findMany: jest.fn().mockResolvedValue([]),
         },
         user: {
@@ -79,6 +83,18 @@ describe('Health endpoint (e2e)', () => {
     const body = response.body as MediaListResponse;
     expect(body.records).toEqual([]);
     expect(body.total).toBe(0);
+  });
+
+  it('GET /api/communications is registered and returns an authorised empty history', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/communications')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.type).toContain('json');
+    expect(response.text).not.toContain('Cannot GET');
+    const body = response.body as CustomerCommunicationListResponse;
+    expect(body.records).toEqual([]);
   });
 
   it.each<AppointmentTransitionAction>([

@@ -20,12 +20,20 @@ import type {
   CustomerPayload,
   CustomerSite,
   CustomerSitePayload,
+  CustomerCommunicationChannel,
+  CustomerCommunicationListResponse,
+  CustomerCommunicationSettings,
   DispatcherFilter,
   DispatcherViewResponse,
   JobDetailResponse,
   JobListResponse,
   JobPayload,
   JobStatus,
+  InvoiceDetailResponse,
+  InvoiceListResponse,
+  InvoicePayload,
+  AccountsReceivableResponse,
+  PublicInvoiceResponse,
   QuoteDetailResponse,
   QuoteListResponse,
   QuotePayload,
@@ -161,11 +169,104 @@ export function friendlyAppointmentMutationError(error: unknown) {
     ) {
       return 'This appointment can no longer perform that action.';
     }
+    if (error.status && error.status >= 500) {
+      return 'Appointment action is temporarily unavailable. Refresh and try again.';
+    }
   }
 
   return error instanceof Error
     ? error.message
     : "We couldn't update this appointment.";
+}
+
+export function friendlyAppointmentCreateError(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    if (error.code === 'APPOINTMENT_CONFLICT') {
+      const availability = error.details.availability as
+        | {
+            conflicts?: Array<{ technicianName?: string | null }>;
+            reason?: string;
+          }
+        | undefined;
+      const technicianName = availability?.conflicts?.[0]?.technicianName;
+      if (technicianName) {
+        return `${technicianName} already has another appointment during this time.`;
+      }
+      return availability?.reason ?? error.message;
+    }
+    if (error.code === 'JOB_NOT_FOUND') {
+      return 'Select a valid job before saving this appointment.';
+    }
+    if (error.code === 'CUSTOMER_SITE_NOT_FOUND') {
+      return 'Select a valid service site before saving this appointment.';
+    }
+    if (error.code === 'INVALID_APPOINTMENT_DATA') {
+      return error.message;
+    }
+    if (error.status === 400 || error.code === 'VALIDATION_ERROR') {
+      return error.message || 'Check the appointment details and try again.';
+    }
+    if (error.status === 409 || error.code === 'CONFLICT') {
+      return (
+        error.message || 'This appointment conflicts with another booking.'
+      );
+    }
+  }
+
+  return friendlyAppointmentMutationError(error);
+}
+
+export function friendlyInvoiceMutationError(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    if (error.code === 'NETWORK_ERROR') {
+      return 'Could not connect to TradeOS. Check your connection and retry.';
+    }
+    if (error.status === 401 || error.code === 'SESSION_EXPIRED') {
+      return 'Your session has expired. Please log in again.';
+    }
+    if (error.status === 403 || error.code === 'INVOICE_ACCESS_DENIED') {
+      return 'You do not have permission to perform this invoice action.';
+    }
+    if (error.status === 404 || error.code === 'INVOICE_NOT_FOUND') {
+      return 'Invoice could not be found. Refresh and try again.';
+    }
+    if (error.code === 'INVOICE_EMAIL_REQUIRED') {
+      return 'Add a customer email address before sending this invoice.';
+    }
+    if (error.code === 'INVOICE_LINE_ITEM_INVALID') {
+      return 'Add at least one valid line item before continuing.';
+    }
+    if (error.code === 'INVOICE_INVALID_STATUS') {
+      return 'This invoice can no longer perform that action. Refresh and try again.';
+    }
+    if (error.code === 'INVOICE_PAYMENT_EXCEEDS_BALANCE') {
+      return 'Payment cannot exceed the remaining balance.';
+    }
+    if (error.code === 'INVOICE_ALREADY_PAID') {
+      return 'This invoice has already been paid.';
+    }
+    if (error.code === 'INVOICE_VOID') {
+      return 'Payments cannot be recorded against a void invoice.';
+    }
+    if (
+      error.status === 400 ||
+      error.status === 409 ||
+      error.code === 'VALIDATION_ERROR' ||
+      error.code === 'CONFLICT'
+    ) {
+      return 'The invoice changed while you were working. Refresh and try again.';
+    }
+    if (
+      error.status === 500 ||
+      /Cannot (POST|PATCH|GET|PUT|DELETE)\b/i.test(error.message)
+    ) {
+      return 'Invoice action is temporarily unavailable. Refresh and try again.';
+    }
+  }
+
+  return error instanceof Error
+    ? error.message
+    : "We couldn't update this invoice.";
 }
 
 export async function apiRequest<T>(
@@ -404,6 +505,88 @@ export function customersRequest(
 
 export function customerDetailRequest(token: string, customerId: string) {
   return apiRequest<CustomerDetailResponse>(`/customers/${customerId}`, {
+    token,
+  });
+}
+
+export function customerCommunicationsRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<CustomerCommunicationListResponse>(
+    `/communications${queryString(params)}`,
+    { token },
+  );
+}
+
+export function sendManualCustomerCommunicationRequest(
+  token: string,
+  input: {
+    customerId: string;
+    channel: CustomerCommunicationChannel;
+    subject?: string;
+    message: string;
+  },
+) {
+  return apiRequest<{
+    communication: CustomerCommunicationListResponse['records'][number];
+  }>('/communications/manual', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function communicationSettingsRequest(token: string) {
+  return apiRequest<{ settings: CustomerCommunicationSettings }>(
+    '/communications/settings',
+    { token },
+  );
+}
+
+export function updateCommunicationSettingsRequest(
+  token: string,
+  input: Partial<CustomerCommunicationSettings>,
+) {
+  return apiRequest<{ settings: CustomerCommunicationSettings }>(
+    '/communications/settings',
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export function communicationPreferencesRequest(
+  token: string,
+  customerId: string,
+) {
+  return apiRequest<{
+    preferences: {
+      businessId: string;
+      customerId: string;
+      emailEnabled: boolean;
+      smsEnabled: boolean;
+    };
+  }>(`/communications/customers/${customerId}/preferences`, { token });
+}
+
+export function updateCommunicationPreferencesRequest(
+  token: string,
+  customerId: string,
+  input: { emailEnabled?: boolean; smsEnabled?: boolean },
+) {
+  return apiRequest<{
+    preferences: {
+      businessId: string;
+      customerId: string;
+      emailEnabled: boolean;
+      smsEnabled: boolean;
+    };
+  }>(`/communications/customers/${customerId}/preferences`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
     token,
   });
 }
@@ -679,6 +862,113 @@ export function duplicateQuoteRequest(token: string, quoteId: string) {
     method: 'POST',
     token,
   });
+}
+
+export function invoicesRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<InvoiceListResponse>(`/invoices${queryString(params)}`, {
+    token,
+  });
+}
+
+export function accountsReceivableRequest(
+  token: string,
+  params: Record<string, string | number | boolean | undefined> = {},
+) {
+  return apiRequest<AccountsReceivableResponse>(
+    `/invoices/accounts-receivable${queryString(params)}`,
+    {
+      token,
+    },
+  );
+}
+
+export function invoiceDetailRequest(token: string, invoiceId: string) {
+  return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}`, {
+    token,
+  });
+}
+
+export function createInvoiceRequest(token: string, input: InvoicePayload) {
+  return apiRequest<InvoiceDetailResponse>('/invoices', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateInvoiceRequest(
+  token: string,
+  invoiceId: string,
+  input: InvoicePayload,
+) {
+  return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function invoicePdfUrl(invoiceId: string) {
+  return buildApiRequestUrl(`/invoices/${invoiceId}/pdf`);
+}
+
+export function invoicePaymentReceiptUrl(invoiceId: string, paymentId: string) {
+  return buildApiRequestUrl(
+    `/invoices/${invoiceId}/payments/${paymentId}/receipt`,
+  );
+}
+
+export function sendInvoiceRequest(
+  token: string,
+  invoiceId: string,
+  input?: { message: string; subject: string; to: string },
+) {
+  return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/send`, {
+    body: input ? JSON.stringify(input) : undefined,
+    method: 'POST',
+    token,
+  });
+}
+
+export function recordInvoicePaymentRequest(
+  token: string,
+  invoiceId: string,
+  input: {
+    amountCents: number;
+    method: string;
+    notes?: string;
+    receivedAt: string;
+    reference?: string;
+  },
+) {
+  return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/payments`, {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function voidInvoiceRequest(token: string, invoiceId: string) {
+  return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/void`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function publicInvoiceRequest(publicToken: string) {
+  return apiRequest<PublicInvoiceResponse>(
+    `/public/invoices/${encodeURIComponent(publicToken)}`,
+  );
+}
+
+export function publicInvoiceViewRequest(publicToken: string) {
+  return apiRequest<PublicInvoiceResponse>(
+    `/public/invoices/${encodeURIComponent(publicToken)}/view`,
+    { method: 'POST' },
+  );
 }
 
 export function appointmentsRequest(

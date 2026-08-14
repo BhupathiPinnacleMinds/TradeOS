@@ -1,7 +1,8 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { colours } from '../theme';
@@ -19,10 +20,18 @@ type Props = CompositeScreenProps<
 export function MoreScreen({ navigation }: Props) {
   const { logout, user } = useAuth();
   const visibleDestinations = getMoreDestinationsForRole(user?.role);
+  const tabBarHeight = useBottomTabBarHeight();
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-      <View style={styles.container}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: tabBarHeight + 24 },
+        ]}
+        showsVerticalScrollIndicator={false}
+        style={styles.scroll}
+      >
         <View style={styles.businessCard}>
           <Text style={styles.businessName}>{user?.business.name}</Text>
           <Text style={styles.businessMeta}>
@@ -52,7 +61,7 @@ export function MoreScreen({ navigation }: Props) {
         >
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -60,6 +69,7 @@ export function MoreScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colours.background },
   container: { gap: 10, padding: 20 },
+  scroll: { flex: 1 },
   businessCard: {
     backgroundColor: '#EEF2FF',
     borderColor: '#C7D2FE',

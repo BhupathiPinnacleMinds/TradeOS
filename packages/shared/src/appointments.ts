@@ -1016,7 +1016,7 @@ export function getAppointmentQuickActions(
     actions.push({
       id: 'cancel',
       kind: 'secondary',
-      label: 'Cancel',
+      label: 'Cancel appointment',
     });
   }
 

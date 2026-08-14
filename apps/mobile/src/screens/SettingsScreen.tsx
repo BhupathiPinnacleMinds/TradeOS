@@ -1,16 +1,49 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import type { CustomerCommunicationSettings } from '@tradieos/shared';
+import { useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  communicationSettingsRequest,
+  updateCommunicationSettingsRequest,
+} from '../api/client';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { canViewBusinessSettings } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 export function SettingsScreen() {
-  const { logout, user } = useAuth();
+  const { logout, token, user } = useAuth();
+  const [communicationSettings, setCommunicationSettings] =
+    useState<CustomerCommunicationSettings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
   const canAccessSettings = canViewBusinessSettings(user?.role);
+
+  useEffect(() => {
+    if (!token || !canAccessSettings) return;
+    communicationSettingsRequest(token)
+      .then((response) => setCommunicationSettings(response.settings))
+      .catch(() => setCommunicationSettings(null));
+  }, [canAccessSettings, token]);
+
+  async function toggleCommunicationSetting(
+    key: keyof CustomerCommunicationSettings,
+  ) {
+    if (!token || !communicationSettings || settingsBusy) return;
+    const current = communicationSettings[key];
+    if (typeof current !== 'boolean') return;
+    setSettingsBusy(true);
+    try {
+      const response = await updateCommunicationSettingsRequest(token, {
+        [key]: !current,
+      });
+      setCommunicationSettings(response.settings);
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Settings</Text>
         {!canAccessSettings ? (
           <>
@@ -68,6 +101,76 @@ export function SettingsScreen() {
               <Text style={styles.meta}>{user?.email}</Text>
             </View>
 
+            {communicationSettings ? (
+              <View style={styles.card}>
+                <Text style={styles.label}>Communication settings</Text>
+                <Text style={styles.meta}>
+                  Local-safe Phase 1 reminders and confirmations. Real SMS/email
+                  vendors are not connected yet.
+                </Text>
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label="Appointment confirmations"
+                  onPress={() =>
+                    void toggleCommunicationSetting(
+                      'appointmentConfirmationsEnabled',
+                    )
+                  }
+                  value={communicationSettings.appointmentConfirmationsEnabled}
+                />
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label={`Appointment reminders (${Math.round(
+                    communicationSettings.appointmentReminderLeadMinutes / 60,
+                  )}h before)`}
+                  onPress={() =>
+                    void toggleCommunicationSetting(
+                      'appointmentRemindersEnabled',
+                    )
+                  }
+                  value={communicationSettings.appointmentRemindersEnabled}
+                />
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label="Quote follow-ups (3 days after send)"
+                  onPress={() =>
+                    void toggleCommunicationSetting('quoteFollowUpsEnabled')
+                  }
+                  value={communicationSettings.quoteFollowUpsEnabled}
+                />
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label="Invoice due reminders"
+                  onPress={() =>
+                    void toggleCommunicationSetting(
+                      'invoiceDueSoonRemindersEnabled',
+                    )
+                  }
+                  value={communicationSettings.invoiceDueSoonRemindersEnabled}
+                />
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label="Invoice overdue reminders"
+                  onPress={() =>
+                    void toggleCommunicationSetting(
+                      'invoiceOverdueRemindersEnabled',
+                    )
+                  }
+                  value={communicationSettings.invoiceOverdueRemindersEnabled}
+                />
+                <SettingToggle
+                  disabled={settingsBusy}
+                  label="Payment confirmations"
+                  onPress={() =>
+                    void toggleCommunicationSetting(
+                      'paymentConfirmationsEnabled',
+                    )
+                  }
+                  value={communicationSettings.paymentConfirmationsEnabled}
+                />
+              </View>
+            ) : null}
+
             <Pressable
               accessibilityRole="button"
               onPress={() => void logout()}
@@ -80,14 +183,40 @@ export function SettingsScreen() {
             </Pressable>
           </>
         )}
-      </View>
+      </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SettingToggle({
+  disabled,
+  label,
+  onPress,
+  value,
+}: {
+  disabled: boolean;
+  label: string;
+  onPress(): void;
+  value: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={styles.settingRow}
+    >
+      <Text style={styles.settingLabel}>{label}</Text>
+      <Text style={[styles.settingPill, value && styles.settingPillActive]}>
+        {value ? 'On' : 'Off'}
+      </Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colours.background },
-  container: { padding: 24 },
+  container: { padding: 24, paddingBottom: 44 },
   title: { color: colours.ink, fontSize: 30, fontWeight: '900' },
   subtitle: { color: colours.muted, lineHeight: 22, marginTop: 8 },
   card: {
@@ -107,6 +236,23 @@ const styles = StyleSheet.create({
   },
   value: { color: colours.ink, fontSize: 20, fontWeight: '800', marginTop: 8 },
   meta: { color: colours.muted, marginTop: 5 },
+  settingLabel: { color: colours.ink, flex: 1, fontWeight: '800' },
+  settingPill: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 999,
+    color: colours.muted,
+    fontWeight: '900',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  settingPillActive: { backgroundColor: '#DCFCE7', color: '#166534' },
+  settingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
   logoutButton: {
     alignItems: 'center',
     backgroundColor: '#9F1239',

@@ -7,6 +7,7 @@ export const colours = {
   ink: '#0F172A',
   muted: '#64748B',
   primary: '#4F46E5',
+  secondaryActionSurface: '#EEF2FF',
   tori: '#7C3AED',
   warning: '#D97706',
 } as const;

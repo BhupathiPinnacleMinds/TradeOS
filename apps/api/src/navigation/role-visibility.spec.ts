@@ -3,6 +3,7 @@ import {
   canAccessStackRoute,
   canCreateAppointment,
   canCreateCustomer,
+  canCreateInvoice,
   canCreateJob,
   canCreateQuote,
   canManageDispatcher,
@@ -47,6 +48,7 @@ describe('mobile role visibility matrix', () => {
     expect(moreRoutes).not.toContain('Customers');
     expect(moreRoutes).not.toContain('Team');
     expect(moreRoutes).not.toContain('Settings');
+    expect(moreRoutes).not.toContain('AccountsReceivable');
     expect(canCreateCustomer(role)).toBe(false);
     expect(canCreateJob(role)).toBe(false);
     expect(canCreateQuote(role)).toBe(false);
@@ -57,6 +59,7 @@ describe('mobile role visibility matrix', () => {
     expect(canAccessStackRoute(role, 'JobForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentForm')).toBe(false);
     expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
+    expect(canAccessStackRoute(role, 'AccountsReceivable')).toBe(false);
     expect(canAccessStackRoute(role, 'Team')).toBe(false);
   });
 
@@ -70,17 +73,20 @@ describe('mobile role visibility matrix', () => {
     expect(canManageDispatcher(role)).toBe(false);
   });
 
-  it('blocks scheduler owner-only financial/settings screens', () => {
+  it('allows scheduler invoice visibility but blocks invoice creation/settings', () => {
     const role: BusinessRole = 'SCHEDULER';
     const moreRoutes = getMoreDestinationsForRole(role).map(
       (destination) => destination.route,
     );
 
-    expect(moreRoutes).not.toContain('Invoices');
+    expect(moreRoutes).toContain('Invoices');
     expect(moreRoutes).not.toContain('Settings');
-    expect(canAccessStackRoute(role, 'Invoices')).toBe(false);
+    expect(canAccessStackRoute(role, 'Invoices')).toBe(true);
+    expect(canAccessStackRoute(role, 'AccountsReceivable')).toBe(false);
+    expect(canAccessStackRoute(role, 'InvoiceForm')).toBe(false);
     expect(canAccessStackRoute(role, 'Settings')).toBe(false);
     expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
+    expect(canCreateInvoice(role)).toBe(false);
     expect(canCreateQuote(role)).toBe(false);
     expect(canViewBusinessSettings(role)).toBe(false);
   });
@@ -93,6 +99,7 @@ describe('mobile role visibility matrix', () => {
     expect(canAccessStackRoute(role, 'AppointmentForm')).toBe(false);
     expect(canAccessStackRoute(role, 'AppointmentReassign')).toBe(false);
     expect(canAccessStackRoute(role, 'QuoteForm')).toBe(false);
+    expect(canAccessStackRoute(role, 'InvoiceForm')).toBe(false);
     expect(canCreateCustomer(role)).toBe(false);
     expect(canCreateJob(role)).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
@@ -112,8 +119,11 @@ describe('mobile role visibility matrix', () => {
     expect(canCreateCustomer(role)).toBe(true);
     expect(canCreateJob(role)).toBe(false);
     expect(canCreateAppointment(role)).toBe(false);
+    expect(canCreateInvoice(role)).toBe(true);
     expect(canCreateQuote(role)).toBe(true);
-    expect(canAccessStackRoute(role, 'Invoices')).toBe(false);
+    expect(canAccessStackRoute(role, 'Invoices')).toBe(true);
+    expect(canAccessStackRoute(role, 'AccountsReceivable')).toBe(false);
+    expect(canAccessStackRoute(role, 'InvoiceForm')).toBe(true);
     expect(canAccessStackRoute(role, 'Team')).toBe(false);
   });
 
@@ -123,7 +133,9 @@ describe('mobile role visibility matrix', () => {
     expect(canCreateCustomer(role)).toBe(true);
     expect(canCreateJob(role)).toBe(true);
     expect(canCreateAppointment(role)).toBe(true);
+    expect(canCreateInvoice(role)).toBe(true);
     expect(canCreateQuote(role)).toBe(true);
+    expect(canAccessStackRoute(role, 'AccountsReceivable')).toBe(true);
     expect(canManageDispatcher(role)).toBe(true);
     expect(canManageTeam(role)).toBe(true);
     expect(canViewBusinessSettings(role)).toBe(true);

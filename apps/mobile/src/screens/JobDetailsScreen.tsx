@@ -15,6 +15,7 @@ import {
   getAppointmentQuickActions,
   mediaDisplayTitle,
   normaliseBusinessTimezone,
+  roleCanCreateInvoices,
   roleCanCreateQuotes,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -100,6 +101,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [job, setJob] = useState<Job | null>(null);
   const [sourceQuote, setSourceQuote] =
     useState<JobDetailResponse['sourceQuote']>(null);
+  const [relatedQuotes, setRelatedQuotes] = useState<
+    JobDetailResponse['relatedQuotes']
+  >([]);
+  const [invoices, setInvoices] = useState<JobDetailResponse['invoices']>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [media, setMedia] = useState<MediaAsset[]>([]);
   const [timeline, setTimeline] = useState<
@@ -117,6 +122,24 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canUpdateStatus = canEdit;
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
+  const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
+  const acceptedQuoteCents = [sourceQuote, ...relatedQuotes]
+    .filter((quote) => quote?.status === 'ACCEPTED')
+    .reduce((sum, quote) => sum + (quote?.totalCents ?? 0), 0);
+  const jobFinancialSummary = invoices.reduce(
+    (summary, invoice) => ({
+      invoiceCount: summary.invoiceCount + 1,
+      invoicedCents: summary.invoicedCents + invoice.totalCents,
+      outstandingCents: summary.outstandingCents + invoice.balanceDueCents,
+      paidCents: summary.paidCents + invoice.amountPaidCents,
+    }),
+    {
+      invoiceCount: 0,
+      invoicedCents: 0,
+      outstandingCents: 0,
+      paidCents: 0,
+    },
+  );
 
   async function loadJob() {
     if (!token) return;
@@ -131,6 +154,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       ]);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
+      setRelatedQuotes(response.relatedQuotes ?? []);
+      setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       setMedia(mediaResponse.records);
@@ -155,6 +180,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       const response = await updateJobStatusRequest(token, job.id, status);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
+      setRelatedQuotes(response.relatedQuotes ?? []);
+      setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       showToast({
@@ -183,6 +210,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         : await archiveJobRequest(token, job.id);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
+      setRelatedQuotes(response.relatedQuotes ?? []);
+      setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       showToast({
@@ -344,11 +373,26 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         ) : null}
         {canCreateQuote ? (
           <QuickAction
-            label={sourceQuote ? 'New Additional Quote' : 'Create Quote'}
+            label={
+              sourceQuote || relatedQuotes.length ? 'New Quote' : 'Create Quote'
+            }
             onPress={() =>
               navigation.navigate('QuoteForm', {
                 customerId: job.customerId,
                 jobId: job.id,
+              })
+            }
+          />
+        ) : null}
+        {canCreateInvoice ? (
+          <QuickAction
+            label={invoices.length ? 'New Invoice' : 'Create Invoice'}
+            onPress={() =>
+              navigation.navigate('InvoiceForm', {
+                customerId: job.customerId,
+                jobId: job.id,
+                sourceQuoteId:
+                  sourceQuote?.id ?? job.sourceQuoteId ?? undefined,
               })
             }
           />
@@ -581,6 +625,42 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         })}
       </Card>
 
+      <Card title="Financial summary">
+        <View style={styles.financialGrid}>
+          <View style={styles.financialMetric}>
+            <Text style={styles.financialValue}>
+              {formatAudCents(acceptedQuoteCents)}
+            </Text>
+            <Text style={styles.muted}>Accepted quotes</Text>
+          </View>
+          <View style={styles.financialMetric}>
+            <Text style={styles.financialValue}>
+              {formatAudCents(jobFinancialSummary.invoicedCents)}
+            </Text>
+            <Text style={styles.muted}>Invoiced</Text>
+          </View>
+          <View style={styles.financialMetric}>
+            <Text style={styles.financialValue}>
+              {formatAudCents(jobFinancialSummary.paidCents)}
+            </Text>
+            <Text style={styles.muted}>Paid</Text>
+          </View>
+          <View style={styles.financialMetric}>
+            <Text style={styles.financialValue}>
+              {formatAudCents(jobFinancialSummary.outstandingCents)}
+            </Text>
+            <Text style={styles.muted}>Outstanding</Text>
+          </View>
+        </View>
+        <Text style={styles.meta}>
+          {jobFinancialSummary.invoiceCount
+            ? `${jobFinancialSummary.invoiceCount} invoice${
+                jobFinancialSummary.invoiceCount === 1 ? '' : 's'
+              } linked to this job.`
+            : 'No invoices linked to this job yet.'}
+        </Text>
+      </Card>
+
       <Card title="Future sections">
         {sourceQuote ? (
           <View style={styles.sourceQuoteCard}>
@@ -597,12 +677,37 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             />
           </View>
         ) : null}
+        {relatedQuotes.length ? (
+          <View style={styles.sourceQuoteCard}>
+            <Text style={styles.cardTitle}>Related Quotes</Text>
+            {relatedQuotes.map((quote) => (
+              <View key={quote.id} style={styles.relatedQuoteRow}>
+                <View style={styles.relatedQuoteContent}>
+                  <Text style={styles.meta}>
+                    {quote.quoteNumber} · {quote.status}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {quote.title} · {formatAudCents(quote.totalCents)}
+                  </Text>
+                </View>
+                <ActionButton
+                  label="View"
+                  onPress={() =>
+                    navigation.navigate('QuoteDetails', { quoteId: quote.id })
+                  }
+                />
+              </View>
+            ))}
+          </View>
+        ) : null}
         <Text style={styles.meta}>
           Quotes: {job.quoteCreated ? 'Created' : 'Not created yet'}
         </Text>
-        {canCreateQuote && !job.quoteCreated ? (
+        {canCreateQuote ? (
           <ActionButton
-            label={sourceQuote ? 'New additional quote' : 'Create quote'}
+            label={
+              sourceQuote || relatedQuotes.length ? 'New quote' : 'Create quote'
+            }
             onPress={() =>
               navigation.navigate('QuoteForm', {
                 customerId: job.customerId,
@@ -614,6 +719,45 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         <Text style={styles.meta}>
           Invoices: {job.invoiceCreated ? 'Created' : 'Not created yet'}
         </Text>
+        {invoices.length ? (
+          <View style={styles.sourceQuoteCard}>
+            <Text style={styles.cardTitle}>Invoices</Text>
+            {invoices.map((invoice) => (
+              <View key={invoice.id} style={styles.relatedQuoteRow}>
+                <View style={styles.relatedQuoteContent}>
+                  <Text style={styles.meta}>
+                    {invoice.invoiceNumber} · {invoice.displayStatus}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {invoice.title} · {formatAudCents(invoice.totalCents)} ·
+                    Balance {formatAudCents(invoice.balanceDueCents)}
+                  </Text>
+                </View>
+                <ActionButton
+                  label="View"
+                  onPress={() =>
+                    navigation.navigate('InvoiceDetails', {
+                      invoiceId: invoice.id,
+                    })
+                  }
+                />
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {canCreateInvoice ? (
+          <ActionButton
+            label={invoices.length ? 'New invoice' : 'Create invoice'}
+            onPress={() =>
+              navigation.navigate('InvoiceForm', {
+                customerId: job.customerId,
+                jobId: job.id,
+                sourceQuoteId:
+                  sourceQuote?.id ?? job.sourceQuoteId ?? undefined,
+              })
+            }
+          />
+        ) : null}
       </Card>
 
       <Card title="Timeline">
@@ -874,12 +1018,38 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  financialGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  financialMetric: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 120,
+    padding: 12,
+  },
+  financialValue: {
+    color: colours.ink,
+    fontSize: 18,
+    fontWeight: '900',
+  },
   sourceQuoteCard: {
     borderColor: colours.border,
     borderRadius: 16,
     borderWidth: 1,
     gap: 8,
     padding: 12,
+  },
+  relatedQuoteContent: { flex: 1 },
+  relatedQuoteRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
   },
   container: {
     backgroundColor: colours.background,

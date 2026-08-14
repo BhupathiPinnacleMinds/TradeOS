@@ -192,16 +192,22 @@ export function QuotesScreen() {
                     : 'not set'}
                 </Text>
               </View>
-              {quote.job ? (
+              {(quote.convertedJob ?? quote.relatedJob ?? quote.job) ? (
                 <Pressable
                   accessibilityRole="button"
                   onPress={() =>
-                    navigation.navigate('JobDetails', { jobId: quote.job!.id })
+                    navigation.navigate('JobDetails', {
+                      jobId: (quote.convertedJob ??
+                        quote.relatedJob ??
+                        quote.job)!.id,
+                    })
                   }
                   style={styles.linkedPill}
                 >
                   <Text style={styles.linked}>
-                    Linked job: {quote.job.jobNumber}
+                    {quote.convertedJob
+                      ? `Converted to ${quote.convertedJob.jobNumber}`
+                      : `Related to ${(quote.relatedJob ?? quote.job)!.jobNumber}`}
                   </Text>
                 </Pressable>
               ) : null}
@@ -331,14 +337,18 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   secondaryButton: {
+    alignItems: 'center',
     alignSelf: 'flex-start',
-    borderColor: colours.border,
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: colours.primary,
     borderRadius: 16,
     borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  secondaryButtonText: { color: colours.ink, fontWeight: '800' },
+  secondaryButtonText: { color: colours.primary, fontWeight: '800' },
   stateCard: {
     alignItems: 'flex-start',
     backgroundColor: colours.card,

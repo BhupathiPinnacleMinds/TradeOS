@@ -29,6 +29,7 @@ import {
   validateAppointmentFieldWork,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
+import { CustomerCommunicationsService } from '../communications/communications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentNotificationsService } from './appointment-notifications.service';
 import type {
@@ -107,6 +108,7 @@ export class AppointmentsService {
     private readonly prisma: PrismaService,
     private readonly scheduling: SchedulingService,
     private readonly notifications: AppointmentNotificationsService,
+    private readonly communications: CustomerCommunicationsService,
   ) {}
 
   async findAll(
@@ -501,6 +503,11 @@ export class AppointmentsService {
         'JOB_TIMELINE_APPOINTMENT_CREATED',
         appointment,
       );
+      await this.communications.appointmentCreated(
+        tx,
+        currentUser,
+        appointment,
+      );
       return appointment;
     });
 
@@ -562,6 +569,11 @@ export class AppointmentsService {
               scheduledStart: appointment.scheduledStart.toISOString(),
             },
           },
+        );
+        await this.communications.appointmentRescheduled(
+          tx,
+          currentUser,
+          appointment,
         );
       }
       if (existing.assignedUserId !== appointment.assignedUserId) {
@@ -1061,6 +1073,20 @@ export class AppointmentsService {
         );
       }
       await this.syncJobProgress(tx, currentUser, existing, status);
+      if (status === 'CANCELLED') {
+        await this.communications.appointmentCancelled(
+          tx,
+          currentUser,
+          appointment,
+        );
+      }
+      if (status === 'COMPLETED') {
+        await this.communications.appointmentCompleted(
+          tx,
+          currentUser,
+          appointment,
+        );
+      }
       return appointment;
     });
 
@@ -2008,7 +2034,7 @@ export class AppointmentsService {
   private async assertJob(businessId: string, jobId: string) {
     const job = await this.prisma.job.findFirst({
       where: { businessId, id: jobId, isArchived: false },
-      include: { customer: true },
+      include: { customer: { include: { communicationPreference: true } } },
     });
     if (!job) {
       throw this.domainError(
@@ -2099,26 +2125,53 @@ export class AppointmentsService {
     businessId: string,
     scheduledStart: Date,
   ) {
-    const business = await tx.business.findUnique({
-      where: { id: businessId },
-      select: { timezone: true },
+    const [business, existing] = await Promise.all([
+      tx.business.findUnique({
+        where: { id: businessId },
+        select: { timezone: true },
+      }),
+      tx.appointmentSequence.findUnique({
+        where: { businessId },
+      }),
+    ]);
+    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
+    const prefix = `APT-${year}-`;
+    const latestAppointment = await tx.appointment.findFirst({
+      where: {
+        appointmentNumber: { startsWith: prefix },
+        businessId,
+      },
+      orderBy: { appointmentNumber: 'desc' },
+      select: { appointmentNumber: true },
     });
-    const existing = await tx.appointmentSequence.findUnique({
-      where: { businessId },
-    });
-    const nextNumber = existing?.nextNumber ?? 1;
+    const latestNumber = this.sequenceNumberFromSuffix(
+      latestAppointment?.appointmentNumber,
+      prefix,
+    );
+    const nextNumber = Math.max(existing?.nextNumber ?? 1, latestNumber + 1);
+    const nextSequenceNumber = nextNumber + 1;
     if (existing) {
       await tx.appointmentSequence.update({
         where: { businessId },
-        data: { nextNumber: { increment: 1 } },
+        data: { nextNumber: nextSequenceNumber },
       });
     } else {
       await tx.appointmentSequence.create({
-        data: { businessId, nextNumber: 2 },
+        data: { businessId, nextNumber: nextSequenceNumber },
       });
     }
-    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
     return `APT-${year}-${String(nextNumber).padStart(6, '0')}`;
+  }
+
+  private sequenceNumberFromSuffix(
+    value: string | null | undefined,
+    prefix: string,
+  ) {
+    if (!value?.startsWith(prefix)) {
+      return 0;
+    }
+    const suffix = Number(value.slice(prefix.length));
+    return Number.isInteger(suffix) && suffix > 0 ? suffix : 0;
   }
 
   private changedFields(
@@ -2184,12 +2237,19 @@ export class AppointmentsService {
           customer: {
             select: {
               companyName: true,
+              communicationPreference: {
+                select: {
+                  emailEnabled: true,
+                  smsEnabled: true,
+                },
+              },
               displayName: true,
               email: true,
               id: true,
               phone: true,
             },
           },
+          customerId: true,
           id: true,
           jobNumber: true,
           postcode: true,

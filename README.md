@@ -88,6 +88,7 @@ The local seed creates:
   workflow testing
 - 3 quotes
 - 2 invoices
+- Accounts Receivable demo data derived from real invoice/payment records
 - 5 notifications
 - 3 Tori AI messages
 - demo media/document metadata and tiny local placeholder files under
@@ -101,6 +102,12 @@ The mobile app logs in through `POST /api/auth/login`, stores the JWT with
 Expo SecureStore on device, and sends that token with dashboard requests. The
 dashboard reads `GET /api/dashboard/summary` from PostgreSQL and derives
 `businessId` from the logged-in user's JWT.
+
+Accounts Receivable is available from More for permitted financial/read-only
+roles. Dashboard financial cards open the AR screen, which calls
+`GET /api/invoices/accounts-receivable`. Payment receipt PDFs are generated on
+demand from Invoice Details via
+`GET /api/invoices/:id/payments/:paymentId/receipt`.
 
 Mobile evidence capture uses Expo-compatible native modules:
 

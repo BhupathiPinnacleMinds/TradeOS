@@ -4,7 +4,8 @@ import {
   formatBusinessDateTime,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,12 +18,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
+
+type Navigation = NativeStackNavigationProp<RootStackParamList>;
 
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat('en-AU', {
     currency: 'AUD',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
     style: 'currency',
   }).format(cents / 100);
 }
@@ -35,6 +40,7 @@ function formatAppointmentTime(
 }
 
 export function DashboardScreen() {
+  const navigation = useNavigation<Navigation>();
   const { token, user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +143,11 @@ export function DashboardScreen() {
         <View style={styles.grid}>
           <MetricCard
             label="Outstanding"
+            onPress={() =>
+              navigation.navigate('AccountsReceivable', {
+                status: 'OUTSTANDING',
+              })
+            }
             value={
               summary
                 ? formatCurrency(summary.money.outstandingInvoicesCents)
@@ -146,6 +157,31 @@ export function DashboardScreen() {
           <MetricCard
             label="Upcoming appointments"
             value={summary?.counts.upcomingAppointments}
+          />
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard
+            label="Overdue invoices"
+            onPress={() =>
+              navigation.navigate('AccountsReceivable', { status: 'OVERDUE' })
+            }
+            tone="warning"
+            value={summary?.counts.overdueInvoices}
+          />
+          <MetricCard
+            label="Paid today"
+            onPress={() =>
+              navigation.navigate('AccountsReceivable', { status: 'PAID' })
+            }
+            value={
+              summary ? formatCurrency(summary.money.paidTodayCents) : undefined
+            }
+          />
+          <MetricCard
+            label="Draft invoices"
+            onPress={() => navigation.navigate('Invoices', { status: 'DRAFT' })}
+            value={summary?.counts.draftInvoices}
           />
         </View>
 
@@ -316,17 +352,40 @@ export function DashboardScreen() {
 
 function MetricCard({
   label,
+  onPress,
   tone,
   value,
 }: {
   label: string;
+  onPress?: () => void;
   tone?: 'warning';
   value?: number | string;
 }) {
-  return (
-    <View style={[styles.card, tone === 'warning' && styles.warningCard]}>
+  const content = (
+    <>
       <Text style={styles.value}>{value ?? '-'}</Text>
       <Text style={styles.label}>{label}</Text>
+    </>
+  );
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityLabel={`Open ${label}`}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.card,
+          tone === 'warning' && styles.warningCard,
+          pressed && styles.cardPressed,
+        ]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+  return (
+    <View style={[styles.card, tone === 'warning' && styles.warningCard]}>
+      {content}
     </View>
   );
 }
@@ -350,6 +409,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 18,
   },
+  cardPressed: { opacity: 0.82 },
   warningCard: { borderColor: '#FDBA74' },
   value: { color: colours.ink, fontSize: 28, fontWeight: '800' },
   label: { color: colours.muted, marginTop: 6 },

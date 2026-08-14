@@ -2,6 +2,7 @@ import type { AuditLogEntry } from './members';
 import type { AustralianState } from './customers';
 import type { BusinessRole } from './auth';
 import type { Appointment } from './appointments';
+import type { QuoteStatus } from './quotes';
 
 export const JOB_STATUSES = [
   'NEW',
@@ -80,6 +81,7 @@ export interface Job {
   requiresInvoice: boolean;
   invoiceCreated: boolean;
   quoteCreated: boolean;
+  sourceQuoteId: string | null;
   isArchived: boolean;
   archivedAt: string | null;
   createdBy: string | null;
@@ -107,8 +109,25 @@ export interface JobDetailResponse {
     quoteNumber: string;
     title: string;
     totalCents: number;
-    status: string;
+    status: QuoteStatus;
   } | null;
+  relatedQuotes: Array<{
+    id: string;
+    quoteNumber: string;
+    title: string;
+    totalCents: number;
+    status: QuoteStatus;
+  }>;
+  invoices: Array<{
+    id: string;
+    invoiceNumber: string;
+    title: string;
+    status: string;
+    displayStatus: string;
+    totalCents: number;
+    amountPaidCents: number;
+    balanceDueCents: number;
+  }>;
   timeline: Array<{
     id: string;
     action: string;

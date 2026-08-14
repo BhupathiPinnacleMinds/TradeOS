@@ -4,6 +4,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type {
   Customer,
   Job,
+  QuoteDepositType,
+  QuoteDiscountType,
   QuoteLineItemType,
   QuoteLineItemPayload,
   QuotePayload,
@@ -149,21 +151,29 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     (site) => site.id === selectedSiteId,
   );
   const parsedLineItems = useMemo(() => parseLineItems(lineItems), [lineItems]);
+  const discountInput = useMemo(
+    () => parseAdjustmentInput(discountType ?? 'NONE', discountValue),
+    [discountType, discountValue],
+  );
+  const depositInput = useMemo(
+    () => parseAdjustmentInput(depositType ?? 'NONE', depositValue),
+    [depositType, depositValue],
+  );
   const calculations = useMemo(
     () =>
       calculateQuoteTotals({
         depositType,
-        depositValue: safeIntegerInput(depositValue),
+        depositValue: depositInput.value ?? 0,
         discountType,
-        discountValue: safeIntegerInput(discountValue),
+        discountValue: discountInput.value ?? 0,
         lineItems: parsedLineItems.validItems,
         pricingMode,
       }),
     [
       depositType,
-      depositValue,
+      depositInput.value,
       discountType,
-      discountValue,
+      discountInput.value,
       parsedLineItems.validItems,
       pricingMode,
     ],
@@ -274,9 +284,19 @@ export function QuoteFormScreen({ navigation, route }: Props) {
           setExpiryDate(quote.expiryDate ?? '');
           setPricingMode(quote.pricingMode);
           setDiscountType(quote.discountType ?? 'NONE');
-          setDiscountValue(String(quote.discountValue ?? 0));
+          setDiscountValue(
+            adjustmentValueToInput(
+              quote.discountType ?? 'NONE',
+              quote.discountValue ?? 0,
+            ),
+          );
           setDepositType(quote.depositType ?? 'NONE');
-          setDepositValue(String(quote.depositValue));
+          setDepositValue(
+            adjustmentValueToInput(
+              quote.depositType ?? 'NONE',
+              quote.depositValue,
+            ),
+          );
           setCustomerNotes(quote.customerNotes ?? '');
           setTermsAndConditions(quote.termsAndConditions ?? '');
           setLineItems(
@@ -344,6 +364,11 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     if (!token || isSaving || savingRef.current) return;
     const validationError = validateBeforeSave({
       hasLineItems: lineItems.length > 0,
+      calculations,
+      depositInput,
+      depositType: depositType ?? 'NONE',
+      discountInput,
+      discountType: discountType ?? 'NONE',
       lineItems: parsedLineItems,
       selectedCustomerId,
       title,
@@ -363,15 +388,15 @@ export function QuoteFormScreen({ navigation, route }: Props) {
         customerNotes,
         customerSiteId: selectedSiteId || undefined,
         depositType,
-        depositValue: safeIntegerInput(depositValue),
+        depositValue: depositInput.value ?? 0,
         description,
         discountType,
-        discountValue: safeIntegerInput(discountValue),
+        discountValue: discountInput.value ?? 0,
         expiryDate: expiryDate || undefined,
         issueDate,
-        jobId: selectedJobId || undefined,
         lineItems: parsedLineItems.validItems,
         pricingMode,
+        relatedJobId: selectedJobId || undefined,
         sourceAppointmentId: appointmentId || undefined,
         termsAndConditions,
         title,
@@ -577,38 +602,56 @@ export function QuoteFormScreen({ navigation, route }: Props) {
               label="Discount"
               options={[
                 { label: 'No discount', value: 'NONE' },
-                { label: 'Fixed cents', value: 'FIXED' },
-                { label: 'Percentage basis points', value: 'PERCENTAGE' },
+                { label: 'Fixed amount ($)', value: 'FIXED' },
+                { label: 'Percentage (%)', value: 'PERCENTAGE' },
               ]}
               value={discountType ?? 'NONE'}
-              onChange={(value) =>
-                setDiscountType(value as QuotePayload['discountType'])
-              }
+              onChange={(value) => {
+                const nextType = value as QuoteDiscountType;
+                setDiscountType(nextType);
+                setDiscountValue(nextType === 'NONE' ? '0' : '');
+              }}
             />
-            <Field
-              label="Discount value"
-              keyboardType="number-pad"
-              value={discountValue}
-              onChangeText={setDiscountValue}
-            />
+            {discountType !== 'NONE' ? (
+              <Field
+                error={discountInput.error}
+                label={
+                  discountType === 'FIXED'
+                    ? 'Discount amount ($)'
+                    : 'Discount percentage (%)'
+                }
+                keyboardType="decimal-pad"
+                value={discountValue}
+                onChangeText={setDiscountValue}
+              />
+            ) : null}
             <Picker
               label="Deposit"
               options={[
                 { label: 'No deposit', value: 'NONE' },
-                { label: 'Fixed cents', value: 'FIXED' },
-                { label: 'Percentage basis points', value: 'PERCENTAGE' },
+                { label: 'Fixed amount ($)', value: 'FIXED' },
+                { label: 'Percentage (%)', value: 'PERCENTAGE' },
               ]}
               value={depositType ?? 'NONE'}
-              onChange={(value) =>
-                setDepositType(value as QuotePayload['depositType'])
-              }
+              onChange={(value) => {
+                const nextType = value as QuoteDepositType;
+                setDepositType(nextType);
+                setDepositValue(nextType === 'NONE' ? '0' : '');
+              }}
             />
-            <Field
-              label="Deposit value"
-              keyboardType="number-pad"
-              value={depositValue}
-              onChangeText={setDepositValue}
-            />
+            {depositType !== 'NONE' ? (
+              <Field
+                error={depositInput.error}
+                label={
+                  depositType === 'FIXED'
+                    ? 'Deposit amount ($)'
+                    : 'Deposit percentage (%)'
+                }
+                keyboardType="decimal-pad"
+                value={depositValue}
+                onChangeText={setDepositValue}
+              />
+            ) : null}
             <Field
               label="Customer notes"
               multiline
@@ -719,11 +762,21 @@ function parseLineItems(lineItems: FormLineItem[]) {
 }
 
 function validateBeforeSave({
+  calculations,
+  depositInput,
+  depositType,
+  discountInput,
+  discountType,
   hasLineItems,
   lineItems,
   selectedCustomerId,
   title,
 }: {
+  calculations: ReturnType<typeof calculateQuoteTotals>;
+  depositInput: AdjustmentInput;
+  depositType: QuoteDepositType;
+  discountInput: AdjustmentInput;
+  discountType: QuoteDiscountType;
   hasLineItems: boolean;
   lineItems: ReturnType<typeof parseLineItems>;
   selectedCustomerId: string;
@@ -753,6 +806,34 @@ function validateBeforeSave({
   }
   if (lineItems.validItems.length < lineItems.errors.length) {
     return { message: 'Complete each line item before saving.', step: 1 };
+  }
+  if (discountType !== 'NONE') {
+    if (!discountInput.isComplete || discountInput.value === null) {
+      return { message: 'Enter a discount value.', step: 2 };
+    }
+    if (discountInput.error) {
+      return { message: discountInput.error, step: 2 };
+    }
+    if (
+      discountType === 'FIXED' &&
+      discountInput.value > calculations.subtotalCents
+    ) {
+      return { message: 'Discount cannot exceed the subtotal.', step: 2 };
+    }
+  }
+  if (depositType !== 'NONE') {
+    if (!depositInput.isComplete || depositInput.value === null) {
+      return { message: 'Enter a deposit value.', step: 2 };
+    }
+    if (depositInput.error) {
+      return { message: depositInput.error, step: 2 };
+    }
+    if (
+      depositType === 'FIXED' &&
+      depositInput.value > calculations.totalCents
+    ) {
+      return { message: 'Deposit cannot exceed the total.', step: 2 };
+    }
   }
   return null;
 }
@@ -800,9 +881,74 @@ function centsToMoneyInput(cents: number) {
   )}`;
 }
 
-function safeIntegerInput(value: string) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+interface AdjustmentInput {
+  error: string | null;
+  isComplete: boolean;
+  value: number | null;
+}
+
+function parseAdjustmentInput(
+  type: QuoteDiscountType | QuoteDepositType,
+  value: string,
+): AdjustmentInput {
+  if (type === 'NONE') {
+    return { error: null, isComplete: true, value: 0 };
+  }
+  if (type === 'FIXED') {
+    const parsed = parseQuoteMoneyInput(value);
+    return {
+      error: parsed.error?.replace('unit price', 'amount') ?? null,
+      isComplete: parsed.isComplete,
+      value: parsed.value,
+    };
+  }
+
+  const text = value.trim();
+  if (!text) return { error: null, isComplete: false, value: null };
+  if (text === '.' || /^\d+\.$/.test(text)) {
+    return { error: null, isComplete: false, value: null };
+  }
+  if (text.startsWith('-')) {
+    return {
+      error: 'Percentage cannot be negative.',
+      isComplete: true,
+      value: null,
+    };
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) {
+    return {
+      error: 'Enter a valid percentage.',
+      isComplete: true,
+      value: null,
+    };
+  }
+  const percentage = Number(text);
+  if (!Number.isFinite(percentage) || percentage > 100) {
+    return {
+      error: 'Percentage must be between 0 and 100.',
+      isComplete: true,
+      value: null,
+    };
+  }
+  return {
+    error: null,
+    isComplete: true,
+    value: Math.round(percentage * 100),
+  };
+}
+
+function adjustmentValueToInput(
+  type: QuoteDiscountType | QuoteDepositType,
+  value: number,
+) {
+  if (type === 'FIXED') return centsToMoneyInput(value);
+  if (type === 'PERCENTAGE') {
+    const percentage = value / 100;
+    return Number.isInteger(percentage)
+      ? String(percentage)
+      : String(percentage).replace(/0+$/, '').replace(/\.$/, '');
+  }
+  return '0';
 }
 
 function StepTabs({
@@ -996,13 +1142,16 @@ const styles = StyleSheet.create({
   reviewValue: { color: colours.ink, fontWeight: '900', textAlign: 'right' },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: colours.border,
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: colours.primary,
     borderRadius: 18,
     borderWidth: 1,
     flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
     padding: 14,
   },
-  secondaryButtonText: { color: colours.ink, fontWeight: '900' },
+  secondaryButtonText: { color: colours.primary, fontWeight: '900' },
   section: {
     backgroundColor: colours.card,
     borderColor: colours.border,

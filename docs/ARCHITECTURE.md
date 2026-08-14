@@ -1,5 +1,27 @@
 # Architecture
 
+## Customer communications and reminders
+
+Customer communications are implemented as a reusable domain owned by
+`CustomerCommunicationsModule`, not as ad hoc send logic inside appointments,
+quotes or invoices. Appointment, quote and invoice services call this module at
+their lifecycle boundaries; the module owns templates, channel selection,
+preferences, scheduling, idempotency and local-safe provider delivery.
+
+Phase 1 provider behaviour is development-safe. `CustomerCommunicationProvider`
+logs intended EMAIL/SMS delivery with recipient, type, subject, safe preview and
+entity reference, and never logs public-token hashes, auth headers, storage keys
+or internal audit metadata.
+
+Scheduled reminders are persisted with `scheduledFor` and processed by
+`processDueCustomerCommunications()`. The service is safe to rerun because every
+record uses a deterministic idempotency key protected by a database unique
+constraint. Production can later invoke the same service from a cron/worker or
+queue consumer without redesigning the module.
+
+Communication settings are business-scoped. Customer preferences are
+customer-scoped. API guards remain authoritative: UI hiding is convenience only.
+
 ## Media & document management
 
 The media module extends the existing multi-tenant API rather than introducing a
@@ -114,7 +136,16 @@ Appointment creation navigation:
 Quote architecture:
 
 - `Quote` is the customer-facing commercial offer that can be created from a
-  customer, job or appointment and converted into a job after acceptance.
+  customer, related job or appointment and converted into a job after
+  acceptance.
+- Quote/job relationships are directional. `Quote.relatedJobId` means the job
+  already existed when the quote was prepared. `Quote.convertedJobId` means the
+  accepted quote created that job. `Job.sourceQuoteId` is the structured source
+  of truth for jobs created from accepted quotes. Legacy `Quote.jobId` remains
+  only as a compatibility field during migration and must not drive new UX.
+- Accepted quotes with `relatedJobId` must not create duplicate jobs through
+  conversion. The API rejects those conversion attempts with
+  `QUOTE_ALREADY_RELATED_TO_JOB`; the mobile UI shows View Related Job instead.
 - Quote lifecycle rules are centralised in `packages/shared/src/quotes.ts` and
   revalidated by the API. Drafts are editable, sent/viewed quotes require a
   revision flow, accepted quotes are immutable except conversion, and terminal
@@ -133,6 +164,9 @@ Quote architecture:
   deterministic provider returns real `application/pdf` bytes and stores them
   through the existing storage abstraction so raw storage paths are never
   exposed to clients.
+- Authenticated mobile clients view generated quote PDFs by downloading the
+  protected PDF endpoint to local cache before opening the local file. The PDF
+  endpoint remains private and is not made public for convenience.
 - Sending a quote freezes the current customer-facing `QuoteRevision`, stores a
   tenant-scoped `QuotePdfDocument`, creates a hash-only
   `QuotePublicAccessToken`, and then sends the secure public quote URL.
@@ -140,9 +174,64 @@ Quote architecture:
   `/api/public/quotes/:token`. They resolve only hash-matched, unexpired,
   non-revoked tokens and return a frozen customer-facing quote snapshot without
   internal notes, tenant ids, staff ids, audit metadata or storage keys.
+
+Invoice architecture:
+
+- `Invoice` is the customer-facing billable financial document. It links to a
+  `Customer`, optional `CustomerSite`, optional source `Job`, and optional
+  `sourceQuoteId` when the job originated from an accepted quote.
+- Invoice/job/quote relationships are explicit: `Invoice.jobId` identifies the
+  source job being billed, while `Invoice.sourceQuoteId` preserves accepted
+  quote context when useful. A job may have multiple invoices.
+- Invoice lifecycle rules are centralised in `packages/shared/src/invoices.ts`.
+  Drafts are editable, sent/viewed/part-paid invoices accept controlled send,
+  payment and void actions, paid invoices are immutable, and void invoices cannot
+  receive payments.
+- Invoice totals are calculated with integer cents in shared helpers and
+  recalculated server-side on every write. The mobile form uses the same helpers
+  for preview only; the API remains authoritative.
+- `OVERDUE` is a derived display state based on due date and positive balance,
+  not a scheduled background mutation.
+- Local invoice send uses an invoice email-provider seam. Development sends
+  through the console provider and logs recipient, subject, PDF filename and
+  secure invoice link. Production delivery remains provider-based.
+- Invoice PDF generation is server-side through `InvoicePdfProvider` and stored
+  via the existing storage provider. Authenticated clients download PDFs through
+  the protected API before opening them.
+- Accounts Receivable is an invoice read model, not a separate ledger. The API
+  derives outstanding, overdue, due-soon and paid-this-month summaries from
+  tenant-scoped invoices and non-reversed payment rows using integer cents.
+- Payment receipts are generated on demand by the same PDF provider seam,
+  stored in `InvoiceReceiptDocument`, and linked to the originating
+  `InvoicePayment`. Receipt numbering is business-local through
+  `ReceiptSequence`.
+- Public customer routes live under `/api/public/invoices/:token` and resolve
+  hash-only, unexpired, non-revoked tokens. Public responses expose only
+  customer-safe invoice data and never internal notes, tenant ids, audit metadata
+  or storage paths.
 - Customer acceptance/decline records immutable metadata against the quote,
   token and audit log. Accepted/declined links remain readable so customers can
   see the final state, but cannot be used for another mutation.
+
+Core business lifecycle:
+
+- The release-ready happy path is Customer -> Job or Quote -> Quote Send ->
+  Public Quote View -> Accept -> Job -> Appointment -> Confirm -> Start Travel
+  -> Arrive -> Start Work -> Pause/Resume -> Complete Appointment -> Job
+  Progression -> Invoice -> Send Invoice -> Public Invoice View -> Partial
+  Payment -> Full Payment -> Receipt -> Accounts Receivable/Dashboard.
+- Quote, appointment and invoice status/action decisions must come from shared
+  domain helpers and then be revalidated by API services. Mobile screens should
+  hide impossible actions instead of showing buttons that predictably produce
+  403 or invalid-transition responses.
+- Financial values are canonical in integer cents. Forms may hold temporary
+  string input while editing, but saved quotes, invoices, payments, PDFs, public
+  views, receipts, job/customer summaries, Accounts Receivable and Dashboard
+  must all render API-calculated totals.
+- Mutation screens should refresh their current record after successful writes
+  and on focus where stale data is likely. Duplicate taps must be blocked in the
+  UI, and backend services remain the source of truth for idempotent or rejected
+  repeated transitions.
 
 Dispatcher navigation:
 

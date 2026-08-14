@@ -5,6 +5,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessesModule } from './businesses/businesses.module';
 import { CustomersModule } from './customers/customers.module';
+import { CustomerCommunicationsModule } from './communications/communications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DocumentsModule } from './documents/documents.module';
 import { HealthModule } from './health/health.module';
@@ -33,6 +34,7 @@ import { ReportsModule } from './reports/reports.module';
     BusinessesModule,
     MembersModule,
     MediaModule,
+    CustomerCommunicationsModule,
     CustomersModule,
     JobsModule,
     AppointmentsModule,

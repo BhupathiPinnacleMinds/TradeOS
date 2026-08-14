@@ -99,6 +99,26 @@ describe('quote calculations', () => {
     expect(result.totalCents).toBe(9900);
   });
 
+  it('supports zero discounts explicitly', () => {
+    const result = calculateQuoteTotals(
+      base({ discountType: 'FIXED', discountValue: 0 }),
+    );
+
+    expect(result.discountCents).toBe(0);
+    expect(result.gstCents).toBe(1000);
+    expect(result.totalCents).toBe(11000);
+  });
+
+  it('caps excessive fixed discounts at the subtotal', () => {
+    const result = calculateQuoteTotals(
+      base({ discountType: 'FIXED', discountValue: 20000 }),
+    );
+
+    expect(result.discountCents).toBe(10000);
+    expect(result.gstCents).toBe(0);
+    expect(result.totalCents).toBe(0);
+  });
+
   it('applies percentage discounts in basis points', () => {
     const result = calculateQuoteTotals(
       base({ discountType: 'PERCENTAGE', discountValue: 2500 }),
@@ -107,6 +127,41 @@ describe('quote calculations', () => {
     expect(result.discountCents).toBe(2500);
     expect(result.gstCents).toBe(750);
     expect(result.totalCents).toBe(8250);
+  });
+
+  it('applies decimal percentage discounts in basis points', () => {
+    const result = calculateQuoteTotals(
+      base({ discountType: 'PERCENTAGE', discountValue: 1250 }),
+    );
+
+    expect(result.discountCents).toBe(1250);
+    expect(result.gstCents).toBe(875);
+    expect(result.totalCents).toBe(9625);
+  });
+
+  it('applies GST-inclusive discounts before final total', () => {
+    const result = calculateQuoteTotals(
+      base({
+        discountType: 'FIXED',
+        discountValue: 1000,
+        lineItems: [
+          {
+            name: 'Service',
+            quantity: '1',
+            taxable: true,
+            type: 'SERVICE',
+            unit: 'fixed',
+            unitPriceCents: 11000,
+          },
+        ],
+        pricingMode: 'GST_INCLUSIVE',
+      }),
+    );
+
+    expect(result.subtotalCents).toBe(10000);
+    expect(result.discountCents).toBe(1000);
+    expect(result.gstCents).toBe(900);
+    expect(result.totalCents).toBe(9900);
   });
 
   it('calculates fixed deposits', () => {

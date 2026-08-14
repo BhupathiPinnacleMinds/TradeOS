@@ -18,7 +18,10 @@ import {
   buildAppointmentSignatureStrokeSegments,
   clearAppointmentSignatureData,
   createUnsavedChangesNavigationGuard,
+  formatBusinessDate,
   formatBusinessDateTime,
+  formatBusinessTime,
+  formatBusinessTimeRange,
   formatMediaSummary,
   getAppointmentQuickActions,
   hasAppointmentSignatureStrokes,
@@ -36,6 +39,7 @@ import {
   validateAppointmentCompletion,
   validateAppointmentFieldWork,
 } from '@tradieos/shared';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import type { AppointmentFieldValidationErrors } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
@@ -101,6 +105,7 @@ import {
 import { colours } from '../theme';
 
 const MORE_ACTION_DISMISS_DELAY_MS = 180;
+const RESCHEDULE_DURATIONS = [30, 60, 90, 120, 180, 240];
 const ACTIVE_NOTE_STATUSES = ['ARRIVED', 'IN_PROGRESS', 'PAUSED'] as const;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
@@ -139,6 +144,10 @@ function durationMinutes(appointment: Appointment) {
         60000,
     ),
   );
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60000);
 }
 
 function minutesBetween(start: string | null, end: Date) {
@@ -245,6 +254,13 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [isCompletionOpen, setIsCompletionOpen] = useState(false);
+  const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
+  const [rescheduleStart, setRescheduleStart] = useState(() => new Date());
+  const [rescheduleDuration, setRescheduleDuration] = useState(120);
+  const [showRescheduleDatePicker, setShowRescheduleDatePicker] =
+    useState(false);
+  const [showRescheduleTimePicker, setShowRescheduleTimePicker] =
+    useState(false);
   const [technicianNotes, setTechnicianNotes] = useState('');
   const [workCompleted, setWorkCompleted] = useState('');
   const [followUpRequired, setFollowUpRequired] = useState(false);
@@ -648,12 +664,38 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     }
   }
 
-  async function rescheduleByOneHour() {
+  function openRescheduleModal() {
+    if (!appointment || busyText) return;
+    setRescheduleStart(new Date(appointment.scheduledStart));
+    setRescheduleDuration(
+      appointment.estimatedDurationMinutes ?? durationMinutes(appointment),
+    );
+    setShowRescheduleDatePicker(false);
+    setShowRescheduleTimePicker(false);
+    setIsRescheduleOpen(true);
+  }
+
+  function onRescheduleDateChange(date?: Date) {
+    if (!date) return;
+    setRescheduleStart((current) => {
+      const next = new Date(current);
+      next.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+      return next;
+    });
+  }
+
+  function onRescheduleTimeChange(date?: Date) {
+    if (!date) return;
+    setRescheduleStart((current) => {
+      const next = new Date(current);
+      next.setHours(date.getHours(), date.getMinutes(), 0, 0);
+      return next;
+    });
+  }
+
+  async function saveReschedule() {
     if (!token || !appointment || busyText) return;
-    const scheduledStart = new Date(appointment.scheduledStart);
-    const scheduledEnd = new Date(appointment.scheduledEnd);
-    scheduledStart.setHours(scheduledStart.getHours() + 1);
-    scheduledEnd.setHours(scheduledEnd.getHours() + 1);
+    const scheduledEnd = addMinutes(rescheduleStart, rescheduleDuration);
 
     setBusyText('Rescheduling appointment...');
     try {
@@ -661,7 +703,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         allowConflictOverride: user?.role === 'OWNER',
         appointmentType: appointment.appointmentType,
         assignedUserId: appointment.assignedUserId,
-        estimatedDurationMinutes: appointment.estimatedDurationMinutes,
+        estimatedDurationMinutes: rescheduleDuration,
         jobId: appointment.jobId,
         notes: appointment.notes ?? undefined,
         accessInstructions: appointment.accessInstructions ?? undefined,
@@ -671,7 +713,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         locationSource: appointment.locationSource,
         postcode: appointment.postcode,
         scheduledEnd: scheduledEnd.toISOString(),
-        scheduledStart: scheduledStart.toISOString(),
+        scheduledStart: rescheduleStart.toISOString(),
         state: appointment.state,
         status: appointment.status === 'CONFIRMED' ? 'CONFIRMED' : 'SCHEDULED',
         suburb: appointment.suburb,
@@ -679,8 +721,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         travelDurationMinutes: appointment.travelDurationMinutes,
       });
       setAppointment(response.appointment);
+      setIsRescheduleOpen(false);
       showToast({
-        message: 'Appointment moved forward by 1 hour.',
+        message: 'Appointment rescheduled.',
         tone: 'success',
       });
     } catch (error) {
@@ -915,6 +958,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const rescheduleAction = quickActions.find(
     (action) => action.id === 'reschedule',
   );
+  const cancelAction = quickActions.find((action) => action.id === 'cancel');
   const canEditAppointment = canCreateAppointment(user?.role);
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
@@ -978,6 +1022,12 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         }
       : null,
     rescheduleAction,
+    cancelAction
+      ? {
+          ...cancelAction,
+          label: 'Cancel appointment',
+        }
+      : null,
   ];
   const secondaryActions = secondaryActionCandidates.filter(
     isAppointmentDetailsAction,
@@ -1282,6 +1332,27 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         onDismiss={dismissMoreActions}
         visible={isMoreOpen}
       />
+      <RescheduleModal
+        appointment={appointment}
+        busy={Boolean(busyText)}
+        duration={rescheduleDuration}
+        onCancel={() => {
+          setIsRescheduleOpen(false);
+          setShowRescheduleDatePicker(false);
+          setShowRescheduleTimePicker(false);
+        }}
+        onChangeDate={onRescheduleDateChange}
+        onChangeDuration={setRescheduleDuration}
+        onChangeTime={onRescheduleTimeChange}
+        onSave={() => void saveReschedule()}
+        setShowDatePicker={setShowRescheduleDatePicker}
+        setShowTimePicker={setShowRescheduleTimePicker}
+        showDatePicker={showRescheduleDatePicker}
+        showTimePicker={showRescheduleTimePicker}
+        start={rescheduleStart}
+        timezone={businessTimezone}
+        visible={isRescheduleOpen}
+      />
       <CompletionModal
         appointment={appointment}
         busy={Boolean(busyText)}
@@ -1330,7 +1401,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     }
     if (action.id === 'viewDetails') return;
     if (action.id === 'reschedule') {
-      await rescheduleByOneHour();
+      openRescheduleModal();
       return;
     }
     if (action.id === 'reassign') {
@@ -1343,7 +1414,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       confirmAppointment();
       return;
     }
-    if (action.id === 'cancel') await transition('cancel');
+    if (action.id === 'cancel') {
+      confirmCancelAppointment();
+      return;
+    }
     if (action.id === 'startTravel') await transition('start-travel');
     if (action.id === 'start') await transition('start');
     if (action.id === 'arrive') await transition('arrive');
@@ -1383,6 +1457,22 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         {
           onPress: () => void transition('confirm'),
           text: 'Confirm',
+        },
+      ],
+    );
+  }
+
+  function confirmCancelAppointment() {
+    if (!appointment || busyText) return;
+    Alert.alert(
+      'Cancel appointment?',
+      'This appointment will be cancelled and pending customer reminders will be stopped.',
+      [
+        { style: 'cancel', text: 'Keep appointment' },
+        {
+          onPress: () => void transition('cancel'),
+          style: 'destructive',
+          text: 'Cancel appointment',
         },
       ],
     );
@@ -2056,19 +2146,226 @@ function MoreActionsMenu({
               event.stopPropagation();
               onCancel();
             }}
-            style={[
-              styles.moreAction,
-              styles.moreActionDanger,
-              busy && styles.disabledAction,
-            ]}
+            style={[styles.moreAction, busy && styles.disabledAction]}
           >
-            <Text style={[styles.moreActionText, styles.moreActionDangerText]}>
-              Cancel
-            </Text>
+            <Text style={styles.moreActionText}>Close</Text>
           </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+function RescheduleModal({
+  appointment,
+  busy,
+  duration,
+  onCancel,
+  onChangeDate,
+  onChangeDuration,
+  onChangeTime,
+  onSave,
+  setShowDatePicker,
+  setShowTimePicker,
+  showDatePicker,
+  showTimePicker,
+  start,
+  timezone,
+  visible,
+}: {
+  appointment: Appointment;
+  busy: boolean;
+  duration: number;
+  onCancel(): void;
+  onChangeDate(value?: Date): void;
+  onChangeDuration(value: number): void;
+  onChangeTime(value?: Date): void;
+  onSave(): void;
+  setShowDatePicker(value: boolean): void;
+  setShowTimePicker(value: boolean): void;
+  showDatePicker: boolean;
+  showTimePicker: boolean;
+  start: Date;
+  timezone: string;
+  visible: boolean;
+}) {
+  const end = addMinutes(start, duration);
+  const technician = appointment.assignedUser
+    ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+    : 'Unassigned';
+
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onCancel}
+      transparent
+      visible={visible}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalKeyboardAvoider}
+      >
+        <Pressable
+          accessibilityLabel="Close reschedule appointment"
+          accessibilityRole="button"
+          onPress={onCancel}
+          style={styles.modalBackdrop}
+        >
+          <Pressable
+            accessibilityLabel="Reschedule appointment"
+            onPress={(event) => event.stopPropagation()}
+            style={styles.rescheduleCard}
+          >
+            <ScrollView
+              contentContainerStyle={styles.rescheduleContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>Reschedule appointment</Text>
+              <Text style={styles.meta}>
+                Current:{' '}
+                {formatBusinessDateTime(appointment.scheduledStart, timezone)} ·{' '}
+                {formatBusinessTime(appointment.scheduledEnd, timezone)}
+              </Text>
+              <Text style={styles.meta}>Technician: {technician}</Text>
+
+              <RescheduleDateTimeButton
+                label="New date"
+                mode="date"
+                onChange={onChangeDate}
+                setVisible={setShowDatePicker}
+                timezone={timezone}
+                value={start}
+                visible={showDatePicker}
+              />
+              <RescheduleDateTimeButton
+                label="New start time"
+                mode="time"
+                onChange={onChangeTime}
+                setVisible={setShowTimePicker}
+                timezone={timezone}
+                value={start}
+                visible={showTimePicker}
+              />
+
+              <Text style={styles.inputLabel}>Duration</Text>
+              <View style={styles.rescheduleDurationRow}>
+                {RESCHEDULE_DURATIONS.map((option) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={option}
+                    onPress={() => onChangeDuration(option)}
+                    style={[
+                      styles.rescheduleDurationChip,
+                      duration === option &&
+                        styles.rescheduleDurationChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.rescheduleDurationText,
+                        duration === option &&
+                          styles.rescheduleDurationTextActive,
+                      ]}
+                    >
+                      {option} min
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <View style={styles.rescheduleSummary}>
+                <Text style={styles.inputLabel}>New appointment time</Text>
+                <Text style={styles.modalBodyStrong}>
+                  {formatBusinessDate(start, timezone)}
+                </Text>
+                <Text style={styles.meta}>
+                  {formatBusinessTimeRange(start, end, timezone)}
+                </Text>
+              </View>
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={onCancel}
+                style={[styles.quickAction, busy && styles.disabledAction]}
+              >
+                <Text style={styles.quickText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={onSave}
+                style={[
+                  styles.quickAction,
+                  styles.quickActionPrimary,
+                  busy && styles.disabledAction,
+                ]}
+              >
+                <Text style={styles.quickTextPrimary}>
+                  {busy ? 'Saving...' : 'Save reschedule'}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function RescheduleDateTimeButton({
+  label: text,
+  mode,
+  onChange,
+  setVisible,
+  timezone,
+  value,
+  visible,
+}: {
+  label: string;
+  mode: 'date' | 'time';
+  onChange(value?: Date): void;
+  setVisible(value: boolean): void;
+  timezone: string;
+  value: Date;
+  visible: boolean;
+}) {
+  return (
+    <View style={styles.rescheduleField}>
+      <Text style={styles.inputLabel}>{text}</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setVisible(true)}
+        style={styles.rescheduleInputButton}
+      >
+        <Text style={styles.rescheduleInputText}>
+          {mode === 'date'
+            ? formatBusinessDate(value, timezone)
+            : formatBusinessTime(value, timezone)}
+        </Text>
+      </Pressable>
+      {visible ? (
+        <DateTimePicker
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          mode={mode}
+          onChange={(_, selectedDate) => {
+            if (Platform.OS !== 'ios') setVisible(false);
+            onChange(selectedDate);
+          }}
+          value={value}
+        />
+      ) : null}
+      {visible && Platform.OS === 'ios' ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setVisible(false)}
+          style={styles.rescheduleDoneButton}
+        >
+          <Text style={styles.rescheduleDoneText}>Done</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -2433,6 +2730,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 20,
   },
+  modalBodyStrong: {
+    color: colours.ink,
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+  modalKeyboardAvoider: { flex: 1 },
+  modalTitle: { color: colours.ink, fontSize: 22, fontWeight: '900' },
   moreAction: {
     alignItems: 'center',
     backgroundColor: '#EEF2FF',
@@ -2462,6 +2767,65 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
     marginBottom: 10,
+  },
+  rescheduleCard: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    maxHeight: '90%',
+    maxWidth: 520,
+    overflow: 'hidden',
+    width: '94%',
+  },
+  rescheduleContent: { padding: 18, paddingBottom: 8 },
+  rescheduleDoneButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  rescheduleDoneText: { color: colours.primary, fontWeight: '900' },
+  rescheduleDurationChip: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  rescheduleDurationChipActive: {
+    backgroundColor: colours.primary,
+    borderColor: colours.primary,
+  },
+  rescheduleDurationRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  rescheduleDurationText: { color: colours.primary, fontWeight: '900' },
+  rescheduleDurationTextActive: { color: '#FFFFFF' },
+  rescheduleField: { marginTop: 14 },
+  rescheduleInputButton: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 8,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  rescheduleInputText: { color: colours.ink, fontWeight: '900' },
+  rescheduleSummary: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 14,
   },
   primaryRecoveryButton: {
     backgroundColor: colours.primary,

@@ -67,6 +67,10 @@ export class DashboardService {
       quotesExpiringSoon,
       unpaidInvoices,
       unpaidInvoiceRows,
+      draftInvoices,
+      overdueInvoices,
+      paidInvoicePaymentsToday,
+      paidInvoicePaymentTotalsToday,
       unreadNotifications,
       aiMessages,
       todayJobs,
@@ -220,7 +224,33 @@ export class DashboardService {
       }),
       this.prisma.invoice.findMany({
         where: { businessId, status: { in: [...UNPAID_INVOICE_STATUSES] } },
-        select: { total: true, amountPaid: true },
+        select: { balanceDueCents: true },
+      }),
+      this.prisma.invoice.count({
+        where: { businessId, status: 'DRAFT' },
+      }),
+      this.prisma.invoice.count({
+        where: {
+          balanceDueCents: { gt: 0 },
+          businessId,
+          dueDate: { lt: startOfToday },
+          status: { in: [...UNPAID_INVOICE_STATUSES] },
+        },
+      }),
+      this.prisma.invoicePayment.count({
+        where: {
+          businessId,
+          receivedAt: { gte: startOfToday, lt: startOfTomorrow },
+          reversedAt: null,
+        },
+      }),
+      this.prisma.invoicePayment.aggregate({
+        _sum: { amountCents: true },
+        where: {
+          businessId,
+          receivedAt: { gte: startOfToday, lt: startOfTomorrow },
+          reversedAt: null,
+        },
       }),
       this.prisma.notification.count({
         where: { businessId, status: 'UNREAD' },
@@ -337,14 +367,10 @@ export class DashboardService {
     ]);
 
     const outstandingInvoicesCents = unpaidInvoiceRows.reduce(
-      (sum, invoice) => {
-        const outstanding =
-          Number(invoice.total.toString()) -
-          Number(invoice.amountPaid.toString());
-        return sum + Math.round(outstanding * 100);
-      },
+      (sum, invoice) => sum + invoice.balanceDueCents,
       0,
     );
+    const paidTodayCents = paidInvoicePaymentTotalsToday._sum.amountCents ?? 0;
     const now = new Date();
     const workingUserIds = new Set(
       dispatcherAppointments
@@ -385,11 +411,15 @@ export class DashboardService {
         acceptedQuotesNotConverted,
         quotesExpiringSoon,
         unpaidInvoices,
+        draftInvoices,
+        overdueInvoices,
+        paidInvoicesToday: paidInvoicePaymentsToday,
         unreadNotifications,
         aiMessages,
       },
       money: {
         outstandingInvoicesCents,
+        paidTodayCents,
       },
       todayJobs: todayJobs.map((job) => ({
         id: job.id,

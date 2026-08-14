@@ -200,6 +200,8 @@ export interface Quote {
   quoteNumber: string;
   customerId: string;
   customerSiteId: string | null;
+  relatedJobId: string | null;
+  convertedJobId: string | null;
   jobId: string | null;
   sourceAppointmentId: string | null;
   status: QuoteStatus;
@@ -245,6 +247,9 @@ export interface Quote {
   updatedAt: string;
   customer: QuoteCustomerSummary;
   customerSite: QuoteSiteSummary | null;
+  relatedJob: QuoteJobSummary | null;
+  convertedJob: QuoteJobSummary | null;
+  /** @deprecated Use relatedJob or convertedJob for directionally explicit UX. */
   job: QuoteJobSummary | null;
   lineItems: QuoteLineItem[];
 }
@@ -338,6 +343,8 @@ export interface QuoteLineItemPayload {
 export interface QuotePayload {
   customerId: string;
   customerSiteId?: string | null;
+  relatedJobId?: string | null;
+  /** @deprecated Use relatedJobId for quotes prepared against an existing job. */
   jobId?: string | null;
   sourceAppointmentId?: string | null;
   title: string;

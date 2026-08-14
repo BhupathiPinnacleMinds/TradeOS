@@ -15,6 +15,7 @@ import {
   JOB_WRITE_ROLES,
   getBusinessDateParts,
   getBusinessDayRangeUtc,
+  getInvoiceDisplayStatus,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -58,6 +59,7 @@ type JobWithRelations = {
   requiresInvoice: boolean;
   invoiceCreated: boolean;
   quoteCreated: boolean;
+  sourceQuoteId: string | null;
   isArchived: boolean;
   archivedAt: Date | null;
   createdBy: string | null;
@@ -167,21 +169,54 @@ export class JobsService {
       include: this.appointmentInclude(),
       orderBy: { scheduledStart: 'asc' },
     });
-    const sourceQuote = await this.prisma.quote.findFirst({
-      where: {
-        businessId: currentUser.businessId,
-        jobId: job.id,
-        status: 'CONVERTED',
-      },
-      orderBy: { convertedAt: 'desc' },
-      select: {
-        id: true,
-        quoteNumber: true,
-        status: true,
-        title: true,
-        totalCents: true,
-      },
-    });
+    const [sourceQuote, relatedQuotes, invoices] = await Promise.all([
+      job.sourceQuoteId
+        ? this.prisma.quote.findFirst({
+            where: {
+              businessId: currentUser.businessId,
+              id: job.sourceQuoteId,
+            },
+            select: {
+              id: true,
+              quoteNumber: true,
+              status: true,
+              title: true,
+              totalCents: true,
+            },
+          })
+        : Promise.resolve(null),
+      this.prisma.quote.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          relatedJobId: job.id,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          quoteNumber: true,
+          status: true,
+          title: true,
+          totalCents: true,
+        },
+      }),
+      this.prisma.invoice.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          jobId: job.id,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          amountPaidCents: true,
+          balanceDueCents: true,
+          dueDate: true,
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          title: true,
+          totalCents: true,
+        },
+      }),
+    ]);
     const appointmentIds = appointments.map((appointment) => appointment.id);
     const [activity, appointmentActivity] = await Promise.all([
       this.prisma.auditLog.findMany({
@@ -218,7 +253,22 @@ export class JobsService {
       appointments: appointments.map((appointment) =>
         this.toAppointment(appointment),
       ),
+      invoices: invoices.map((invoice) => ({
+        amountPaidCents: invoice.amountPaidCents,
+        balanceDueCents: invoice.balanceDueCents,
+        displayStatus: getInvoiceDisplayStatus({
+          balanceDueCents: invoice.balanceDueCents,
+          dueDate: invoice.dueDate.toISOString(),
+          status: invoice.status,
+        }),
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        status: invoice.status,
+        title: invoice.title,
+        totalCents: invoice.totalCents,
+      })),
       job: this.toJob(job),
+      relatedQuotes,
       sourceQuote,
       timeline: timeline.map((entry) => ({
         action: entry.action,
@@ -586,24 +636,51 @@ export class JobsService {
     businessId: string,
     scheduledStart: Date,
   ) {
-    const business = await tx.business.findUnique({
-      where: { id: businessId },
-      select: { timezone: true },
+    const [business, existing] = await Promise.all([
+      tx.business.findUnique({
+        where: { id: businessId },
+        select: { timezone: true },
+      }),
+      tx.jobSequence.findUnique({ where: { businessId } }),
+    ]);
+    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
+    const prefix = `JOB-${year}-`;
+    const latestJob = await tx.job.findFirst({
+      where: {
+        businessId,
+        jobNumber: { startsWith: prefix },
+      },
+      orderBy: { jobNumber: 'desc' },
+      select: { jobNumber: true },
     });
-    const existing = await tx.jobSequence.findUnique({ where: { businessId } });
-    const nextNumber = existing?.nextNumber ?? 1;
+    const latestNumber = this.sequenceNumberFromSuffix(
+      latestJob?.jobNumber,
+      prefix,
+    );
+    const nextNumber = Math.max(existing?.nextNumber ?? 1, latestNumber + 1);
+    const nextSequenceNumber = nextNumber + 1;
     if (existing) {
       await tx.jobSequence.update({
         where: { businessId },
-        data: { nextNumber: { increment: 1 } },
+        data: { nextNumber: nextSequenceNumber },
       });
     } else {
       await tx.jobSequence.create({
-        data: { businessId, nextNumber: 2 },
+        data: { businessId, nextNumber: nextSequenceNumber },
       });
     }
-    const year = getBusinessDateParts(scheduledStart, business?.timezone).year;
     return `JOB-${year}-${String(nextNumber).padStart(6, '0')}`;
+  }
+
+  private sequenceNumberFromSuffix(
+    value: string | null | undefined,
+    prefix: string,
+  ) {
+    if (!value?.startsWith(prefix)) {
+      return 0;
+    }
+    const suffix = Number(value.slice(prefix.length));
+    return Number.isInteger(suffix) && suffix > 0 ? suffix : 0;
   }
 
   private async getJobForUser(currentUser: AuthenticatedUser, id: string) {
@@ -829,6 +906,7 @@ export class JobsService {
       requiresInvoice: job.requiresInvoice,
       invoiceCreated: job.invoiceCreated,
       quoteCreated: job.quoteCreated,
+      sourceQuoteId: job.sourceQuoteId,
       isArchived: job.isArchived,
       archivedAt: job.archivedAt?.toISOString() ?? null,
       createdBy: job.createdBy,

@@ -886,20 +886,51 @@ async function main() {
     ];
 
     for (const invoice of invoices) {
+      const subtotalCents = Math.round(Number(invoice[6]) * 100);
+      const gstCents = Math.round(Number(invoice[7]) * 100);
+      const totalCents = Math.round(Number(invoice[8]) * 100);
+      const amountPaidCents = Math.round(Number(invoice[9]) * 100);
+      const balanceDueCents = Math.max(0, totalCents - amountPaidCents);
       await query(
-        `INSERT INTO "Invoice" (id, "businessId", "customerId", "jobId", number, status, "issueDate", "dueDate", subtotal, gst, total, "amountPaid", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, NOW(), NOW())`,
-        [invoice[0], businessId, ...invoice.slice(1, 10)],
+        `INSERT INTO "Invoice" (
+          id, "businessId", "customerId", "jobId", "invoiceNumber", status,
+          title, "issueDate", "dueDate", "pricingMode", "subtotalCents",
+          "gstCents", "totalCents", "amountPaidCents", "balanceDueCents",
+          "paymentTerms", "createdAt", "updatedAt"
+        )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, 'GST_EXCLUSIVE', $9, $10, $11, $12, $13, $14, NOW(), NOW())`,
+        [
+          invoice[0],
+          businessId,
+          invoice[1],
+          invoice[2],
+          invoice[3],
+          invoice[4],
+          invoice[10],
+          invoice[5],
+          subtotalCents,
+          gstCents,
+          totalCents,
+          amountPaidCents,
+          balanceDueCents,
+          'Payment due within 7 days.',
+        ],
       );
       await query(
-        `INSERT INTO "InvoiceLineItem" (id, "businessId", "invoiceId", description, quantity, "unitPrice", total, "sortOrder")
-         VALUES ($1, $2, $3, $4, 1, $5, $5, 0)`,
+        `INSERT INTO "InvoiceLineItem" (
+          id, "businessId", "invoiceId", position, type, name, description,
+          quantity, unit, "unitPriceCents", taxable, "lineSubtotalCents",
+          "lineGstCents", "lineTotalCents", "createdAt", "updatedAt"
+        )
+         VALUES ($1, $2, $3, 0, 'SERVICE', $4, $4, 1, 'item', $5, true, $5, $6, $7, NOW(), NOW())`,
         [
           `${invoice[0]}-line-1`,
           businessId,
           invoice[0],
           invoice[10],
-          invoice[6],
+          subtotalCents,
+          gstCents,
+          totalCents,
         ],
       );
     }

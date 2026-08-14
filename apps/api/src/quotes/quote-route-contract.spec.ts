@@ -23,6 +23,45 @@ describe('quotes route contract', () => {
     join(__dirname, '..', 'app.module.ts'),
     'utf8',
   );
+  const mobileQuoteDetails = readFileSync(
+    join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'mobile',
+      'src',
+      'screens',
+      'QuoteDetailsScreen.tsx',
+    ),
+    'utf8',
+  );
+  const mobileQuoteDocuments = readFileSync(
+    join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'mobile',
+      'src',
+      'api',
+      'quoteDocuments.ts',
+    ),
+    'utf8',
+  );
+  const mobileQuoteForm = readFileSync(
+    join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'mobile',
+      'src',
+      'screens',
+      'QuoteFormScreen.tsx',
+    ),
+    'utf8',
+  );
 
   it('registers the Quotes module in the application', () => {
     expect(appModule).toContain('QuotesModule');
@@ -60,6 +99,9 @@ describe('quotes route contract', () => {
     expect(service).toContain('QUOTE_ACCESS_DENIED');
     expect(service).toContain('QUOTE_INVALID_STATUS');
     expect(service).toContain('QUOTE_ALREADY_CONVERTED');
+    expect(service).toContain('QUOTE_ALREADY_RELATED_TO_JOB');
+    expect(service).toContain('relatedJobId');
+    expect(service).toContain('convertedJobId');
   });
 
   it('records lifecycle audit events and quote revisions', () => {
@@ -99,5 +141,26 @@ describe('quotes route contract', () => {
     expect(service).toContain('QUOTE_EMAIL_REQUIRED');
     expect(service).toContain('QUOTE_PUBLIC_TOKEN_INVALID');
     expect(service).toContain('QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED');
+  });
+
+  it('keeps quote PDF opening authenticated and document-driven in mobile', () => {
+    expect(mobileQuoteDocuments).toContain('downloadAuthenticatedQuotePdf');
+    expect(mobileQuoteDocuments).toContain('buildAuthenticatedHeaders(token)');
+    expect(mobileQuoteDetails).toContain(
+      "label={activeDocument ? 'View PDF' : 'Generate PDF'}",
+    );
+    expect(mobileQuoteDetails).toContain('View PDF');
+    expect(mobileQuoteDetails).toContain('Related Job');
+    expect(mobileQuoteDetails).toContain('Converted to Job');
+    expect(mobileQuoteDetails).not.toContain('objectKey');
+    expect(mobileQuoteDetails).not.toContain('storageProvider');
+  });
+
+  it('labels quote discounts in customer-facing units before converting to stored values', () => {
+    expect(mobileQuoteForm).toContain('Fixed amount ($)');
+    expect(mobileQuoteForm).toContain('Percentage (%)');
+    expect(mobileQuoteForm).toContain('parseAdjustmentInput');
+    expect(mobileQuoteForm).not.toContain('Fixed cents');
+    expect(mobileQuoteForm).not.toContain('Percentage basis points');
   });
 });

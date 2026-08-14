@@ -1,6 +1,84 @@
 # Changelog
 
+## 2026-08-12
+
+### Changed
+
+- Added Customer Communications & Automated Reminders Phase 1 with local-safe
+  EMAIL/SMS provider seams, business communication settings, per-customer
+  preferences, scheduled reminder processing and customer communication history.
+- Added the Core Workflow Hardening Phase 1 lifecycle note covering the
+  customer -> quote/job -> appointment -> invoice -> payment -> dashboard path.
+- Centralised Invoice Details action visibility through the shared
+  `getInvoiceAvailableActions` helper so mobile buttons better match API
+  role/status/balance rules.
+
+### Fixed
+
+- Job and appointment number generation now repairs stale per-business sequence
+  rows before creating records, preventing duplicate `jobNumber` /
+  `appointmentNumber` Prisma `P2002` errors from surfacing as appointment-save
+  HTTP 500s.
+- New Appointment save errors now use the shared friendly appointment error
+  mapper, so expected conflicts, invalid location/site selections, inactive
+  technicians and stale API failures do not surface raw "Internal server error"
+  copy in the mobile form.
+- Invoice lifecycle mutation errors now use friendly mobile copy for expected
+  permission, stale-status, validation, payment and unavailable-route failures.
+- Invoice receipt actions are disabled while another invoice mutation is
+  running to reduce accidental duplicate requests.
+- Security documentation now reflects the implemented hash-only public quote and
+  invoice token flows instead of describing quote public tokens as future-only.
+
+## 2026-08-11
+
+### Added
+
+- Built the Invoices Module foundation using the stable Quotes architecture:
+  tenant-scoped invoice lifecycle, cents-based AUD/GST calculations, draft form,
+  list/detail screens, PDF generation, console-only send workflow, hash-only
+  public invoice links, payment recording and derived overdue display state.
+- Added `InvoiceSequence`, `InvoicePdfDocument`, `InvoicePublicAccessToken` and
+  append-only `InvoicePayment` support while preserving existing local invoice
+  data through migration `20260811130000_invoice_module_foundation`.
+- Job Details now shows linked invoices and supports Create/New Invoice actions.
+  Customer Details shows recent invoices and a permitted Create Invoice action.
+- Dashboard summary now includes outstanding amount, overdue invoices, paid
+  today and draft invoices.
+- Added Accounts Receivable Phase 2 with a tenant-scoped AR summary endpoint,
+  mobile AR screen, customer/job financial summaries, payment-history polish and
+  on-demand payment receipt PDFs via migration
+  `20260811143000_accounts_receivable_phase_2`.
+
+### Fixed
+
+- Dashboard invoice metrics now use actual invoice payment rows for paid-today
+  totals, safely normalise empty invoice/payment aggregates to zero and keep
+  invoice dashboard queries tenant-scoped.
+- Dashboard financial cards now link to Accounts Receivable sections for
+  outstanding, overdue and paid invoice follow-up.
+
+### Security
+
+- Invoice APIs derive `businessId` from JWT, enforce role-aware access, never
+  trust client totals, and expose public invoice data only through hashed,
+  expiring tokens.
+- Accounts Receivable and payment receipt endpoints are limited to permitted
+  financial/read-only roles and never expose internal IDs or storage object
+  keys in customer-facing receipt PDFs.
+
 ## 2026-08-10
+
+### Fixed
+
+- Clarified quote discount/deposit entry so fixed values are entered as dollars
+  and percentages are entered as percentages before conversion to canonical
+  cents/basis points.
+- Added authenticated mobile PDF viewing for generated quote documents so
+  existing quote PDFs can be opened without creating another document.
+- Split Quote-to-Job UX and data semantics into explicit related-job,
+  converted-job and source-quote relationships, including a server-side guard
+  that prevents accepted quotes for existing jobs from creating duplicate jobs.
 
 ### Added
 

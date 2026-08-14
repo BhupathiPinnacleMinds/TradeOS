@@ -196,4 +196,23 @@ describe('appointment route contract', () => {
 
     expect(matches).toEqual([]);
   });
+
+  it('maps New Appointment save failures through create-specific friendly copy', () => {
+    const repoRoot = resolve(__dirname, '..', '..', '..', '..');
+    const source = readFileSync(
+      join(
+        repoRoot,
+        'apps',
+        'mobile',
+        'src',
+        'screens',
+        'AppointmentFormScreen.tsx',
+      ),
+      'utf8',
+    );
+
+    expect(source).toContain('friendlyAppointmentCreateError');
+    expect(source).toContain('message: friendlyAppointmentCreateError(error)');
+    expect(source).not.toContain('Internal server error');
+  });
 });
