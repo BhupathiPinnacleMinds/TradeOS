@@ -1,5 +1,43 @@
 # Architecture
 
+## Tori AI workflow assistant
+
+Tori is implemented as a server-side workflow assistant in `AiModule`. The
+mobile app talks only to TradieOS API endpoints and never sends provider keys or
+raw business datasets to an external AI vendor.
+
+```text
+apps/mobile Tori tab
+  -> /api/ai/tori/*
+  -> AiService
+  -> AiProvider seam + targeted tenant-scoped read tools
+  -> existing Appointments / Quotes / Invoices / Communications services
+```
+
+Phase 1 uses deterministic local-safe behaviour through the provider seam. A
+real LLM provider can be added behind `AiProvider`, but business totals, date
+handling, permissions, stale checks and mutations must remain deterministic and
+server-side.
+
+Tori follows the product safety pattern:
+
+```text
+READ -> UNDERSTAND -> PROPOSE -> CONFIRM -> EXECUTE
+```
+
+Read tools fetch compact summaries only: appointments, technician schedules,
+unassigned work, outstanding invoices, overdue invoices, quote follow-ups and
+jobs in progress. Action Drafts are structured payloads returned to the mobile
+UI; confirmation must call `POST /api/ai/tori/actions/:draftId/confirm`.
+
+Confirmed actions reuse existing domain services instead of duplicating
+business logic. Reschedule/reassign/cancel use `AppointmentsService`, quote
+draft creation uses `QuotesService`, invoice draft creation uses
+`InvoicesService`, and message drafts use `CustomerCommunicationsService`.
+
+Appointment action drafts include the target appointment `updatedAt` timestamp.
+Confirmation reloads the appointment and rejects stale drafts before mutation.
+
 ## Customer communications and reminders
 
 Customer communications are implemented as a reusable domain owned by

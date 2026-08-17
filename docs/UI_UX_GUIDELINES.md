@@ -1,5 +1,23 @@
 # UI/UX Guidelines
 
+## Tori UX
+
+- Tori is an operational assistant, not a generic chat clone.
+- The Tori tab should show a compact header, safety note, operational snapshot,
+  suggested prompts, chat history and one input.
+- Tori responses should be concise, scannable and action-oriented.
+- Action Draft cards must show exactly what will happen before confirmation:
+  title, description, proposed changes, warnings, Cancel and Confirm.
+- Cancel must never mutate data. Confirm must disable while processing to avoid
+  duplicate mutations.
+- Tori must never imply a quote, invoice, SMS or email was sent unless the user
+  explicitly confirmed and the underlying API completed the action.
+- Provider/local-mode status can be shown quietly, but it should not dominate
+  the screen.
+- Empty and zero-result states should be plain language:
+  "I couldn't find any overdue invoices" rather than fake records or raw API
+  details.
+
 ## Customer communications UX
 
 - Customer Details shows a compact Communications section with channel, type,

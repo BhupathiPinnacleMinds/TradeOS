@@ -127,6 +127,25 @@ export function quoteFollowUpTemplate(input: {
   };
 }
 
+export function invoiceSentTemplate(input: {
+  business: Business;
+  customer: Customer;
+  dueDate: Date;
+  invoiceNumber: string;
+  invoiceUrl: string;
+  totalCents: number;
+}): CommunicationTemplate {
+  return {
+    subject: `Invoice ${input.invoiceNumber} from ${input.business.name}`,
+    message: [
+      `Hi ${input.customer.displayName}, invoice ${input.invoiceNumber} from ${input.business.name} is ready to review.`,
+      `Invoice total: ${formatAudCents(input.totalCents)}`,
+      `Due date: ${formatBusinessDate(input.dueDate, input.business.timezone ?? 'Australia/Melbourne')}`,
+      `View invoice: ${input.invoiceUrl}`,
+    ].join('\n'),
+  };
+}
+
 export function invoiceDueSoonTemplate(input: {
   amountPaidCents: number;
   balanceDueCents: number;

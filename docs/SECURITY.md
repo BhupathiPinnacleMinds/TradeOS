@@ -1,5 +1,32 @@
 # Security
 
+## Tori AI security
+
+- Tori requests are authenticated and derive `businessId`, user id and role
+  from the JWT.
+- Mobile clients never call an AI provider directly and never receive
+  `OPENAI_API_KEY` or any other provider secret.
+- Tori read tools must filter every appointment, customer, job, quote, invoice,
+  payment and communication query by authenticated `businessId`.
+- Tori does not dump full database tables into prompts. It retrieves compact
+  targeted results for the user's question.
+- Tori responses must not expose raw Prisma ids, tenant ids, public-token
+  hashes, storage object keys, auth tokens or provider secrets.
+- Tori Action Drafts never mutate data. Mutations require an explicit confirm
+  endpoint call and service-level role checks.
+- `READ_ONLY` users can ask read questions but cannot confirm any action draft.
+- Technicians cannot use Tori to access financial tools or unassigned/global
+  scheduling management outside their existing role scope.
+- AI/provider-generated arguments are treated as untrusted. Confirmation
+  reloads target entities, validates tenant, validates role, validates state and
+  then calls existing domain services.
+- Appointment drafts include stale-state protection through
+  `expectedUpdatedAt`; changed appointments reject with `TORI_DRAFT_STALE`.
+- Customer/job/field-note text is untrusted content and must not override Tori
+  safety instructions or permission rules.
+- AI provider failure must not break appointments, quotes, invoices, payments,
+  communications or other core TradieOS workflows.
+
 ## Media security
 
 - Media metadata and access are always filtered by the authenticated user

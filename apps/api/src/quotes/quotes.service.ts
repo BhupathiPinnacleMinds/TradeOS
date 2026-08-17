@@ -560,6 +560,10 @@ export class QuotesService {
       });
       return next;
     });
+    await this.communications.quoteFinalised(
+      currentUser.businessId,
+      updated.id,
+    );
     return this.findOne(currentUser, updated.id);
   }
 
@@ -754,6 +758,10 @@ export class QuotesService {
       return { jobId: job.id, quoteId: updated.id };
     });
 
+    await this.communications.quoteFinalised(
+      currentUser.businessId,
+      result.quoteId,
+    );
     return {
       ...(await this.findOne(currentUser, result.quoteId)),
       jobId: result.jobId,

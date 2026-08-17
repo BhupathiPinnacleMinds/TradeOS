@@ -230,7 +230,16 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
   return { prisma, quoteCreate, tx };
 }
 
-function createService(prisma: unknown) {
+function createService(
+  prisma: unknown,
+  communications: {
+    quoteFinalised: jest.Mock;
+    quoteSent: jest.Mock;
+  } = {
+    quoteFinalised: jest.fn(),
+    quoteSent: jest.fn(),
+  },
+) {
   return new QuotesService(
     prisma as never,
     { get: jest.fn() } as never,
@@ -247,17 +256,18 @@ function createService(prisma: unknown) {
       readObject: jest.fn(),
       uploadFile: jest.fn(),
     },
-    {
-      quoteFinalised: jest.fn(),
-      quoteSent: jest.fn(),
-    } as never,
+    communications as never,
   );
 }
 
 describe('QuotesService create', () => {
   it('creates the quote and line items separately inside one transaction', async () => {
     const { prisma, quoteCreate, tx } = createPrismaMock();
-    const service = createService(prisma);
+    const communications = {
+      quoteFinalised: jest.fn(),
+      quoteSent: jest.fn(),
+    };
+    const service = createService(prisma, communications);
 
     await service.create(user, payload);
 
@@ -283,6 +293,8 @@ describe('QuotesService create', () => {
         ],
       }),
     );
+    expect(communications.quoteSent).not.toHaveBeenCalled();
+    expect(communications.quoteFinalised).not.toHaveBeenCalled();
   });
 
   it('returns a structured validation error for invalid quantities before persistence', async () => {
@@ -394,7 +406,11 @@ describe('QuotesService create', () => {
       relatedJobId: null,
       status: 'ACCEPTED',
     });
-    const service = createService(prisma);
+    const communications = {
+      quoteFinalised: jest.fn(),
+      quoteSent: jest.fn(),
+    };
+    const service = createService(prisma, communications);
 
     await service.convertToJob(user, 'quote-1');
 
@@ -418,6 +434,10 @@ describe('QuotesService create', () => {
       jobId: 'job-converted-1',
       status: 'CONVERTED',
     });
+    expect(communications.quoteFinalised).toHaveBeenCalledWith(
+      user.businessId,
+      'quote-1',
+    );
   });
 
   it('blocks technicians from creating quote drafts', async () => {

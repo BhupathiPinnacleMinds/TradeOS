@@ -10,5 +10,6 @@ import { QuotesService } from './quotes.service';
   controllers: [QuotesController, PublicQuotesController],
   imports: [PrismaModule, MediaModule, CustomerCommunicationsModule],
   providers: [QuotesService],
+  exports: [QuotesService],
 })
 export class QuotesModule {}

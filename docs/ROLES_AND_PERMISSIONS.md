@@ -1,5 +1,37 @@
 # Roles and Permissions
 
+## Tori permissions
+
+Tori read access is available to active workspace roles, but each read tool
+still applies the underlying module permissions.
+
+- `OWNER` and `ADMIN`: operational reads and all Phase 1 action drafts.
+- `OFFICE_MANAGER`: customer, job, appointment, quote, invoice draft and
+  customer-message workflows.
+- `SCHEDULER`: scheduling reads/actions and appointment customer-message
+  drafts; no financial mutations.
+- `TECHNICIAN`: assigned work context only; no global scheduling management,
+  quote/invoice creation or financial tools through Tori.
+- `ACCOUNTANT`: invoice and Accounts Receivable reads plus invoice draft
+  actions; no scheduling management.
+- `SALES`: customer/quote-oriented reads and quote draft actions; no invoice
+  payment or scheduling management.
+- `READ_ONLY`: read-only Tori questions. Cannot confirm Action Drafts.
+
+Initial Action Draft confirmation roles are centralised in
+`packages/shared/src/ai.ts`:
+
+- `RESCHEDULE_APPOINTMENT`: Owner/Admin/Office Manager/Scheduler
+- `REASSIGN_TECHNICIAN`: Owner/Admin/Office Manager/Scheduler
+- `CANCEL_APPOINTMENT`: Owner/Admin/Office Manager/Scheduler
+- `CREATE_APPOINTMENT`: Owner/Admin/Office Manager/Scheduler
+- `CREATE_QUOTE`: Owner/Admin/Office Manager/Sales
+- `CREATE_INVOICE`: Owner/Admin/Office Manager/Accountant
+- `SEND_CUSTOMER_MESSAGE`: Owner/Admin/Office Manager/Scheduler
+
+UI hiding is not sufficient. The API confirmation endpoint revalidates role and
+tenant scope before executing any Tori-prepared action.
+
 ## Quote permissions
 
 - `OWNER` and `ADMIN` have full quote access.

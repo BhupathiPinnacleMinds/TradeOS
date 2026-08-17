@@ -28,6 +28,7 @@ import {
   acceptQuoteRequest,
   cancelQuoteRequest,
   convertQuoteToJobRequest,
+  declineQuoteRequest,
   duplicateQuoteRequest,
   quotePdfUrl,
   quoteDetailRequest,
@@ -208,32 +209,61 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
           />
         ) : null}
         {roleCanAcceptOrDeclineQuote(role, quote.status) && !isConverted ? (
-          <Action
-            busy={busyAction === 'accept'}
-            label="Mark accepted"
-            onPress={() =>
-              Alert.alert('Mark quote accepted?', quote.quoteNumber, [
-                { style: 'cancel', text: 'Cancel' },
-                {
-                  onPress: () =>
-                    void mutate('accept', async () => {
-                      if (!token) return;
-                      await acceptQuoteRequest(
-                        token,
-                        quote.id,
-                        quote.customer.displayName,
-                        quote.customer.email ?? undefined,
-                      );
-                      showToast({
-                        message: 'Quote accepted.',
-                        tone: 'success',
-                      });
-                    }),
-                  text: 'Accept',
-                },
-              ])
-            }
-          />
+          <>
+            <Action
+              busy={busyAction === 'accept'}
+              label="Mark accepted"
+              onPress={() =>
+                Alert.alert('Mark quote accepted?', quote.quoteNumber, [
+                  { style: 'cancel', text: 'Cancel' },
+                  {
+                    onPress: () =>
+                      void mutate('accept', async () => {
+                        if (!token) return;
+                        await acceptQuoteRequest(
+                          token,
+                          quote.id,
+                          quote.customer.displayName,
+                          quote.customer.email ?? undefined,
+                        );
+                        showToast({
+                          message: 'Quote accepted.',
+                          tone: 'success',
+                        });
+                      }),
+                    text: 'Accept',
+                  },
+                ])
+              }
+            />
+            <Action
+              busy={busyAction === 'decline'}
+              destructive
+              label="Mark declined"
+              onPress={() =>
+                Alert.alert('Mark quote declined?', quote.quoteNumber, [
+                  { style: 'cancel', text: 'Keep quote' },
+                  {
+                    onPress: () =>
+                      void mutate('decline', async () => {
+                        if (!token) return;
+                        await declineQuoteRequest(
+                          token,
+                          quote.id,
+                          'Marked declined in TradieOS',
+                        );
+                        showToast({
+                          message: 'Quote declined.',
+                          tone: 'success',
+                        });
+                      }),
+                    style: 'destructive',
+                    text: 'Decline quote',
+                  },
+                ])
+              }
+            />
+          </>
         ) : null}
         {roleCanConvertQuote(role, quote.status) &&
         !isConverted &&

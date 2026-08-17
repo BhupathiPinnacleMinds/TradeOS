@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-14
+
+### Added
+
+- Added Tori AI Workflow Assistant Phase 1 with server-side Tori API routes,
+  local deterministic provider mode, operational snapshot cards, targeted
+  tenant-scoped read tools, mobile chat UI and explicit confirmation Action
+  Drafts for scheduling, quote, invoice and customer-message workflows.
+- Added Tori Action Draft safety contracts in `packages/shared`, including
+  role/action matrices and stale appointment confirmation protection.
+
+### Fixed
+
+- Quote communications now schedule `QUOTE_FOLLOW_UP` only from the genuine
+  send lifecycle event, using the business timezone and the persisted quote
+  `sentAt` value instead of wall-clock `Date.now()`.
+- Pending quote follow-ups are cancelled when a quote is accepted, declined,
+  cancelled, converted or moved back to draft for revision, while historical
+  sent quote communications remain visible in customer history.
+- Quote Details now exposes the existing backend-supported decline action so
+  sent/viewed quotes can be manually marked declined during local workflow
+  testing.
+- Invoice communications now include customer-safe invoice sent details,
+  refresh pending reminder balances after partial payments, cancel pending
+  reminders after full payment even when payment confirmations are disabled and
+  re-check due/overdue eligibility before scheduled invoice reminders are sent.
+
 ## 2026-08-12
 
 ### Changed

@@ -199,7 +199,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
       try {
         const communicationsResponse = await customerCommunicationsRequest(
           token,
-          { customerId, pageSize: 8 },
+          { customerId, pageSize: 100 },
         );
         if (!isLatestRequest()) return;
         setCommunications(communicationsResponse.records);

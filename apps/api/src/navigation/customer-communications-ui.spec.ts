@@ -42,7 +42,7 @@ describe('customer communications mobile UI contracts', () => {
 
     expect(customerDetails).toContain('useFocusEffect');
     expect(customerDetails).toContain('customerCommunicationsRequest');
-    expect(customerDetails).toContain('{ customerId, pageSize: 8 }');
+    expect(customerDetails).toContain('{ customerId, pageSize: 100 }');
     expect(customerDetails).toContain('communicationDateLabel');
     expect(customerDetails).toContain('Scheduled for');
     expect(customerDetails).toContain('formatBusinessDateTime');
@@ -54,6 +54,20 @@ describe('customer communications mobile UI contracts', () => {
     expect(customerDetails).toContain(
       "We couldn't load this customer's communications.",
     );
+    expect(customerDetails).toContain("value.replaceAll('_', ' ')");
+    expect(customerDetails).toContain('Cancelled');
+  });
+
+  it('exposes supported quote acceptance and decline actions in Quote Details', () => {
+    const quoteDetails = mobileSource('screens/QuoteDetailsScreen.tsx');
+    const client = mobileSource('api/client.ts');
+
+    expect(client).toContain('declineQuoteRequest');
+    expect(client).toContain('`/quotes/${quoteId}/decline`');
+    expect(quoteDetails).toContain('roleCanAcceptOrDeclineQuote');
+    expect(quoteDetails).toContain('Mark accepted');
+    expect(quoteDetails).toContain('Mark declined');
+    expect(quoteDetails).toContain('Decline quote');
   });
 
   it('uses explicit appointment reschedule controls instead of fixed increment rescheduling', () => {

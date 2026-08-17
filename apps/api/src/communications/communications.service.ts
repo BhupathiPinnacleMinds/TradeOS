@@ -10,6 +10,8 @@ import {
   COMMUNICATION_APPOINTMENT_SEND_ROLES,
   COMMUNICATION_SEND_ROLES,
   COMMUNICATION_VIEW_ROLES,
+  getBusinessDateParts,
+  zonedTimeToUtc,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,6 +26,7 @@ import {
   appointmentRescheduledTemplate,
   invoiceDueSoonTemplate,
   invoiceOverdueTemplate,
+  invoiceSentTemplate,
   jobCompletedTemplate,
   paymentReceivedTemplate,
   quoteFollowUpTemplate,
@@ -55,6 +58,8 @@ type BusinessContact = {
   phone: string | null;
   timezone: string | null;
 };
+
+type InvoiceReminderType = 'INVOICE_DUE_SOON' | 'INVOICE_OVERDUE';
 
 type CommunicationEntityRefs = {
   relatedAppointmentId?: string | null;
@@ -101,7 +106,7 @@ export class CustomerCommunicationsService {
         ...(query.status ? { status: query.status } : {}),
         ...(query.type ? { type: query.type } : {}),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: Math.min(100, Math.max(1, query.pageSize ?? 25)),
     });
     return { records: records.map((record) => this.toCommunication(record)) };
@@ -224,7 +229,7 @@ export class CustomerCommunicationsService {
     let sent = 0;
     let failed = 0;
     for (const record of due) {
-      const current = await this.prisma.customerCommunication.findUnique({
+      let current = await this.prisma.customerCommunication.findUnique({
         where: {
           businessId_idempotencyKey: {
             businessId: record.businessId,
@@ -233,6 +238,10 @@ export class CustomerCommunicationsService {
         },
       });
       if (!current || current.status !== 'SCHEDULED') continue;
+      if (this.isInvoiceReminderType(current.type)) {
+        current = await this.prepareInvoiceReminderForDelivery(current);
+        if (!current || current.status !== 'SCHEDULED') continue;
+      }
       const delivery = await this.provider.send({
         businessId: current.businessId,
         channel: current.channel,
@@ -482,8 +491,10 @@ export class CustomerCommunicationsService {
           String(quote.version),
         ),
         relatedQuoteId: quote.id,
-        scheduledFor: new Date(
-          Date.now() + settings.quoteFollowUpDelayMinutes * 60_000,
+        scheduledFor: this.addBusinessLocalMinutes(
+          quote.sentAt ?? new Date(),
+          settings.quoteFollowUpDelayMinutes,
+          business.timezone,
         ),
         template: quoteFollowUpTemplate({
           business,
@@ -533,14 +544,24 @@ export class CustomerCommunicationsService {
         String(invoice.version),
       ),
       relatedInvoiceId: invoice.id,
-      template: {
-        message: `Invoice ${invoice.invoiceNumber} from ${business.name} was sent. View it here: ${input.publicUrl}`,
-        subject: `Invoice ${invoice.invoiceNumber} from ${business.name}`,
-      },
+      template: invoiceSentTemplate({
+        business,
+        customer: invoice.customer,
+        dueDate: invoice.dueDate,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceUrl: input.publicUrl,
+        totalCents: invoice.totalCents,
+      }),
       type: 'INVOICE_SENT',
     });
     if (this.invoiceCanBeReminded(invoice)) {
       if (settings.invoiceDueSoonRemindersEnabled) {
+        const scheduledFor = this.clampPastSchedule(
+          new Date(
+            invoice.dueDate.getTime() -
+              settings.invoiceDueSoonLeadMinutes * 60_000,
+          ),
+        );
         await this.createOrSchedule(this.prisma, {
           business,
           createdBy: input.createdBy,
@@ -551,10 +572,7 @@ export class CustomerCommunicationsService {
             invoice.id,
           ),
           relatedInvoiceId: invoice.id,
-          scheduledFor: new Date(
-            invoice.dueDate.getTime() -
-              settings.invoiceDueSoonLeadMinutes * 60_000,
-          ),
+          scheduledFor,
           template: invoiceDueSoonTemplate({
             amountPaidCents: invoice.amountPaidCents,
             balanceDueCents: invoice.balanceDueCents,
@@ -569,6 +587,12 @@ export class CustomerCommunicationsService {
         });
       }
       if (settings.invoiceOverdueRemindersEnabled) {
+        const scheduledFor = this.clampPastSchedule(
+          new Date(
+            invoice.dueDate.getTime() +
+              settings.invoiceOverdueDelayMinutes * 60_000,
+          ),
+        );
         await this.createOrSchedule(this.prisma, {
           business,
           createdBy: input.createdBy,
@@ -579,10 +603,7 @@ export class CustomerCommunicationsService {
             invoice.id,
           ),
           relatedInvoiceId: invoice.id,
-          scheduledFor: new Date(
-            invoice.dueDate.getTime() +
-              settings.invoiceOverdueDelayMinutes * 60_000,
-          ),
+          scheduledFor,
           template: invoiceOverdueTemplate({
             amountPaidCents: invoice.amountPaidCents,
             balanceDueCents: invoice.balanceDueCents,
@@ -623,30 +644,32 @@ export class CustomerCommunicationsService {
         },
       }),
     ]);
-    if (!payment || !settings.paymentConfirmationsEnabled) return;
-    await this.createOrSend(this.prisma, {
-      business,
-      createdBy: input.createdBy,
-      customer: payment.invoice.customer,
-      idempotencyKey: this.idempotencyKey(
-        input.businessId,
-        'PAYMENT_RECEIVED',
-        payment.id,
-      ),
-      relatedInvoiceId: input.invoiceId,
-      relatedPaymentId: payment.id,
-      template: paymentReceivedTemplate({
-        amountCents: payment.amountCents,
-        balanceDueCents: payment.invoice.balanceDueCents,
+    if (!payment) return;
+    if (settings.paymentConfirmationsEnabled) {
+      await this.createOrSend(this.prisma, {
         business,
+        createdBy: input.createdBy,
         customer: payment.invoice.customer,
-        invoiceNumber: payment.invoice.invoiceNumber,
-        method: payment.method,
-        receivedAt: payment.receivedAt,
-        totalPaidCents: payment.invoice.amountPaidCents,
-      }),
-      type: 'PAYMENT_RECEIVED',
-    });
+        idempotencyKey: this.idempotencyKey(
+          input.businessId,
+          'PAYMENT_RECEIVED',
+          payment.id,
+        ),
+        relatedInvoiceId: input.invoiceId,
+        relatedPaymentId: payment.id,
+        template: paymentReceivedTemplate({
+          amountCents: payment.amountCents,
+          balanceDueCents: payment.invoice.balanceDueCents,
+          business,
+          customer: payment.invoice.customer,
+          invoiceNumber: payment.invoice.invoiceNumber,
+          method: payment.method,
+          receivedAt: payment.receivedAt,
+          totalPaidCents: payment.invoice.amountPaidCents,
+        }),
+        type: 'PAYMENT_RECEIVED',
+      });
+    }
     if (
       payment.invoice.balanceDueCents <= 0 ||
       payment.invoice.status === 'PAID'
@@ -655,6 +678,11 @@ export class CustomerCommunicationsService {
         relatedInvoiceId: input.invoiceId,
         types: ['INVOICE_DUE_SOON', 'INVOICE_OVERDUE'],
       });
+    } else {
+      await this.refreshPendingInvoiceReminderMessages(
+        input.businessId,
+        input.invoiceId,
+      );
     }
   }
 
@@ -835,6 +863,151 @@ export class CustomerCommunicationsService {
         status: 'CANCELLED',
       },
     });
+  }
+
+  private isInvoiceReminderType(type: string): type is InvoiceReminderType {
+    return type === 'INVOICE_DUE_SOON' || type === 'INVOICE_OVERDUE';
+  }
+
+  private async prepareInvoiceReminderForDelivery(record: {
+    businessId: string;
+    id: string;
+    message: string;
+    relatedInvoiceId: string | null;
+    status: string;
+    type: string;
+  }) {
+    if (!record.relatedInvoiceId || !this.isInvoiceReminderType(record.type)) {
+      return record as never;
+    }
+    const refreshed = await this.invoiceReminderUpdate({
+      ...record,
+      type: record.type,
+    });
+    if (!refreshed) {
+      return this.prisma.customerCommunication.update({
+        where: { id: record.id },
+        data: {
+          cancelledAt: new Date(),
+          status: 'CANCELLED',
+        },
+      });
+    }
+    return this.prisma.customerCommunication.update({
+      where: { id: record.id },
+      data: refreshed,
+    });
+  }
+
+  private async refreshPendingInvoiceReminderMessages(
+    businessId: string,
+    invoiceId: string,
+  ) {
+    const reminders = await this.prisma.customerCommunication.findMany({
+      where: {
+        businessId,
+        relatedInvoiceId: invoiceId,
+        status: 'SCHEDULED',
+        type: { in: ['INVOICE_DUE_SOON', 'INVOICE_OVERDUE'] },
+      },
+    });
+    for (const reminder of reminders) {
+      if (!this.isInvoiceReminderType(reminder.type)) continue;
+      const update = await this.invoiceReminderUpdate({
+        ...reminder,
+        type: reminder.type,
+      });
+      await this.prisma.customerCommunication.update({
+        where: { id: reminder.id },
+        data:
+          update ??
+          ({
+            cancelledAt: new Date(),
+            status: 'CANCELLED',
+          } as const),
+      });
+    }
+  }
+
+  private async invoiceReminderUpdate(record: {
+    businessId: string;
+    id: string;
+    message: string;
+    relatedInvoiceId: string | null;
+    type: InvoiceReminderType;
+  }) {
+    if (!record.relatedInvoiceId) return null;
+    const [business, invoice] = await Promise.all([
+      this.getBusiness(record.businessId),
+      this.prisma.invoice.findFirst({
+        where: { businessId: record.businessId, id: record.relatedInvoiceId },
+        include: {
+          customer: { include: { communicationPreference: true } },
+        },
+      }),
+    ]);
+    if (!invoice || !this.invoiceCanBeReminded(invoice)) return null;
+    const settings = await this.getSettings(record.businessId);
+    if (
+      (record.type === 'INVOICE_DUE_SOON' &&
+        !settings.invoiceDueSoonRemindersEnabled) ||
+      (record.type === 'INVOICE_OVERDUE' &&
+        !settings.invoiceOverdueRemindersEnabled)
+    ) {
+      return null;
+    }
+    const customer = invoice.customer;
+    const channel = this.preferredChannel(customer);
+    const recipient = this.recipientFor(customer, channel);
+    const failureReason = this.recipientFailure(customer, channel);
+    const invoiceUrl = this.invoiceUrlFromMessage(record.message);
+    const template =
+      record.type === 'INVOICE_DUE_SOON'
+        ? invoiceDueSoonTemplate({
+            amountPaidCents: invoice.amountPaidCents,
+            balanceDueCents: invoice.balanceDueCents,
+            business,
+            customer,
+            dueDate: invoice.dueDate,
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceUrl,
+            totalCents: invoice.totalCents,
+          })
+        : invoiceOverdueTemplate({
+            amountPaidCents: invoice.amountPaidCents,
+            balanceDueCents: invoice.balanceDueCents,
+            business,
+            customer,
+            dueDate: invoice.dueDate,
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceUrl,
+            totalCents: invoice.totalCents,
+          });
+    return {
+      channel,
+      failedAt: failureReason ? new Date() : null,
+      failureReason,
+      message: template.message,
+      preview: template.message.replace(/\s+/g, ' ').slice(0, 160),
+      recipient: recipient ?? 'missing-recipient',
+      status: failureReason ? 'FAILED' : 'SCHEDULED',
+      subject: template.subject,
+    } as const;
+  }
+
+  private invoiceUrlFromMessage(message: string) {
+    return (
+      message
+        .split('\n')
+        .find((line) => line.startsWith('View invoice: '))
+        ?.replace('View invoice: ', '')
+        .trim() ?? ''
+    );
+  }
+
+  private clampPastSchedule(value: Date) {
+    const now = new Date();
+    return value.getTime() < now.getTime() ? now : value;
   }
 
   private async notifyCommunicationFailure(record: {
@@ -1030,13 +1203,40 @@ export class CustomerCommunicationsService {
     );
   }
 
+  private addBusinessLocalMinutes(
+    value: Date,
+    minutes: number,
+    timezone?: string | null,
+  ) {
+    const parts = getBusinessDateParts(value, timezone ?? undefined);
+    const shiftedLocal = new Date(
+      Date.UTC(
+        parts.year,
+        parts.month - 1,
+        parts.day,
+        parts.hour,
+        parts.minute + minutes,
+        parts.second,
+      ),
+    );
+    const shiftedParts = {
+      day: shiftedLocal.getUTCDate(),
+      hour: shiftedLocal.getUTCHours(),
+      minute: shiftedLocal.getUTCMinutes(),
+      month: shiftedLocal.getUTCMonth() + 1,
+      second: shiftedLocal.getUTCSeconds(),
+      year: shiftedLocal.getUTCFullYear(),
+    };
+    return zonedTimeToUtc(shiftedParts, timezone ?? undefined);
+  }
+
   private invoiceCanBeReminded(invoice: {
     balanceDueCents: number;
     status: string;
   }) {
     return (
       invoice.balanceDueCents > 0 &&
-      ['SENT', 'VIEWED', 'PARTIALLY_PAID'].includes(invoice.status)
+      ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE'].includes(invoice.status)
     );
   }
 

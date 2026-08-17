@@ -10,6 +10,73 @@ TradieOS uses a REST API built with NestJS. API routes are prefixed with:
 
 ## Current implemented endpoints
 
+### Tori AI Workflow Assistant
+
+Tori endpoints are authenticated and tenant-scoped. They derive `businessId`,
+user id and role from the JWT and must never accept a client-supplied business
+id.
+
+```http
+GET /api/ai/tori/summary
+POST /api/ai/tori/chat
+POST /api/ai/tori/actions/:draftId/confirm
+```
+
+`GET /api/ai/tori/summary` returns a compact operational snapshot:
+
+- today's appointment count
+- unassigned appointment count
+- quotes awaiting customer response
+- outstanding invoice cents
+- overdue invoice cents
+- provider status
+- suggested prompts
+
+`POST /api/ai/tori/chat` accepts:
+
+```json
+{
+  "message": "Move Mia's appointment tomorrow to 4pm",
+  "context": {
+    "appointmentId": "optional-context-id"
+  }
+}
+```
+
+It returns a concise assistant message and, when appropriate, an `actionDraft`.
+Draft creation must not mutate business data.
+
+`POST /api/ai/tori/actions/:draftId/confirm` accepts the action draft originally
+returned by Tori:
+
+```json
+{
+  "draft": {
+    "id": "draft-id",
+    "type": "RESCHEDULE_APPOINTMENT",
+    "requiresConfirmation": true
+  }
+}
+```
+
+Confirmation re-validates role, tenant, target entity and stale state before
+calling existing workflow services. Appointment drafts include
+`expectedUpdatedAt`; if the appointment changed after Tori prepared the draft,
+the API returns `409 TORI_DRAFT_STALE`.
+
+Initial supported action draft types:
+
+- `RESCHEDULE_APPOINTMENT`
+- `REASSIGN_TECHNICIAN`
+- `CANCEL_APPOINTMENT`
+- `CREATE_APPOINTMENT`
+- `CREATE_QUOTE`
+- `CREATE_INVOICE`
+- `SEND_CUSTOMER_MESSAGE`
+
+Tori never sends a customer message, quote or invoice without an explicit
+confirm request.
+
 ### Customer communications
 
 Customer communications are tenant-scoped records for appointment

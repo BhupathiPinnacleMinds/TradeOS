@@ -116,6 +116,90 @@ When Tori makes an assumption, it should say so.
 
 Tori should use Australian English and understand Australian trade business context, including GST, ABN, suburbs, states, and local customer communication norms.
 
+## Phase 1 implementation
+
+Tori Phase 1 is implemented as a server-side workflow assistant under the
+NestJS `AiModule`. Mobile sends requests to TradieOS API only:
+
+```text
+Expo app -> /api/ai/tori -> AiService -> provider seam + tenant-scoped tools
+```
+
+The mobile app never calls OpenAI or another AI provider directly and never
+receives provider API keys.
+
+### Provider seam
+
+`AiProvider` centralises provider configuration. Local development uses
+deterministic server-side mode by default:
+
+```text
+AI_PROVIDER=local
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+If `AI_PROVIDER=openai` is configured without a server key, Tori returns a safe
+provider-status message instead of crashing. The current Phase 1 implementation
+does not depend on an external provider for business lookups or action drafts.
+
+### API surface
+
+Authenticated endpoints:
+
+```http
+GET /api/ai/tori/summary
+POST /api/ai/tori/chat
+POST /api/ai/tori/actions/:draftId/confirm
+```
+
+All endpoints derive `businessId`, user id and role from the JWT. Requests must
+not include or override `businessId`.
+
+### Read tools
+
+Tori uses compact, targeted, tenant-scoped reads for:
+
+- today and tomorrow appointments
+- named technician schedules
+- unassigned appointments
+- outstanding and overdue invoices
+- quote follow-ups / quotes waiting for customer response
+- jobs in progress
+- operational snapshot cards
+
+Technicians only see assigned appointment/job scope where existing permissions
+require it. Financial read questions require invoice/AR view roles.
+
+### Action Drafts
+
+Tori supports initial action draft types:
+
+- `RESCHEDULE_APPOINTMENT`
+- `REASSIGN_TECHNICIAN`
+- `CANCEL_APPOINTMENT`
+- `CREATE_APPOINTMENT`
+- `CREATE_QUOTE`
+- `CREATE_INVOICE`
+- `SEND_CUSTOMER_MESSAGE`
+
+Draft creation never mutates data. Confirmation calls the same appointment,
+quote, invoice and customer communication services used by the rest of
+TradieOS, so existing tenant checks, role checks, conflict checks, calculations,
+status rules and communication settings remain authoritative.
+
+Appointment drafts include `expectedUpdatedAt`. Confirmation reloads the
+appointment and rejects stale drafts if another user changed it after Tori
+prepared the action.
+
+### Data minimisation and prompt-injection protection
+
+Tori tools return compact business-friendly summaries and exclude internal ids,
+storage keys, token hashes, auth data, provider secrets and unrelated customer
+records from user-facing responses. Customer/job/field-note text is treated as
+untrusted record content and cannot override Tori's safety rules or permission
+model.
+
 ## Scheduling architecture
 
 Tori may use appointment APIs in future to answer scheduling questions such as:
@@ -125,10 +209,10 @@ Tori may use appointment APIs in future to answer scheduling questions such as:
 - Who is available tomorrow?
 - Schedule this job.
 
-The current implementation prepares tenant-scoped appointment, availability and
-calendar APIs only. Tori must still present drafts or recommendations and wait
-for explicit user confirmation before creating, moving, cancelling, notifying or
-messaging anyone about an appointment.
+The current implementation uses tenant-scoped appointment, availability and
+calendar APIs plus Tori Action Drafts. Tori must still present drafts or
+recommendations and wait for explicit user confirmation before creating, moving,
+cancelling, notifying or messaging anyone about an appointment.
 
 ## Future AI architecture
 

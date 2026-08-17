@@ -16,5 +16,6 @@ import { PublicInvoicesController } from './public-invoices.controller';
     CustomerCommunicationsModule,
   ],
   providers: [InvoicesService],
+  exports: [InvoicesService],
 })
 export class InvoicesModule {}

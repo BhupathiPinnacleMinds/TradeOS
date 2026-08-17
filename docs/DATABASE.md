@@ -26,6 +26,23 @@ vars documented in `apps/api/.env.example`.
 
 TradieOS uses PostgreSQL with Prisma. The database is multi-tenant: business-owned data is scoped to a `Business` workspace through `businessId`.
 
+## Tori Phase 1 data model
+
+Tori Phase 1 does not add a new Prisma migration. Chat history is in-session on
+mobile, and Action Drafts are structured API payloads that expire and must be
+confirmed explicitly before execution.
+
+Confirmed Tori actions reuse existing domain tables and services:
+
+- appointments for reschedule/reassign/cancel/create
+- quotes and quote line items for draft quote creation
+- invoices and invoice line items for draft invoice creation
+- customer communications for confirmed customer-message drafts
+
+Future persisted conversation/action tables may be added only when retention,
+audit, privacy and cost-control requirements are defined. Any future persisted
+Tori table must include `businessId`.
+
 ## Current implementation status
 
 Current Prisma models include:

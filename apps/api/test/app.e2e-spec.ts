@@ -6,6 +6,8 @@ import type {
   CustomerCommunicationListResponse,
   HealthResponse,
   MediaListResponse,
+  ToriChatResponse,
+  ToriSnapshot,
 } from '@tradieos/shared';
 import { APPOINTMENT_TRANSITION_ROUTE_SEGMENTS } from '@tradieos/shared';
 import request from 'supertest';
@@ -30,11 +32,59 @@ describe('Health endpoint (e2e)', () => {
         $transaction: jest.fn((input: unknown[]) => Promise.all(input)),
         businessMember: {
           findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              user: {
+                email: 'mia@example.test',
+                firstName: 'Mia',
+                id: 'user-2',
+                lastName: 'Nguyen',
+              },
+            },
+          ]),
         },
         appointment: {
+          count: jest.fn().mockResolvedValue(1),
           findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              appointmentNumber: 'APT-2026-000001',
+              assignedUser: {
+                email: 'mia@example.test',
+                firstName: 'Mia',
+                lastName: 'Nguyen',
+              },
+              job: {
+                customer: { displayName: 'RamaReddy' },
+                title: 'Pipe leak',
+              },
+              scheduledEnd: new Date('2026-08-14T01:30:00.000Z'),
+              scheduledStart: new Date('2026-08-14T00:30:00.000Z'),
+            },
+          ]),
+        },
+        business: {
+          findUnique: jest.fn().mockResolvedValue({
+            gstRegistered: true,
+            id: 'business-1',
+            name: 'Demo Tradie Co',
+            timezone: 'Australia/Melbourne',
+          }),
         },
         mediaAsset: {
+          count: jest.fn().mockResolvedValue(0),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        invoice: {
+          aggregate: jest
+            .fn()
+            .mockResolvedValue({ _sum: { balanceDueCents: 0 } }),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        job: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        quote: {
           count: jest.fn().mockResolvedValue(0),
           findMany: jest.fn().mockResolvedValue([]),
         },
@@ -95,6 +145,75 @@ describe('Health endpoint (e2e)', () => {
     expect(response.text).not.toContain('Cannot GET');
     const body = response.body as CustomerCommunicationListResponse;
     expect(body.records).toEqual([]);
+  });
+
+  it('GET /api/ai/tori/summary is registered and returns structured JSON', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/ai/tori/summary')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.type).toContain('json');
+    expect(response.text).not.toContain('Cannot GET');
+    const body = response.body as {
+      snapshot: ToriSnapshot;
+    };
+    expect(body.snapshot.todayAppointments).toBe(1);
+  });
+
+  it('POST /api/ai/tori/chat is registered and returns a structured Tori response', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: "What's happening today?" })
+      .expect(201);
+
+    expect(response.type).toContain('json');
+    expect(response.text).not.toContain('Cannot POST');
+    const body = response.body as ToriChatResponse;
+    expect(body.message.role).toBe('assistant');
+    expect(body.message.content).toContain('Appointments today');
+  });
+
+  it('POST /api/ai/tori/actions/:draftId/confirm is registered and returns structured JSON', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/ai/tori/actions/missing-draft/confirm')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        draft: {
+          expiresAt: '2099-01-01T00:00:00.000Z',
+          id: 'missing-draft',
+          payload: {
+            appointmentId: 'missing-appointment',
+            expectedUpdatedAt: '2099-01-01T00:00:00.000Z',
+            type: 'CANCEL_APPOINTMENT',
+          },
+          type: 'CANCEL_APPOINTMENT',
+        },
+      })
+      .expect(404);
+
+    expect(response.type).toContain('json');
+    expect(response.text).not.toContain('Cannot POST');
+    expect(response.body).toMatchObject({
+      code: 'TORI_ENTITY_NOT_FOUND',
+      message: 'This appointment could not be found.',
+    });
+  });
+
+  it('unsupported Tori endpoints return structured JSON', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/ai/tori/unsupported')
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(404);
+
+    expect(response.type).toContain('json');
+    expect(response.text).not.toContain('Cannot POST');
+    expect(response.body).toMatchObject({
+      code: 'TORI_ENDPOINT_NOT_FOUND',
+      message: 'That Tori endpoint is not available.',
+    });
   });
 
   it.each<AppointmentTransitionAction>([

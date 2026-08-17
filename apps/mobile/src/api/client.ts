@@ -51,6 +51,12 @@ import type {
   TeamMemberDetailResponse,
   TeamMember,
   SkipAppointmentSignaturePayload,
+  ConfirmToriActionRequest,
+  ToriActionConfirmResponse,
+  ToriChatRequest,
+  ToriChatResponse,
+  ToriSnapshot,
+  ToriProviderStatus,
 } from '@tradieos/shared';
 import { buildAppointmentTransitionPath } from '@tradieos/shared';
 
@@ -836,6 +842,18 @@ export function acceptQuoteRequest(
   });
 }
 
+export function declineQuoteRequest(
+  token: string,
+  quoteId: string,
+  reason?: string,
+) {
+  return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/decline`, {
+    body: JSON.stringify({ reason }),
+    method: 'POST',
+    token,
+  });
+}
+
 export function cancelQuoteRequest(
   token: string,
   quoteId: string,
@@ -1157,6 +1175,37 @@ export function mediaRequest(
 
 export function mediaDetailRequest(token: string, mediaId: string) {
   return apiRequest<MediaDetailResponse>(`/media/${mediaId}`, { token });
+}
+
+export function toriSummaryRequest(token: string) {
+  return apiRequest<{
+    provider: ToriProviderStatus;
+    snapshot: ToriSnapshot;
+    suggestedPrompts: string[];
+  }>('/ai/tori/summary', { token });
+}
+
+export function toriChatRequest(token: string, input: ToriChatRequest) {
+  return apiRequest<ToriChatResponse>('/ai/tori/chat', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function confirmToriActionRequest(
+  token: string,
+  draftId: string,
+  input: ConfirmToriActionRequest,
+) {
+  return apiRequest<ToriActionConfirmResponse>(
+    `/ai/tori/actions/${draftId}/confirm`,
+    {
+      body: JSON.stringify(input),
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export function createMediaUploadTargetRequest(

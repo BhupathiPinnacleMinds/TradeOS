@@ -79,6 +79,20 @@ Quote sending in local development uses the console email/provider seam and
 logs a quote preview URL. Real customer email delivery and public customer
 acceptance tokens require the production email/customer-portal provider setup.
 
+Tori runs through the API, never directly from the mobile app to an AI vendor.
+Local development defaults to deterministic server-side mode:
+
+```bash
+AI_PROVIDER=local
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+Set `AI_PROVIDER=openai` and provide `OPENAI_API_KEY` only on the server when a
+real provider is connected. Do not put AI provider keys in Expo/mobile env
+files. If no key is configured, Tori still renders safely and uses local
+deterministic business queries/action drafts.
+
 The local seed creates:
 
 - 1 demo business: `Demo Tradie Co`
