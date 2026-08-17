@@ -49,6 +49,23 @@ describe('Tori chat mobile/API contracts', () => {
     expect(screen).toContain('setInput(content);');
   });
 
+  it('stores returned Tori context and sends it with the next chat request', () => {
+    const screen = readWorkspaceFile(
+      'apps/mobile/src/screens/ToriChatScreen.tsx',
+    );
+
+    expect(screen).toContain(
+      'const [toriContext, setToriContext] = useState<ToriContext>({});',
+    );
+    expect(screen).toContain('context: toriContext');
+    expect(screen).toContain(
+      'if (response.context) setToriContext(response.context);',
+    );
+    expect(screen).toContain(
+      'if (result.context) setToriContext(result.context);',
+    );
+  });
+
   it('labels action drafts with the action type and specific confirm text', () => {
     const screen = readWorkspaceFile(
       'apps/mobile/src/screens/ToriChatScreen.tsx',

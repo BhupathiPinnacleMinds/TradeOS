@@ -64,14 +64,18 @@ export interface ToriContext {
   pendingQuestion?: {
     type:
       | 'YES_NO'
+      | 'APPOINTMENT_CUSTOMER'
+      | 'APPOINTMENT_JOB'
       | 'APPOINTMENT_DATE'
       | 'APPOINTMENT_TIME'
       | 'APPOINTMENT_DURATION'
       | 'CUSTOMER_NAME'
       | 'CUSTOMER_CONTACT'
+      | 'JOB_TITLE'
       | 'JOB_ADDRESS';
     intent:
       | 'CREATE_APPOINTMENT_FOR_JOB'
+      | 'CREATE_JOB'
       | 'CREATE_CUSTOMER'
       | 'CREATE_CUSTOMER_AND_JOB';
   };
@@ -99,10 +103,21 @@ export interface ToriContext {
       postcode?: string;
     };
   };
+  pendingJob?: {
+    customerId?: string;
+    customerName?: string;
+    title?: string;
+    description?: string;
+    addressLine1?: string;
+    suburb?: string;
+    state?: string;
+    postcode?: string;
+    resumeAppointment?: ToriContext['pendingAppointment'];
+  };
   pendingAppointment?: {
     customerId?: string;
     customerName?: string;
-    jobId: string;
+    jobId?: string;
     jobNumber?: string;
     jobTitle?: string;
     serviceLocation?: {
@@ -180,6 +195,7 @@ export type ToriActionPayload =
   | {
       type: 'CREATE_JOB';
       jobPayload: JobPayload;
+      resumeAppointment?: ToriContext['pendingAppointment'];
     }
   | {
       type: 'CREATE_CUSTOMER_AND_JOB';

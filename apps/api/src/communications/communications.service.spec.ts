@@ -741,47 +741,52 @@ describe('CustomerCommunicationsService', () => {
   });
 
   it('creates invoice sent history and schedules due soon and overdue reminders', async () => {
+    jest.useFakeTimers().setSystemTime(makeDate('2026-08-14T04:00:00.000Z'));
     const { provider, records, service } = createHarness();
 
-    await service.invoiceSent({
-      businessId: owner.businessId,
-      createdBy: owner.id,
-      invoiceId: 'invoice-1',
-      publicUrl: 'http://localhost:3000/public/invoices/demo-token',
-    });
+    try {
+      await service.invoiceSent({
+        businessId: owner.businessId,
+        createdBy: owner.id,
+        invoiceId: 'invoice-1',
+        publicUrl: 'http://localhost:3000/public/invoices/demo-token',
+      });
 
-    expect(records.map((record) => record.type)).toEqual([
-      'INVOICE_SENT',
-      'INVOICE_DUE_SOON',
-      'INVOICE_OVERDUE',
-    ]);
-    expect(records[0]).toMatchObject({
-      relatedInvoiceId: 'invoice-1',
-      status: 'SENT',
-      type: 'INVOICE_SENT',
-    });
-    expect(String(records[0].message)).toContain('Invoice total: $880.00');
-    expect(String(records[0].message)).toContain('Due date: 20/08/2026');
-    expect(String(records[0].message)).toContain(
-      'View invoice: http://localhost:3000/public/invoices/demo-token',
-    );
-    expect(records[1]).toMatchObject({
-      relatedInvoiceId: 'invoice-1',
-      status: 'SCHEDULED',
-      type: 'INVOICE_DUE_SOON',
-    });
-    expect((records[1].scheduledFor as Date).toISOString()).toBe(
-      '2026-08-17T04:00:00.000Z',
-    );
-    expect(records[2]).toMatchObject({
-      relatedInvoiceId: 'invoice-1',
-      status: 'SCHEDULED',
-      type: 'INVOICE_OVERDUE',
-    });
-    expect((records[2].scheduledFor as Date).toISOString()).toBe(
-      '2026-08-21T04:00:00.000Z',
-    );
-    expect(provider.send).toHaveBeenCalledTimes(1);
+      expect(records.map((record) => record.type)).toEqual([
+        'INVOICE_SENT',
+        'INVOICE_DUE_SOON',
+        'INVOICE_OVERDUE',
+      ]);
+      expect(records[0]).toMatchObject({
+        relatedInvoiceId: 'invoice-1',
+        status: 'SENT',
+        type: 'INVOICE_SENT',
+      });
+      expect(String(records[0].message)).toContain('Invoice total: $880.00');
+      expect(String(records[0].message)).toContain('Due date: 20/08/2026');
+      expect(String(records[0].message)).toContain(
+        'View invoice: http://localhost:3000/public/invoices/demo-token',
+      );
+      expect(records[1]).toMatchObject({
+        relatedInvoiceId: 'invoice-1',
+        status: 'SCHEDULED',
+        type: 'INVOICE_DUE_SOON',
+      });
+      expect((records[1].scheduledFor as Date).toISOString()).toBe(
+        '2026-08-17T04:00:00.000Z',
+      );
+      expect(records[2]).toMatchObject({
+        relatedInvoiceId: 'invoice-1',
+        status: 'SCHEDULED',
+        type: 'INVOICE_OVERDUE',
+      });
+      expect((records[2].scheduledFor as Date).toISOString()).toBe(
+        '2026-08-21T04:00:00.000Z',
+      );
+      expect(provider.send).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not schedule invoice reminders when invoice reminder settings are off', async () => {

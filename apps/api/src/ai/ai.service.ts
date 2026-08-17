@@ -120,6 +120,17 @@ type CustomerMatch = {
   }>;
 };
 
+type ToriAppointmentLocation = {
+  accessInstructions?: string | null;
+  addressLine1: string;
+  addressLine2?: string | null;
+  customerSiteId: string | null;
+  locationSource: AppointmentPayload['locationSource'];
+  postcode: string;
+  state: AppointmentPayload['state'];
+  suburb: string;
+};
+
 type AppointmentWithContext = Prisma.AppointmentGetPayload<{
   include: {
     assignedUser: true;
@@ -175,14 +186,21 @@ export class AiService {
       responseContext = this.clearPendingContext(request.context);
     } else if (
       this.isNegativeConfirmation(lower) &&
-      request.context?.pendingQuestion?.intent === 'CREATE_APPOINTMENT_FOR_JOB'
+      request.context?.pendingQuestion?.intent ===
+        'CREATE_APPOINTMENT_FOR_JOB' &&
+      (request.context.pendingQuestion.type === 'YES_NO' ||
+        request.context.pendingQuestion.type === 'APPOINTMENT_JOB')
     ) {
       content =
-        'Okay. The customer and job remain created. No appointment was created.';
+        request.context.pendingQuestion.type === 'APPOINTMENT_JOB'
+          ? 'Okay. No job or appointment was created.'
+          : 'Okay. The customer and job remain created. No appointment was created.';
       responseContext = this.clearPendingContext(request.context);
     } else if (
       this.isPositiveConfirmation(lower) &&
-      request.context?.pendingQuestion?.intent === 'CREATE_APPOINTMENT_FOR_JOB'
+      request.context?.pendingQuestion?.intent ===
+        'CREATE_APPOINTMENT_FOR_JOB' &&
+      request.context.pendingQuestion.type === 'YES_NO'
     ) {
       ({
         content,
@@ -193,6 +211,33 @@ export class AiService {
         text,
         request.context,
       ));
+    } else if (
+      this.isNegativeConfirmation(lower) &&
+      request.context?.pendingQuestion?.intent === 'CREATE_JOB'
+    ) {
+      content =
+        'Okay. I cancelled that job draft workflow. No TradieOS data changed.';
+      responseContext = this.clearPendingContext(request.context);
+    } else if (
+      request.context?.pendingQuestion?.intent === 'CREATE_JOB' &&
+      this.looksLikeReadQuestion(lower)
+    ) {
+      content = await this.answerReadQuestion(currentUser, business, text);
+      responseContext = request.context;
+    } else if (
+      request.context?.pendingQuestion?.intent === 'CREATE_JOB' ||
+      (request.context?.pendingQuestion?.intent ===
+        'CREATE_APPOINTMENT_FOR_JOB' &&
+        request.context.pendingQuestion.type === 'APPOINTMENT_JOB' &&
+        (this.isPositiveConfirmation(lower) ||
+          this.looksLikeCreateJob(lower, request) ||
+          this.looksLikeExplicitCreateJob(lower)))
+    ) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.prepareJobDraft(currentUser, business, text, request));
     } else if (request.context?.pendingAppointment) {
       ({
         content,
@@ -678,6 +723,21 @@ export class AiService {
     payload: Extract<ToriActionPayload, { type: 'CREATE_JOB' }>,
   ): Promise<ToriActionConfirmResponse> {
     const result = await this.jobs.create(currentUser, payload.jobPayload);
+    if (payload.resumeAppointment) {
+      const context = this.appointmentResumeContextFromCreatedJob(result.job);
+      return {
+        details: [
+          { label: 'Job', value: result.job.jobNumber },
+          { label: 'Customer', value: result.job.customer.displayName },
+          { label: 'Title', value: result.job.title },
+        ],
+        entityId: result.job.id,
+        entityType: 'JOB',
+        message: `Job ${result.job.jobNumber} created for ${result.job.customer.displayName}. Now let's finish the appointment. What date and time should I book it for?`,
+        context,
+        status: 'COMPLETED',
+      };
+    }
     return {
       details: [
         { label: 'Job', value: result.job.jobNumber },
@@ -740,6 +800,47 @@ export class AiService {
         state: job.state,
         suburb: job.suburb,
       },
+    };
+  }
+
+  private appointmentResumeContextFromCreatedJob(job: {
+    id: string;
+    jobNumber?: string;
+    title: string;
+    customerId?: string;
+    customer?: { id?: string; displayName?: string };
+    addressLine1: string;
+    suburb: string;
+    state: string;
+    postcode: string;
+  }): ToriContext {
+    const customerId = job.customer?.id ?? job.customerId;
+    const customerName = job.customer?.displayName;
+    const serviceLocation = {
+      addressLine1: job.addressLine1,
+      postcode: job.postcode,
+      state: job.state,
+      suburb: job.suburb,
+    };
+    return {
+      customerId,
+      customerName,
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      jobTitle: job.title,
+      pendingAppointment: {
+        customerId,
+        customerName,
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        jobTitle: job.title,
+        serviceLocation,
+      },
+      pendingQuestion: {
+        intent: 'CREATE_APPOINTMENT_FOR_JOB',
+        type: 'APPOINTMENT_DATE',
+      },
+      serviceLocation,
     };
   }
 
@@ -1209,6 +1310,113 @@ export class AiService {
     if (!pending) {
       return { content: 'What appointment should I prepare?' };
     }
+    const questionType = context.pendingQuestion?.type;
+    if (
+      (!pending.customerId && !pending.jobId) ||
+      questionType === 'APPOINTMENT_CUSTOMER'
+    ) {
+      const dateTimeCandidate = this.parseAppointmentDateTimeParts(
+        text,
+        business.timezone,
+      );
+      if (dateTimeCandidate.date || dateTimeCandidate.time) {
+        return {
+          content:
+            'I still need to know which customer this appointment is for before I can use a date and time.',
+          context,
+        };
+      }
+      const customer = await this.resolveCustomer(
+        currentUser.businessId,
+        text,
+        pending.customerId ?? context.customerId,
+        text,
+      );
+      if (!customer.match) {
+        return {
+          content:
+            customer.message === 'Which customer should I use?'
+              ? 'Which customer is this appointment for?'
+              : `${customer.message} Please choose an existing customer before I prepare the appointment.`,
+          context,
+        };
+      }
+      const jobResult = await this.resolveAppointmentJobForCustomer(
+        currentUser.businessId,
+        customer.match.id,
+      );
+      if (!jobResult.job) {
+        return {
+          content: jobResult.message.includes('prepare a job')
+            ? `I found ${customer.match.displayName}, but there isn't an active job to schedule. Would you like me to prepare a job for ${customer.match.displayName}?`
+            : jobResult.message,
+          context: {
+            ...context,
+            customerId: customer.match.id,
+            customerName: customer.match.displayName,
+            pendingAppointment: {
+              ...pending,
+              customerId: customer.match.id,
+              customerName: customer.match.displayName,
+            },
+            pendingQuestion: {
+              intent: 'CREATE_APPOINTMENT_FOR_JOB',
+              type: 'APPOINTMENT_JOB',
+            },
+          },
+        };
+      }
+      return {
+        content: `I’ll use ${customer.match.displayName}'s ${jobResult.job.jobNumber} — ${jobResult.job.title} job. What date and time should I book the appointment for?`,
+        context: {
+          ...context,
+          customerId: customer.match.id,
+          customerName: customer.match.displayName,
+          jobId: jobResult.job.id,
+          jobNumber: jobResult.job.jobNumber,
+          jobTitle: jobResult.job.title,
+          pendingAppointment: this.pendingAppointmentFromJob(jobResult.job),
+          pendingQuestion: {
+            intent: 'CREATE_APPOINTMENT_FOR_JOB',
+            type: 'APPOINTMENT_DATE',
+          },
+          serviceLocation: this.jobServiceLocation(jobResult.job),
+        },
+      };
+    }
+    if (!pending.jobId || questionType === 'APPOINTMENT_JOB') {
+      const selectedJob = pending.customerId
+        ? await this.resolveAppointmentJobSelection(
+            currentUser.businessId,
+            pending.customerId,
+            text,
+          )
+        : null;
+      if (selectedJob) {
+        return {
+          content: `I’ll use ${selectedJob.jobNumber} — ${selectedJob.title}. What date and time should I book the appointment for?`,
+          context: {
+            ...context,
+            customerId: selectedJob.customerId,
+            customerName: selectedJob.customer.displayName,
+            jobId: selectedJob.id,
+            jobNumber: selectedJob.jobNumber,
+            jobTitle: selectedJob.title,
+            pendingAppointment: this.pendingAppointmentFromJob(selectedJob),
+            pendingQuestion: {
+              intent: 'CREATE_APPOINTMENT_FOR_JOB',
+              type: 'APPOINTMENT_DATE',
+            },
+            serviceLocation: this.jobServiceLocation(selectedJob),
+          },
+        };
+      }
+      return {
+        content:
+          'Which active job should I use for this appointment? Please send the job number, or say "create a job" if you need a new one.',
+        context,
+      };
+    }
     const job = await this.loadAppointmentJob(
       currentUser.businessId,
       pending.jobId,
@@ -1221,7 +1429,6 @@ export class AiService {
       };
     }
 
-    const questionType = context.pendingQuestion?.type;
     if (!pending.date || questionType === 'APPOINTMENT_DATE') {
       const dateTime = this.parseAppointmentDateTimeParts(
         text,
@@ -1316,7 +1523,7 @@ export class AiService {
     business: BusinessSummary,
     text: string,
     context?: ToriContext,
-  ) {
+  ): Promise<DraftPreparation> {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     if (context?.pendingAppointment) {
       return this.continueAppointmentDraft(
@@ -1326,6 +1533,7 @@ export class AiService {
         context,
       );
     }
+    const targetTime = this.parseTargetDateTime(text, business.timezone);
     if (context?.jobId && !this.parseTargetDateTime(text, business.timezone)) {
       return this.beginAppointmentFromContext(currentUser, text, {
         ...context,
@@ -1335,7 +1543,6 @@ export class AiService {
         },
       });
     }
-    const targetTime = this.parseTargetDateTime(text, business.timezone);
     if (!targetTime) {
       if (context?.customerId) {
         const job = await this.prisma.job.findFirst({
@@ -1363,7 +1570,15 @@ export class AiService {
         };
       }
       return {
-        content: 'What date and time should I book the appointment for?',
+        content: 'Which customer is this appointment for?',
+        context: {
+          ...this.clearPendingContext(context),
+          pendingAppointment: {},
+          pendingQuestion: {
+            intent: 'CREATE_APPOINTMENT_FOR_JOB',
+            type: 'APPOINTMENT_CUSTOMER',
+          },
+        },
       };
     }
     const customer = await this.resolveCustomer(
@@ -1374,9 +1589,15 @@ export class AiService {
     if (!customer.match) return { content: customer.message };
     const job = context?.jobId
       ? await this.prisma.job.findFirst({
+          include: {
+            customer: { include: { sites: { where: { isArchived: false } } } },
+          },
           where: { businessId: currentUser.businessId, id: context.jobId },
         })
       : await this.prisma.job.findFirst({
+          include: {
+            customer: { include: { sites: { where: { isArchived: false } } } },
+          },
           where: {
             businessId: currentUser.businessId,
             customerId: customer.match.id,
@@ -1397,28 +1618,34 @@ export class AiService {
     );
     const duration = this.parseDurationMinutes(text) ?? 60;
     const end = new Date(targetTime.getTime() + duration * 60_000);
-    const site = customer.match.sites.find((item) => item.isPrimary) ?? null;
+    const location = this.appointmentLocationFromJob(job);
+    if (!location) {
+      return {
+        content:
+          'I need a service location before I can prepare an appointment draft. Which service address should I use?',
+      };
+    }
     const draft = this.actionDraft({
       description: `Book ${customer.match.displayName} for ${formatBusinessDateTime(targetTime, business.timezone)}.`,
       entityId: null,
       entityType: 'APPOINTMENT',
       payload: {
         appointmentPayload: {
-          accessInstructions: site?.accessInstructions ?? undefined,
-          addressLine1: site?.addressLine1 ?? job.addressLine1,
-          addressLine2: site?.addressLine2 ?? job.addressLine2 ?? undefined,
+          accessInstructions: location.accessInstructions ?? undefined,
+          addressLine1: location.addressLine1,
+          addressLine2: location.addressLine2 ?? undefined,
           appointmentType: 'INSPECTION',
           assignedUserId: technician?.id ?? null,
-          customerSiteId: site?.id ?? null,
+          customerSiteId: location.customerSiteId,
           estimatedDurationMinutes: duration,
           jobId: job.id,
-          locationSource: site ? 'CUSTOMER_SITE' : 'CUSTOMER_DEFAULT',
+          locationSource: location.locationSource,
           notes: 'Prepared by Tori. Review before saving.',
-          postcode: site?.postcode ?? job.postcode,
+          postcode: location.postcode,
           scheduledEnd: end.toISOString(),
           scheduledStart: targetTime.toISOString(),
-          state: (site?.state ?? job.state) as AppointmentPayload['state'],
-          suburb: site?.suburb ?? job.suburb,
+          state: location.state,
+          suburb: location.suburb,
         },
         type: 'CREATE_APPOINTMENT',
       },
@@ -1532,24 +1759,94 @@ export class AiService {
     request: ToriChatRequest,
   ): Promise<DraftPreparation> {
     this.assertRole(currentUser, JOB_WRITE_ROLES);
-    const slots = this.jobSlots(text, request);
+    const existingPendingJob = request.context?.pendingJob;
+    const resumeAppointment =
+      existingPendingJob?.resumeAppointment ??
+      (request.context?.pendingQuestion?.intent ===
+        'CREATE_APPOINTMENT_FOR_JOB' &&
+      request.context.pendingQuestion.type === 'APPOINTMENT_JOB'
+        ? request.context.pendingAppointment
+        : undefined);
+    const pendingSlots: JobDraftSlots = {
+      addressLine1: existingPendingJob?.addressLine1,
+      customerId:
+        existingPendingJob?.customerId ??
+        request.context?.pendingAppointment?.customerId,
+      customerName:
+        existingPendingJob?.customerName ??
+        request.context?.pendingAppointment?.customerName,
+      description: existingPendingJob?.description,
+      postcode: existingPendingJob?.postcode,
+      state:
+        existingPendingJob?.state &&
+        this.isAustralianState(existingPendingJob.state)
+          ? existingPendingJob.state
+          : undefined,
+      suburb: existingPendingJob?.suburb,
+      title: existingPendingJob?.title,
+    };
+    const slots = this.mergeJobSlotsForCurrentTurn(pendingSlots, text, request);
     const customer = await this.resolveCustomerForJob(
       currentUser.businessId,
       slots.customerName,
-      request.context?.customerId,
+      slots.customerId ?? request.context?.customerId,
     );
     if (!customer.match) return { content: customer.message };
-    const site = customer.match.sites.find((item) => item.isPrimary) ?? null;
-    const address = this.jobAddressFromSlotsOrCustomer(slots, customer.match);
-    if (!address) {
+    const site = this.singleUsableServiceSite(customer.match);
+    const title = slots.title ?? '';
+    if (!title) {
+      const expectedTitle =
+        request.context?.pendingQuestion?.intent === 'CREATE_JOB' &&
+        request.context.pendingQuestion.type === 'JOB_TITLE';
       return {
-        content:
-          'I found the customer. What service address should I use for this job?',
+        content: expectedTitle
+          ? 'That does not look like a job title I can use. What is the job for?'
+          : 'What is the job for?',
+        context: {
+          ...request.context,
+          customerId: customer.match.id,
+          customerName: customer.match.displayName,
+          pendingJob: {
+            ...slots,
+            customerId: customer.match.id,
+            customerName: customer.match.displayName,
+            resumeAppointment,
+          },
+          pendingQuestion: {
+            intent: 'CREATE_JOB',
+            type: 'JOB_TITLE',
+          },
+        },
       };
     }
-    const title = slots.title ?? this.extractJobTitle(text) ?? '';
-    if (!title) {
-      return { content: 'What should I call this job?' };
+    const address = this.jobAddressFromSlotsOrCustomer(slots, customer.match);
+    if (!address) {
+      const hasMultipleSites = customer.match.sites.length > 1;
+      const expectedAddress =
+        request.context?.pendingQuestion?.intent === 'CREATE_JOB' &&
+        request.context.pendingQuestion.type === 'JOB_ADDRESS';
+      return {
+        content: expectedAddress
+          ? 'That does not look like a service address. Please send the street, suburb, state if known, and postcode.'
+          : hasMultipleSites
+            ? 'I found multiple service addresses for this customer. Which service address should I use for this job?'
+            : 'I found the customer. What service address should I use for this job?',
+        context: {
+          ...request.context,
+          customerId: customer.match.id,
+          customerName: customer.match.displayName,
+          pendingJob: {
+            ...slots,
+            customerId: customer.match.id,
+            customerName: customer.match.displayName,
+            resumeAppointment,
+          },
+          pendingQuestion: {
+            intent: 'CREATE_JOB',
+            type: 'JOB_ADDRESS',
+          },
+        },
+      };
     }
     const scheduledStart = this.defaultJobStart(business.timezone);
     const jobPayload: JobPayload = {
@@ -1571,7 +1868,7 @@ export class AiService {
       description: `Create a job for ${customer.match.displayName}.`,
       entityId: null,
       entityType: 'JOB',
-      payload: { jobPayload, type: 'CREATE_JOB' },
+      payload: { jobPayload, resumeAppointment, type: 'CREATE_JOB' },
       proposedChanges: [
         { label: 'Customer', to: customer.match.displayName },
         { label: 'Job', to: title },
@@ -1591,6 +1888,23 @@ export class AiService {
       actionDraft: draft,
       content:
         'I prepared a job draft. Nothing has been created yet—confirm it if it looks right.',
+      context: {
+        ...request.context,
+        customerId: customer.match.id,
+        customerName: customer.match.displayName,
+        pendingJob: {
+          ...slots,
+          ...address,
+          customerId: customer.match.id,
+          customerName: customer.match.displayName,
+          resumeAppointment,
+          title,
+        },
+        pendingQuestion: {
+          intent: 'CREATE_JOB',
+          type: 'JOB_TITLE',
+        },
+      },
     };
   }
 
@@ -1987,6 +2301,7 @@ export class AiService {
     businessId: string,
     text: string,
     contextCustomerId?: string,
+    slotSearch?: string,
   ): Promise<{ match: CustomerMatch | null; message: string }> {
     if (contextCustomerId) {
       const customer = await this.prisma.customer.findFirst({
@@ -1995,7 +2310,7 @@ export class AiService {
       });
       if (customer) return { match: customer, message: '' };
     }
-    const candidate = this.extractCustomerSearch(text);
+    const candidate = this.extractCustomerSearch(text) || slotSearch?.trim();
     if (!candidate) {
       return {
         match: null,
@@ -2184,6 +2499,71 @@ export class AiService {
     });
   }
 
+  private async resolveAppointmentJobForCustomer(
+    businessId: string,
+    customerId: string,
+  ): Promise<{
+    job: NonNullable<
+      Awaited<ReturnType<AiService['loadAppointmentJob']>>
+    > | null;
+    message: string;
+  }> {
+    const jobs = await this.prisma.job.findMany({
+      include: {
+        customer: { include: { sites: { where: { isArchived: false } } } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+      where: {
+        businessId,
+        customerId,
+        isArchived: false,
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      },
+    });
+    if (jobs.length === 1) return { job: jobs[0], message: '' };
+    if (jobs.length > 1) {
+      return {
+        job: null,
+        message: `I found multiple active jobs for that customer. Which job should I schedule? ${jobs
+          .map((job) => `${job.jobNumber} — ${job.title}`)
+          .join('; ')}`,
+      };
+    }
+    return {
+      job: null,
+      message: `I found that customer, but they don't have an active job to schedule. Would you like me to prepare a job for them?`,
+    };
+  }
+
+  private async resolveAppointmentJobSelection(
+    businessId: string,
+    customerId: string,
+    text: string,
+  ) {
+    const lower = text.toLowerCase();
+    const jobs = await this.prisma.job.findMany({
+      include: {
+        customer: { include: { sites: { where: { isArchived: false } } } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+      where: {
+        businessId,
+        customerId,
+        isArchived: false,
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      },
+    });
+    return (
+      jobs.find(
+        (job) =>
+          lower.includes(job.jobNumber.toLowerCase()) ||
+          lower.includes(job.title.toLowerCase()),
+      ) ?? null
+    );
+  }
+
   private appointmentPendingFromContext(context: ToriContext) {
     const jobId = context.pendingAppointment?.jobId ?? context.jobId;
     if (!jobId) {
@@ -2230,14 +2610,152 @@ export class AiService {
     };
   }
 
+  private appointmentLocationFromJob(job: {
+    accessInstructions?: string | null;
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    postcode?: string | null;
+    state?: string | null;
+    suburb?: string | null;
+    customer: {
+      addressLine1?: string | null;
+      addressLine2?: string | null;
+      postcode?: string | null;
+      state?: string | null;
+      suburb?: string | null;
+      sites: Array<{
+        id: string;
+        accessInstructions?: string | null;
+        addressLine1: string;
+        addressLine2?: string | null;
+        postcode: string;
+        state: string;
+        suburb: string;
+        isPrimary: boolean;
+      }>;
+    };
+  }): ToriAppointmentLocation | null {
+    const matchingSite = job.customer.sites.find((site) =>
+      this.addressesMatch(site, job),
+    );
+    if (matchingSite) {
+      return {
+        accessInstructions: matchingSite.accessInstructions,
+        addressLine1: matchingSite.addressLine1,
+        addressLine2: matchingSite.addressLine2,
+        customerSiteId: matchingSite.id,
+        locationSource: 'CUSTOMER_SITE',
+        postcode: matchingSite.postcode,
+        state: matchingSite.state as AppointmentPayload['state'],
+        suburb: matchingSite.suburb,
+      };
+    }
+
+    if (this.hasCompleteAddress(job)) {
+      return {
+        accessInstructions: job.accessInstructions,
+        addressLine1: job.addressLine1,
+        addressLine2: job.addressLine2,
+        customerSiteId: null,
+        locationSource: 'MANUAL',
+        postcode: job.postcode,
+        state: job.state as AppointmentPayload['state'],
+        suburb: job.suburb,
+      };
+    }
+
+    const site = this.singleUsableSite(job.customer.sites);
+    if (site) {
+      return {
+        accessInstructions: site.accessInstructions,
+        addressLine1: site.addressLine1,
+        addressLine2: site.addressLine2,
+        customerSiteId: site.id,
+        locationSource: 'CUSTOMER_SITE',
+        postcode: site.postcode,
+        state: site.state as AppointmentPayload['state'],
+        suburb: site.suburb,
+      };
+    }
+
+    if (this.hasCompleteAddress(job.customer)) {
+      return {
+        accessInstructions: null,
+        addressLine1: job.customer.addressLine1,
+        addressLine2: job.customer.addressLine2,
+        customerSiteId: null,
+        locationSource: 'CUSTOMER_DEFAULT',
+        postcode: job.customer.postcode,
+        state: job.customer.state as AppointmentPayload['state'],
+        suburb: job.customer.suburb,
+      };
+    }
+
+    return null;
+  }
+
+  private hasCompleteAddress(address: {
+    addressLine1?: string | null;
+    postcode?: string | null;
+    state?: string | null;
+    suburb?: string | null;
+  }): address is {
+    addressLine1: string;
+    postcode: string;
+    state: string;
+    suburb: string;
+  } {
+    return Boolean(
+      address.addressLine1 &&
+      address.suburb &&
+      address.state &&
+      address.postcode,
+    );
+  }
+
+  private addressesMatch(
+    left: {
+      addressLine1?: string | null;
+      postcode?: string | null;
+      state?: string | null;
+      suburb?: string | null;
+    },
+    right: {
+      addressLine1?: string | null;
+      postcode?: string | null;
+      state?: string | null;
+      suburb?: string | null;
+    },
+  ) {
+    return (
+      this.addressPart(left.addressLine1) ===
+        this.addressPart(right.addressLine1) &&
+      this.addressPart(left.suburb) === this.addressPart(right.suburb) &&
+      this.addressPart(left.state) === this.addressPart(right.state) &&
+      this.addressPart(left.postcode) === this.addressPart(right.postcode)
+    );
+  }
+
+  private addressPart(value?: string | null) {
+    return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
+  }
+
   private async appointmentDraftFromPending(
     currentUser: AuthenticatedUser,
     business: BusinessSummary,
     context: ToriContext,
   ): Promise<DraftPreparation> {
     const pending = context.pendingAppointment;
-    if (!pending?.date || !pending.time || !pending.durationMinutes) {
-      return { content: 'I still need the date, start time and duration.' };
+    if (
+      !pending?.jobId ||
+      !pending.date ||
+      !pending.time ||
+      !pending.durationMinutes
+    ) {
+      return {
+        content:
+          'I still need the customer, job, date, start time and duration.',
+      };
     }
     const job = await this.loadAppointmentJob(
       currentUser.businessId,
@@ -2257,23 +2775,30 @@ export class AiService {
       business.timezone,
     );
     const end = new Date(start.getTime() + pending.durationMinutes * 60_000);
-    const site = job.customer.sites.find((item) => item.isPrimary) ?? null;
+    const location = this.appointmentLocationFromJob(job);
+    if (!location) {
+      return {
+        content:
+          'I need a service location before I can prepare an appointment draft. Which service address should I use?',
+        context,
+      };
+    }
     const appointmentPayload: AppointmentPayload = {
-      accessInstructions: site?.accessInstructions ?? undefined,
-      addressLine1: site?.addressLine1 ?? job.addressLine1,
-      addressLine2: site?.addressLine2 ?? job.addressLine2 ?? undefined,
+      accessInstructions: location.accessInstructions ?? undefined,
+      addressLine1: location.addressLine1,
+      addressLine2: location.addressLine2 ?? undefined,
       appointmentType: 'INSPECTION',
       assignedUserId: null,
-      customerSiteId: site?.id ?? null,
+      customerSiteId: location.customerSiteId,
       estimatedDurationMinutes: pending.durationMinutes,
       jobId: job.id,
-      locationSource: site ? 'CUSTOMER_SITE' : 'CUSTOMER_DEFAULT',
+      locationSource: location.locationSource,
       notes: 'Prepared by Tori. Review before saving.',
-      postcode: site?.postcode ?? job.postcode,
+      postcode: location.postcode,
       scheduledEnd: end.toISOString(),
       scheduledStart: start.toISOString(),
-      state: (site?.state ?? job.state) as AppointmentPayload['state'],
-      suburb: site?.suburb ?? job.suburb,
+      state: location.state,
+      suburb: location.suburb,
     };
     const draft = this.actionDraft({
       description: `Book ${job.customer.displayName} for ${formatBusinessDateTime(start, business.timezone)}.`,
@@ -2285,12 +2810,7 @@ export class AiService {
         { label: 'Job', to: `${job.jobNumber} — ${job.title}` },
         {
           label: 'Location',
-          to: this.addressLabel({
-            addressLine1: site?.addressLine1 ?? job.addressLine1,
-            postcode: site?.postcode ?? job.postcode,
-            state: (site?.state ?? job.state) as AustralianState,
-            suburb: site?.suburb ?? job.suburb,
-          }),
+          to: this.addressLabel(location),
         },
         {
           label: 'Time',
@@ -2776,6 +3296,43 @@ export class AiService {
     };
   }
 
+  private mergeJobSlotsForCurrentTurn(
+    existing: JobDraftSlots,
+    text: string,
+    request: ToriChatRequest,
+  ): JobDraftSlots {
+    const expected = request.context?.pendingQuestion;
+    if (expected?.intent === 'CREATE_JOB') {
+      if (expected.type === 'JOB_TITLE') {
+        const title = this.cleanJobTitleSlot(text);
+        return {
+          ...existing,
+          ...(title
+            ? {
+                description: existing.description ?? title,
+                title,
+              }
+            : {}),
+        };
+      }
+      if (expected.type === 'JOB_ADDRESS') {
+        const address = this.extractAustralianAddressSlot(text);
+        return {
+          ...existing,
+          ...(address ?? {}),
+        };
+      }
+    }
+
+    const extracted = this.jobSlots(text, request);
+    return {
+      ...existing,
+      ...extracted,
+      customerId: existing.customerId ?? extracted.customerId,
+      customerName: existing.customerName ?? extracted.customerName,
+    };
+  }
+
   private conversationText(text: string, request: ToriChatRequest) {
     const recentUserText =
       request.recentMessages
@@ -2845,6 +3402,15 @@ export class AiService {
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   }
 
+  private cleanJobTitleSlot(text: string) {
+    const trimmed = text.trim().replace(/\s+/g, ' ');
+    if (!trimmed || trimmed.length > 120) return '';
+    if (this.looksLikeExplicitCreateJob(trimmed.toLowerCase())) return '';
+    if (this.isPositiveConfirmation(trimmed.toLowerCase())) return '';
+    if (this.isNegativeConfirmation(trimmed.toLowerCase())) return '';
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+
   private extractTradeType(text: string) {
     if (/\bplumb|pipe|leak|tap|toilet|sink\b/i.test(text)) return 'Plumbing';
     if (/\belectric|power|light|switch\b/i.test(text)) return 'Electrical';
@@ -2868,6 +3434,42 @@ export class AiService {
       state: match[3].toUpperCase() as AustralianState,
       suburb: this.cleanExtractedName(match[2]),
     };
+  }
+
+  private extractAustralianAddressSlot(text: string): {
+    addressLine1: string;
+    suburb: string;
+    state: AustralianState;
+    postcode: string;
+  } | null {
+    const explicit = this.extractAustralianAddress(text);
+    if (explicit) return explicit;
+
+    const match = text.match(
+      /^\s*(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)[,]?\s+(\d{4})\s*$/i,
+    );
+    if (!match) return null;
+    const state = this.inferAustralianStateFromPostcode(match[3]);
+    if (!state) return null;
+    return {
+      addressLine1: match[1].trim(),
+      postcode: match[3],
+      state,
+      suburb: this.cleanExtractedName(match[2]),
+    };
+  }
+
+  private inferAustralianStateFromPostcode(
+    postcode: string,
+  ): AustralianState | null {
+    if (/^[38]/.test(postcode)) return 'VIC';
+    if (/^[12]/.test(postcode)) return 'NSW';
+    if (/^4/.test(postcode)) return 'QLD';
+    if (/^5/.test(postcode)) return 'SA';
+    if (/^6/.test(postcode)) return 'WA';
+    if (/^7/.test(postcode)) return 'TAS';
+    if (/^0/.test(postcode)) return 'NT';
+    return null;
   }
 
   private isAustralianState(value: string): value is AustralianState {
@@ -2968,8 +3570,7 @@ export class AiService {
   ) {
     const fromSlots = this.jobAddressFromSlots(slots);
     if (fromSlots) return fromSlots;
-    const site =
-      customer.sites.find((item) => item.isPrimary) ?? customer.sites[0];
+    const site = this.singleUsableServiceSite(customer);
     if (site) {
       return {
         addressLine1: site.addressLine1,
@@ -2979,6 +3580,19 @@ export class AiService {
       };
     }
     return null;
+  }
+
+  private singleUsableServiceSite(customer: CustomerMatch) {
+    return this.singleUsableSite(customer.sites);
+  }
+
+  private singleUsableSite<
+    TSite extends {
+      isPrimary: boolean;
+    },
+  >(sites: TSite[]) {
+    if (sites.length === 1) return sites[0];
+    return sites.find((item) => item.isPrimary) ?? null;
   }
 
   private async customerDuplicateWarnings(
@@ -3405,12 +4019,14 @@ export class AiService {
       pendingAppointment,
       pendingCustomer,
       pendingCustomerAndJob,
+      pendingJob,
       pendingQuestion,
       ...rest
     } = context;
     void pendingAppointment;
     void pendingCustomer;
     void pendingCustomerAndJob;
+    void pendingJob;
     void pendingQuestion;
     return rest;
   }
