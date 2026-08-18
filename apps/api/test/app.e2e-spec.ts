@@ -14,6 +14,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { AppointmentsService } from '../src/appointments/appointments.service';
+import { CustomersService } from '../src/customers/customers.service';
 import { JobsService } from '../src/jobs/jobs.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -37,7 +38,34 @@ describe('Health endpoint (e2e)', () => {
     })
       .overrideProvider(PrismaService)
       .useValue({
-        $transaction: jest.fn((input: unknown[]) => Promise.all(input)),
+        $transaction: jest.fn(
+          (input: unknown[] | ((tx: unknown) => unknown)) =>
+            Array.isArray(input)
+              ? Promise.all(input)
+              : input({
+                  auditLog: { create: jest.fn() },
+                  customerSite: {
+                    create: jest.fn().mockResolvedValue({
+                      accessInstructions: null,
+                      addressLine1: '27 Coffey Street',
+                      addressLine2: null,
+                      createdAt: new Date('2026-08-18T00:00:00.000Z'),
+                      customerId: 'customer-1',
+                      id: 'site-created',
+                      isArchived: false,
+                      isPrimary: true,
+                      label: 'Service address',
+                      postcode: '3029',
+                      siteContactName: null,
+                      siteContactPhone: null,
+                      state: 'VIC',
+                      suburb: 'Tarneit',
+                      updatedAt: new Date('2026-08-18T00:00:00.000Z'),
+                    }),
+                    updateMany: jest.fn(),
+                  },
+                }),
+        ),
         businessMember: {
           findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
           findMany: jest.fn().mockResolvedValue([
@@ -108,6 +136,9 @@ describe('Health endpoint (e2e)', () => {
               sites: [],
             },
           ]),
+        },
+        customerSite: {
+          findMany: jest.fn().mockResolvedValue([]),
         },
         invoice: {
           aggregate: jest
@@ -527,6 +558,632 @@ describe('Health endpoint (e2e)', () => {
       }),
     );
     expect(appointmentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('POST /api/ai/tori/chat creates a job for a just-created customer through serialized context', async () => {
+    const customersService = app.get(CustomersService);
+    const jobsService = app.get(JobsService);
+    const prisma = app.get<{
+      customer: {
+        findFirst: jest.Mock;
+        findMany: jest.Mock;
+      };
+    }>(PrismaService);
+    const pooja = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Pooja',
+      email: null,
+      firstName: 'Pooja',
+      id: 'customer-pooja',
+      lastName: null,
+      phone: '0450488583',
+      sites: [],
+    };
+    const createdJob = {
+      accessInstructions: null,
+      addressLine1: '30 Coffey Street',
+      addressLine2: null,
+      customer: {
+        addressLine1: null,
+        addressLine2: null,
+        displayName: 'Pooja',
+        id: 'customer-pooja',
+        postcode: null,
+        sites: [],
+        state: null,
+        suburb: null,
+      },
+      customerId: 'customer-pooja',
+      id: 'job-pooja-1',
+      jobNumber: 'JOB-2026-000101',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Blocked kitchen sink',
+    };
+    const customerCreate = jest
+      .spyOn(customersService, 'create')
+      .mockResolvedValue({ customer: pooja } as never);
+    const jobCreate = jest
+      .spyOn(jobsService, 'create')
+      .mockResolvedValue({ job: createdJob } as never);
+    customerCreate.mockClear();
+    jobCreate.mockClear();
+    prisma.customer.findMany.mockResolvedValue([]);
+    prisma.customer.findFirst.mockResolvedValue(pooja);
+
+    const startCustomer = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Create customer' })
+      .expect(201);
+    const startCustomerBody = startCustomer.body as ToriChatResponse;
+
+    const name = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(startCustomerBody.context),
+        message: 'Pooja',
+      })
+      .expect(201);
+    const nameBody = name.body as ToriChatResponse;
+
+    const phone = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(nameBody.context),
+        message: '0450488583',
+      })
+      .expect(201);
+    const phoneBody = phone.body as ToriChatResponse;
+    const customerDraft = phoneBody.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const confirmedCustomer = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${customerDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: customerDraft })
+      .expect(201);
+    const confirmedCustomerBody = confirmedCustomer.body as {
+      context?: ToriChatResponse['context'];
+    };
+    expect(confirmedCustomerBody.context).toMatchObject({
+      customerId: 'customer-pooja',
+      customerName: 'Pooja',
+      recentCustomer: {
+        displayName: 'Pooja',
+        id: 'customer-pooja',
+      },
+    });
+
+    const createJob = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(confirmedCustomerBody.context),
+        message: 'Create job for the newly created customer',
+      })
+      .expect(201);
+    const createJobBody = createJob.body as ToriChatResponse;
+    expect(createJobBody.message.content).toContain('What is the job for');
+    expect(createJobBody.message.content).not.toContain("customer's name");
+    expect(createJobBody.context?.pendingQuestion).toMatchObject({
+      intent: 'CREATE_JOB',
+      type: 'JOB_TITLE',
+    });
+
+    const title = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(createJobBody.context),
+        message: 'Blocked kitchen sink',
+      })
+      .expect(201);
+    const titleBody = title.body as ToriChatResponse;
+    expect(titleBody.message.content).toContain('service address');
+
+    const address = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(titleBody.context),
+        message: '30 Coffey Street, Tarneit, 3029',
+      })
+      .expect(201);
+    const addressBody = address.body as ToriChatResponse;
+    const jobDraft = addressBody.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+    expect(addressBody.message.content).not.toContain('service address');
+    expect(
+      jobDraft?.payload.type === 'CREATE_JOB'
+        ? jobDraft.payload.jobPayload
+        : undefined,
+    ).toMatchObject({
+      addressLine1: '30 Coffey Street',
+      customerId: 'customer-pooja',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Blocked kitchen sink',
+    });
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const confirmedJob = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${jobDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: jobDraft })
+      .expect(201);
+    const confirmedJobBody = confirmedJob.body as {
+      context?: ToriChatResponse['context'];
+    };
+
+    expect(customerCreate).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ businessId: 'business-1' }),
+      expect.objectContaining({
+        customerId: 'customer-pooja',
+        title: 'Blocked kitchen sink',
+      }),
+    );
+    expect(jobCreate).toHaveBeenCalledTimes(1);
+    expect(confirmedJobBody.context).toMatchObject({
+      customerId: 'customer-pooja',
+      customerName: 'Pooja',
+      jobId: 'job-pooja-1',
+      recentJob: {
+        id: 'job-pooja-1',
+        title: 'Blocked kitchen sink',
+      },
+    });
+
+    customerCreate.mockRestore();
+    jobCreate.mockRestore();
+  });
+
+  it('POST /api/ai/tori/chat orchestrates the exact Pooja dispatch request through confirmations', async () => {
+    const customersService = app.get(CustomersService);
+    const jobsService = app.get(JobsService);
+    const appointmentsService = app.get(AppointmentsService);
+    const prisma = app.get<{
+      appointment: { findMany: jest.Mock };
+      customer: { findFirst: jest.Mock; findMany: jest.Mock };
+      job: { findFirst: jest.Mock };
+    }>(PrismaService);
+    const pooja = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Pooja',
+      email: null,
+      firstName: 'Pooja',
+      id: 'customer-pooja-dispatch',
+      lastName: null,
+      phone: '0450488583',
+      sites: [],
+    };
+    const createdJob = {
+      accessInstructions: null,
+      addressLine1: '30 Coffey Street',
+      addressLine2: null,
+      customer: {
+        addressLine1: null,
+        addressLine2: null,
+        displayName: 'Pooja',
+        id: 'customer-pooja-dispatch',
+        postcode: null,
+        sites: [],
+        state: null,
+        suburb: null,
+      },
+      customerId: 'customer-pooja-dispatch',
+      id: 'job-pooja-dispatch',
+      jobNumber: 'JOB-2026-000222',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Blocked kitchen sink',
+    };
+    const customerCreate = jest
+      .spyOn(customersService, 'create')
+      .mockResolvedValue({ customer: pooja } as never);
+    const jobCreate = jest
+      .spyOn(jobsService, 'create')
+      .mockResolvedValue({ job: createdJob } as never);
+    const appointmentCreate = jest
+      .spyOn(appointmentsService, 'create')
+      .mockResolvedValue({
+        appointment: {
+          appointmentNumber: 'APT-2026-000222',
+          id: 'appointment-pooja-dispatch',
+          jobId: 'job-pooja-dispatch',
+          scheduledStart: new Date('2026-08-18T23:00:00.000Z'),
+        },
+      } as never);
+    customerCreate.mockClear();
+    jobCreate.mockClear();
+    appointmentCreate.mockClear();
+    prisma.appointment.findMany.mockResolvedValue([]);
+    prisma.customer.findMany.mockResolvedValue([]);
+    prisma.customer.findFirst.mockResolvedValue(pooja);
+    prisma.job.findFirst.mockResolvedValue(createdJob);
+
+    const start = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        message:
+          'I have a new customer Pooja. Her number is 0450488583. Her kitchen sink is blocked at 30 Coffey Street, Tarneit. Book someone tomorrow morning.',
+      })
+      .expect(201);
+    const startBody = start.body as ToriChatResponse;
+    expect(startBody.message.content).not.toContain(
+      "couldn't find appointments for tomorrow",
+    );
+    expect(startBody.message.content).toContain('How long should I allow');
+    expect(startBody.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Pooja', phone: '0450488583' },
+      job: {
+        addressLine1: '30 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Blocked kitchen sink',
+      },
+      scheduling: { daypart: 'MORNING' },
+    });
+
+    const duration = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(startBody.context),
+        message: '60 minutes',
+      })
+      .expect(201);
+    const durationBody = duration.body as ToriChatResponse;
+    const customerDraft = durationBody.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const customerResult = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${customerDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: customerDraft })
+      .expect(201);
+    const customerResultBody = customerResult.body as {
+      nextMessage?: ToriChatResponse['message'];
+    };
+    const jobDraft = customerResultBody.nextMessage?.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${jobDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: jobDraft })
+      .expect(201);
+    const jobResultBody = jobResult.body as {
+      message?: string;
+      nextMessage?: ToriChatResponse['message'];
+    };
+    expect(jobResultBody.message).not.toContain(
+      'Would you like me to prepare an appointment?',
+    );
+    expect(jobResultBody.message).toContain(
+      "I'll check technician availability",
+    );
+    const appointmentDraft = jobResultBody.nextMessage?.actionDraft;
+    expect(appointmentDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(jobResultBody.nextMessage?.content).toContain('available');
+
+    if (!appointmentDraft) throw new Error('Expected CREATE_APPOINTMENT draft');
+    await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${appointmentDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: appointmentDraft })
+      .expect(201);
+
+    expect(customerCreate).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledTimes(1);
+    expect(appointmentCreate).toHaveBeenCalledTimes(1);
+    const appointmentCreatePayload = appointmentCreate.mock.calls[0]?.[1] as
+      { assignedUserId?: unknown } | undefined;
+    expect(typeof appointmentCreatePayload?.assignedUserId).toBe('string');
+    expect(appointmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ businessId: 'business-1' }),
+      expect.objectContaining({
+        addressLine1: '30 Coffey Street',
+        jobId: 'job-pooja-dispatch',
+        locationSource: 'MANUAL',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+      }),
+    );
+
+    customerCreate.mockRestore();
+    jobCreate.mockRestore();
+    appointmentCreate.mockRestore();
+  });
+
+  it('POST /api/ai/tori/chat prioritises the exact Ben booking dispatch over tomorrow read lookup', async () => {
+    const customersService = app.get(CustomersService);
+    const jobsService = app.get(JobsService);
+    const appointmentsService = app.get(AppointmentsService);
+    const prisma = app.get<{
+      appointment: { findMany: jest.Mock };
+      customer: { findFirst: jest.Mock; findMany: jest.Mock };
+      job: { findFirst: jest.Mock };
+    }>(PrismaService);
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben-dispatch',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    const createdJob = {
+      accessInstructions: null,
+      addressLine1: '27 Coffey Street',
+      addressLine2: null,
+      customer: {
+        addressLine1: null,
+        addressLine2: null,
+        displayName: 'Ben',
+        id: 'customer-ben-dispatch',
+        postcode: null,
+        sites: [],
+        state: null,
+        suburb: null,
+      },
+      customerId: 'customer-ben-dispatch',
+      id: 'job-ben-dispatch',
+      jobNumber: 'JOB-2026-000223',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Pergola tap is leaking',
+    };
+    const customerCreate = jest
+      .spyOn(customersService, 'create')
+      .mockResolvedValue({ customer: ben } as never);
+    const jobCreate = jest
+      .spyOn(jobsService, 'create')
+      .mockResolvedValue({ job: createdJob } as never);
+    const appointmentCreate = jest
+      .spyOn(appointmentsService, 'create')
+      .mockResolvedValue({
+        appointment: {
+          appointmentNumber: 'APT-2026-000223',
+          id: 'appointment-ben-dispatch',
+          jobId: 'job-ben-dispatch',
+          scheduledStart: new Date('2026-08-18T23:00:00.000Z'),
+        },
+      } as never);
+    customerCreate.mockClear();
+    jobCreate.mockClear();
+    appointmentCreate.mockClear();
+    prisma.appointment.findMany.mockResolvedValue([]);
+    prisma.customer.findMany.mockResolvedValue([]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findFirst.mockResolvedValue(createdJob);
+
+    const start = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: {
+          customerId: 'customer-ranjan',
+          customerName: 'Ranjan',
+          jobId: 'job-ranjan',
+          jobTitle: 'Front yard tap leak',
+          recentCustomer: { displayName: 'Ranjan', id: 'customer-ranjan' },
+          recentJob: {
+            customerId: 'customer-ranjan',
+            customerName: 'Ranjan',
+            id: 'job-ranjan',
+            jobNumber: 'JOB-2026-000444',
+            title: 'Front yard tap leak',
+          },
+        },
+        message:
+          'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning for 120 minutes.',
+      })
+      .expect(201);
+    const startBody = start.body as ToriChatResponse;
+    expect(startBody.message.content).not.toContain('Appointments tomorrow');
+    expect(startBody.message.content).not.toContain('How long should I allow');
+    expect(startBody.message.actionDraft?.type).toBe('CREATE_CUSTOMER');
+    expect(startBody.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Ben', phone: '0414303345' },
+      job: {
+        addressLine1: '27 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+      scheduling: {
+        daypart: 'MORNING',
+        durationMinutes: 120,
+      },
+    });
+
+    const customerDraft = startBody.message.actionDraft;
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const customerResult = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${customerDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: customerDraft })
+      .expect(201);
+    const customerResultBody = customerResult.body as {
+      nextMessage?: ToriChatResponse['message'];
+    };
+    const jobDraft = customerResultBody.nextMessage?.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${jobDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: jobDraft })
+      .expect(201);
+    const jobResultBody = jobResult.body as {
+      nextMessage?: ToriChatResponse['message'];
+    };
+    const appointmentDraft = jobResultBody.nextMessage?.actionDraft;
+    expect(appointmentDraft?.type).toBe('CREATE_APPOINTMENT');
+
+    if (!appointmentDraft) throw new Error('Expected CREATE_APPOINTMENT draft');
+    await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${appointmentDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: appointmentDraft })
+      .expect(201);
+
+    expect(customerCreate).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledTimes(1);
+    expect(appointmentCreate).toHaveBeenCalledTimes(1);
+    expect(appointmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ businessId: 'business-1' }),
+      expect.objectContaining({
+        addressLine1: '27 Coffey Street',
+        estimatedDurationMinutes: 120,
+        jobId: 'job-ben-dispatch',
+        locationSource: 'MANUAL',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+      }),
+    );
+
+    customerCreate.mockRestore();
+    jobCreate.mockRestore();
+    appointmentCreate.mockRestore();
+  });
+
+  it('POST /api/ai/tori/chat keeps parsed Ranjan dispatch context across HTTP round trips', async () => {
+    const prisma = app.get<{
+      customer: { findMany: jest.Mock };
+    }>(PrismaService);
+    prisma.customer.findMany.mockResolvedValue([]);
+
+    const start = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        message:
+          'I have a new customer Ranjan. His number is 0450588583. Her master bed bath leak at 29 Coffey Street, Tarneit, 3029 VIC. Book someone for tomorrow',
+      })
+      .expect(201);
+    const startBody = start.body as ToriChatResponse;
+    expect(startBody.message.content).not.toContain(
+      "couldn't find appointments for tomorrow",
+    );
+    expect(startBody.message.content).toContain('How long should I allow');
+    expect(startBody.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Ranjan', phone: '0450588583' },
+      job: {
+        addressLine1: '29 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Master bedroom/bathroom leak',
+      },
+    });
+
+    const duration = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(startBody.context),
+        message: '120 mins',
+      })
+      .expect(201);
+    const durationBody = duration.body as ToriChatResponse;
+    expect(durationBody.message.actionDraft?.type).toBe('CREATE_CUSTOMER');
+    expect(durationBody.context?.pendingDispatch?.customer.name).toBe('Ranjan');
+    expect(
+      durationBody.context?.pendingDispatch?.scheduling.durationMinutes,
+    ).toBe(120);
+  });
+
+  it('POST /api/ai/tori/chat lets explicit Ranjan request override stale Ben HTTP context', async () => {
+    const prisma = app.get<{
+      customer: { findFirst: jest.Mock; findMany: jest.Mock };
+      job: { findMany: jest.Mock };
+    }>(PrismaService);
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: {
+          customerId: 'customer-ben',
+          customerName: 'Ben',
+          jobId: 'job-ben',
+          jobTitle: 'Fix leak',
+          recentCustomer: { displayName: 'Ben', id: 'customer-ben' },
+          recentJob: {
+            customerId: 'customer-ben',
+            customerName: 'Ben',
+            id: 'job-ben',
+            jobNumber: 'JOB-2026-000333',
+            title: 'Fix leak',
+          },
+        },
+        message:
+          'Create an appointment for Ranjan for front yard tap leak for Aug 21 please',
+      })
+      .expect(201);
+    const body = response.body as ToriChatResponse;
+
+    expect(body.message.content).not.toContain('Ben');
+    expect(body.message.content).not.toContain('What date');
+    expect(body.context?.pendingDispatch).toMatchObject({
+      customer: {
+        customerId: 'customer-ranjan',
+        name: 'Ranjan',
+      },
+      job: { title: 'Front yard tap leak' },
+    });
+    expect(body.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-21$/,
+    );
   });
 
   it('POST /api/ai/tori/actions/:draftId/confirm is registered and returns structured JSON', async () => {

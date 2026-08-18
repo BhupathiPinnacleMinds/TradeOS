@@ -664,7 +664,7 @@ Appointment rules:
 - Accountants, sales and read-only users can view appointments only.
 - Appointment status transitions write audit log timeline events.
 - Reassignment is a dedicated assignment-only operation. `PATCH /api/appointments/:id/reassign` changes only `assignedUserId`, keeps the appointment time, job, customer, notes and location snapshot unchanged, and writes `APPOINTMENT_REASSIGNED` timeline/audit metadata.
-- `GET /api/appointments/:id/reassignment-options` returns active technician candidates, today's workload, upcoming appointments today, availability indicators and a scheduling recommendation for the appointment's existing time window.
+- `GET /api/appointments/:id/reassignment-options` returns active Technician-role candidates, today's workload, upcoming appointments today, availability indicators and a scheduling recommendation for the appointment's existing time window. Owners, admins and office staff can manage scheduling, but they are not eligible field assignees unless their workspace member role is `TECHNICIAN`.
 - Appointments store a visit-location snapshot (`addressLine1`, `suburb`, `state`, `postcode`, optional `customerSiteId` and access instructions) so navigation and history do not depend on later customer/site address edits.
 - Appointment location source can be customer service site, customer default address, or a one-off manual appointment address.
 - Manual appointment addresses can optionally be saved as a customer service site in the same appointment creation transaction.
@@ -675,8 +675,10 @@ Appointment rules:
 - Overlapping appointments and outside-working-hours appointments are blocked by default. Owners may intentionally override conflicts by sending `allowConflictOverride: true`.
 - Appointment reassignment conflict overrides are limited to owners and admins. Office managers and schedulers can reassign only when the selected technician is available.
 - `POST /api/appointments/recommend` uses non-AI scheduling logic based on
-  business-local working hours and appointment conflicts. Travel time is a
-  placeholder for future route planning.
+  business-local working hours, active Technician-role membership, active user
+  accounts, appointment conflicts and lower same-day workload. Travel time,
+  technician skills, per-technician working hours and route distance remain
+  future scheduling inputs.
 
 Appointment error codes include `APPOINTMENT_NOT_FOUND`, `INVALID_APPOINTMENT_DATA`, `JOB_NOT_FOUND`, `ASSIGNEE_NOT_FOUND`, `APPOINTMENT_CONFLICT`, and `INSUFFICIENT_PERMISSION`.
 

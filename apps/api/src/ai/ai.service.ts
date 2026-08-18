@@ -7,6 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import {
   ACCOUNTS_RECEIVABLE_VIEW_ROLES,
+  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
   APPOINTMENT_VIEW_ROLES,
   APPOINTMENT_WRITE_ROLES,
   COMMUNICATION_APPOINTMENT_SEND_ROLES,
@@ -95,9 +96,68 @@ type JobDraftSlots = {
   postcode?: string;
 };
 
+type PendingDispatch = NonNullable<ToriContext['pendingDispatch']>;
+
+type DispatchAvailabilityRecommendation = {
+  technicianId: string;
+  technicianName: string;
+  scheduledStart: Date;
+  scheduledEnd: Date;
+  reason: string;
+} | null;
+
 type AppointmentDateTimeParts = {
   date?: string;
   time?: string;
+};
+
+type ToriParsedRequest = {
+  intents: Array<
+    | 'READ_APPOINTMENTS'
+    | 'READ_AVAILABILITY'
+    | 'CREATE_CUSTOMER'
+    | 'CREATE_JOB'
+    | 'CREATE_APPOINTMENT'
+    | 'DISPATCH'
+    | 'ASSIGN_TECHNICIAN'
+  >;
+  customer?: {
+    email?: string;
+    name?: string;
+    phone?: string;
+    pronounReference?: boolean;
+    referenceType?: 'EXPLICIT' | 'THIS_CUSTOMER' | 'RECENT';
+    impliesNew?: boolean;
+  };
+  job?: {
+    issueText?: string;
+    jobNumber?: string;
+    title?: string;
+  };
+  location?: {
+    addressLine1?: string;
+    postcode?: string;
+    state?: AustralianState;
+    suburb?: string;
+  };
+  scheduling?: {
+    date?: string;
+    daypart?: 'MORNING' | 'AFTERNOON';
+    durationMinutes?: number;
+    time?: string;
+  };
+  technician?: {
+    name?: string;
+    requestAvailable?: boolean;
+    requestBest?: boolean;
+  };
+  action: {
+    assignTechnician?: boolean;
+    createAppointment?: boolean;
+    createCustomer?: boolean;
+    createJob?: boolean;
+    dispatch?: boolean;
+  };
 };
 
 type CustomerMatch = {
@@ -107,6 +167,11 @@ type CustomerMatch = {
   email: string | null;
   phone: string | null;
   contactPreference: string;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  suburb?: string | null;
+  state?: string | null;
+  postcode?: string | null;
   sites: Array<{
     id: string;
     label: string;
@@ -173,6 +238,7 @@ export class AiService {
     const snapshot = await this.snapshot(currentUser, business);
     const text = request.message.trim();
     const lower = text.toLowerCase();
+    const parsed = this.parseCurrentTurn(text, business.timezone);
 
     let content: string;
     let actionDraft: ToriActionDraft | undefined;
@@ -181,9 +247,52 @@ export class AiService {
     if (!text) {
       content = 'Ask me about your work, money, quotes, or scheduling.';
     } else if (this.isCancelCommand(lower)) {
-      content =
-        'Okay, I cancelled that Tori workflow. No TradieOS data changed.';
-      responseContext = this.clearPendingContext(request.context);
+      if (request.context?.pendingDispatch) {
+        content = this.cancelDispatchMessage(request.context.pendingDispatch);
+        responseContext = this.clearPendingContext(request.context);
+      } else {
+        content =
+          'Okay, I cancelled that Tori workflow. No TradieOS data changed.';
+        responseContext = this.clearPendingContext(request.context);
+      }
+    } else if (
+      this.isNewCurrentTurnObjective(parsed) &&
+      request.context?.pendingDispatch
+    ) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.startDispatchWorkflow(
+        currentUser,
+        business,
+        text,
+        parsed,
+      ));
+    } else if (
+      request.context?.pendingDispatch &&
+      this.looksLikeReadQuestion(lower) &&
+      !this.isNoAvailabilityRetryTurn(
+        parsed,
+        lower,
+        request.context.pendingDispatch,
+      ) &&
+      !this.isActionableCurrentTurn(parsed) &&
+      !this.parseDurationMinutes(text)
+    ) {
+      content = await this.answerReadQuestion(currentUser, business, text);
+      responseContext = request.context;
+    } else if (request.context?.pendingDispatch) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.continueDispatchWorkflow(
+        currentUser,
+        business,
+        text,
+        request.context.pendingDispatch,
+      ));
     } else if (
       this.isNegativeConfirmation(lower) &&
       request.context?.pendingQuestion?.intent ===
@@ -220,7 +329,8 @@ export class AiService {
       responseContext = this.clearPendingContext(request.context);
     } else if (
       request.context?.pendingQuestion?.intent === 'CREATE_JOB' &&
-      this.looksLikeReadQuestion(lower)
+      this.looksLikeReadQuestion(lower) &&
+      !this.isActionableCurrentTurn(parsed)
     ) {
       content = await this.answerReadQuestion(currentUser, business, text);
       responseContext = request.context;
@@ -238,6 +348,20 @@ export class AiService {
         actionDraft,
         context: responseContext,
       } = await this.prepareJobDraft(currentUser, business, text, request));
+    } else if (
+      this.isNewCurrentTurnObjective(parsed) &&
+      request.context?.pendingAppointment
+    ) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.startDispatchWorkflow(
+        currentUser,
+        business,
+        text,
+        parsed,
+      ));
     } else if (request.context?.pendingAppointment) {
       ({
         content,
@@ -248,6 +372,17 @@ export class AiService {
         business,
         text,
         request.context,
+      ));
+    } else if (this.isDispatchCreateObjective(parsed)) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.startDispatchWorkflow(
+        currentUser,
+        business,
+        text,
+        parsed,
       ));
     } else if (this.looksLikeCustomerMessage(lower)) {
       ({ content, actionDraft } = await this.prepareMessageDraft(
@@ -269,10 +404,17 @@ export class AiService {
       ));
     } else if (
       this.hasPendingWorkflow(request) &&
-      this.looksLikeReadQuestion(lower)
+      this.looksLikeReadQuestion(lower) &&
+      !this.isActionableCurrentTurn(parsed)
     ) {
       content = await this.answerReadQuestion(currentUser, business, text);
       responseContext = this.clearPendingContext(request.context);
+    } else if (this.looksLikeCreateJobForReferencedCustomer(lower)) {
+      ({
+        content,
+        actionDraft,
+        context: responseContext,
+      } = await this.prepareJobDraft(currentUser, business, text, request));
     } else if (this.looksLikeExplicitCreateCustomerAndJob(lower)) {
       ({
         content,
@@ -400,8 +542,22 @@ export class AiService {
         text,
         request.context,
       ));
+    } else if (this.looksLikeTechnicianRecommendation(lower)) {
+      content = await this.answerTechnicianRecommendation(
+        currentUser,
+        business,
+        text,
+        request.context,
+      );
+    } else if (this.looksLikeTechnicianAssignment(lower)) {
+      ({ content, actionDraft } = await this.prepareSmartReassignDraft(
+        currentUser,
+        business,
+        text,
+        request.context,
+      ));
     } else if (this.looksLikeReassign(lower)) {
-      ({ content, actionDraft } = await this.prepareReassignDraft(
+      ({ content, actionDraft } = await this.prepareSmartReassignDraft(
         currentUser,
         business,
         text,
@@ -414,7 +570,10 @@ export class AiService {
         text,
         request.context,
       ));
-    } else if (this.looksLikeReadQuestion(lower)) {
+    } else if (
+      this.looksLikeReadQuestion(lower) &&
+      !this.isActionableCurrentTurn(parsed)
+    ) {
       content = await this.answerReadQuestion(currentUser, business, text);
       responseContext = this.clearPendingContext(request.context);
     } else {
@@ -422,13 +581,7 @@ export class AiService {
     }
 
     return {
-      message: {
-        actionDraft,
-        content,
-        createdAt: new Date().toISOString(),
-        id: randomUUID(),
-        role: 'assistant',
-      },
+      message: this.assistantMessage(content, actionDraft),
       provider: this.provider.status(),
       snapshot,
       suggestedPrompts: this.suggestedPrompts(currentUser.role),
@@ -511,8 +664,101 @@ export class AiService {
         );
         break;
     }
+    const dispatchContext = this.dispatchContextFromPayload(draft.payload);
+    if (dispatchContext) {
+      result = await this.withDispatchResume(
+        currentUser,
+        draft.payload.type,
+        result,
+        dispatchContext,
+      );
+    }
     this.completedDraftIds.add(draftId);
     return result;
+  }
+
+  private dispatchContextFromPayload(payload: ToriActionPayload) {
+    if (
+      payload.type === 'CREATE_CUSTOMER' ||
+      payload.type === 'CREATE_JOB' ||
+      payload.type === 'CREATE_APPOINTMENT'
+    ) {
+      return payload.dispatchContext;
+    }
+    return undefined;
+  }
+
+  private async withDispatchResume(
+    currentUser: AuthenticatedUser,
+    actionType: ToriActionPayload['type'],
+    result: ToriActionConfirmResponse,
+    dispatch: PendingDispatch,
+  ): Promise<ToriActionConfirmResponse> {
+    const updated = this.mergeDispatchConfirmation(
+      actionType,
+      result,
+      dispatch,
+    );
+    if (actionType === 'CREATE_APPOINTMENT') {
+      return {
+        ...result,
+        context: {
+          ...result.context,
+          pendingDispatch: undefined,
+          recentAppointment: result.context?.recentAppointment,
+        },
+        message: `${result.message} Dispatch booking is complete.`,
+      };
+    }
+    const business = await this.business(currentUser.businessId);
+    const next = await this.continueDispatchWorkflow(
+      currentUser,
+      business,
+      '',
+      updated,
+    );
+    const continuationMessage =
+      actionType === 'CREATE_JOB'
+        ? `Job created. I'll check technician availability for ${this.dispatchRequestedLabel(updated, business.timezone)}.`
+        : result.message;
+    return {
+      ...result,
+      context: next.context ?? { pendingDispatch: updated },
+      message: continuationMessage,
+      nextMessage: this.assistantMessage(next.content, next.actionDraft),
+    };
+  }
+
+  private mergeDispatchConfirmation(
+    actionType: ToriActionPayload['type'],
+    result: ToriActionConfirmResponse,
+    dispatch: PendingDispatch,
+  ): PendingDispatch {
+    const next: PendingDispatch = {
+      ...dispatch,
+      customer: { ...dispatch.customer },
+      job: { ...dispatch.job },
+      scheduling: { ...dispatch.scheduling },
+      technician: dispatch.technician ? { ...dispatch.technician } : undefined,
+    };
+    if (actionType === 'CREATE_CUSTOMER') {
+      next.customer.customerId = result.entityId;
+      next.customer.name =
+        result.details.find((detail) => detail.label === 'Customer')?.value ??
+        next.customer.name;
+      next.stage = 'AWAITING_JOB_CONFIRMATION';
+    }
+    if (actionType === 'CREATE_JOB') {
+      next.job.jobId = result.entityId;
+      next.job.jobNumber =
+        result.details.find((detail) => detail.label === 'Job')?.value ??
+        next.job.jobNumber;
+      next.job.title =
+        result.details.find((detail) => detail.label === 'Title')?.value ??
+        next.job.title;
+      next.stage = 'AWAITING_APPOINTMENT_CONFIRMATION';
+    }
+    return next;
   }
 
   private async confirmReschedule(
@@ -543,6 +789,7 @@ export class AiService {
       entityId: result.appointment.id,
       entityType: 'APPOINTMENT',
       message: 'Appointment rescheduled.',
+      context: this.appointmentContext(result.appointment),
       status: 'COMPLETED',
     } satisfies ToriActionConfirmResponse;
   }
@@ -572,6 +819,15 @@ export class AiService {
       entityId: result.appointment.id,
       entityType: 'APPOINTMENT',
       message: 'Appointment reassigned.',
+      context: {
+        ...this.appointmentContext(result.appointment),
+        recentTechnician: result.appointment.assignedUser
+          ? {
+              id: result.appointment.assignedUser.id,
+              name: this.userLabel(result.appointment.assignedUser),
+            }
+          : undefined,
+      },
       status: 'COMPLETED',
     };
   }
@@ -598,6 +854,7 @@ export class AiService {
       entityId: result.appointment.id,
       entityType: 'APPOINTMENT',
       message: 'Appointment cancelled.',
+      context: this.appointmentContext(result.appointment),
       status: 'COMPLETED',
     };
   }
@@ -624,10 +881,7 @@ export class AiService {
       entityId: result.appointment.id,
       entityType: 'APPOINTMENT',
       message: 'Appointment created.',
-      context: {
-        appointmentId: result.appointment.id,
-        jobId: result.appointment.jobId,
-      },
+      context: this.appointmentContext(result.appointment),
       status: 'COMPLETED',
     };
   }
@@ -712,7 +966,15 @@ export class AiService {
       message: 'Customer created.',
       context: {
         customerId: result.customer.id,
+        customerEmail: result.customer.email ?? null,
         customerName: result.customer.displayName,
+        customerPhone: result.customer.phone ?? null,
+        recentCustomer: {
+          displayName: result.customer.displayName,
+          email: result.customer.email ?? null,
+          id: result.customer.id,
+          phone: result.customer.phone ?? null,
+        },
       },
       status: 'COMPLETED',
     };
@@ -723,6 +985,12 @@ export class AiService {
     payload: Extract<ToriActionPayload, { type: 'CREATE_JOB' }>,
   ): Promise<ToriActionConfirmResponse> {
     const result = await this.jobs.create(currentUser, payload.jobPayload);
+    if (payload.dispatchContext) {
+      await this.ensureCustomerSiteFromDispatch(
+        currentUser,
+        payload.dispatchContext,
+      );
+    }
     if (payload.resumeAppointment) {
       const context = this.appointmentResumeContextFromCreatedJob(result.job);
       return {
@@ -751,6 +1019,31 @@ export class AiService {
       context: this.jobAppointmentOfferContext(result.job),
       status: 'COMPLETED',
     };
+  }
+
+  private async ensureCustomerSiteFromDispatch(
+    currentUser: AuthenticatedUser,
+    dispatch: PendingDispatch,
+  ) {
+    const customerId = dispatch.customer.customerId;
+    const address = this.dispatchAddress(dispatch.job);
+    if (!customerId || !address) return;
+    const existingSites = await this.customers.listSites(
+      currentUser,
+      customerId,
+    );
+    const alreadyExists = existingSites.some((site) =>
+      this.addressesMatch(site, address),
+    );
+    if (alreadyExists) return;
+    await this.customers.createSite(currentUser, customerId, {
+      addressLine1: address.addressLine1,
+      isPrimary: existingSites.length === 0,
+      label: 'Service address',
+      postcode: address.postcode,
+      state: address.state,
+      suburb: address.suburb,
+    });
   }
 
   private async confirmCreateCustomerAndJob(
@@ -784,9 +1077,11 @@ export class AiService {
     state: string;
     postcode: string;
   }): ToriContext {
+    const customerId = job.customer?.id ?? job.customerId;
+    const customerName = job.customer?.displayName;
     return {
-      customerId: job.customer?.id ?? job.customerId,
-      customerName: job.customer?.displayName,
+      customerId,
+      customerName,
       jobId: job.id,
       jobNumber: job.jobNumber,
       jobTitle: job.title,
@@ -800,7 +1095,1295 @@ export class AiService {
         state: job.state,
         suburb: job.suburb,
       },
+      recentCustomer: customerId
+        ? {
+            displayName: customerName ?? 'Customer',
+            id: customerId,
+          }
+        : undefined,
+      recentJob: {
+        customerId,
+        customerName,
+        id: job.id,
+        jobNumber: job.jobNumber,
+        title: job.title,
+      },
     };
+  }
+
+  private appointmentContext(appointment: {
+    id: string;
+    appointmentNumber?: string;
+    jobId?: string | null;
+  }): ToriContext {
+    return {
+      appointmentId: appointment.id,
+      jobId: appointment.jobId ?? undefined,
+      recentAppointment: {
+        appointmentNumber: appointment.appointmentNumber,
+        id: appointment.id,
+        jobId: appointment.jobId,
+      },
+    };
+  }
+
+  private parseCurrentTurn(text: string, timezone: string): ToriParsedRequest {
+    const lower = text.toLowerCase();
+    const customer = this.extractCurrentTurnCustomer(text);
+    const jobTitle = this.extractCurrentTurnJobTitle(text);
+    const location = this.extractAustralianAddressSlot(text);
+    const dateTime = this.parseAppointmentDateTimeParts(text, timezone);
+    const durationMinutes = this.parseDurationMinutes(text) ?? undefined;
+    const daypart = /\bafternoon\b/i.test(text)
+      ? 'AFTERNOON'
+      : /\bmorning\b/i.test(text)
+        ? 'MORNING'
+        : undefined;
+    const requestAvailable =
+      /\bwho\b.*\b(available|free)\b/.test(lower) ||
+      /\bavailable\b.*\b(technician|someone|tradie)\b/.test(lower);
+    const requestBest = /\b(best|least busy|recommended)\b/.test(lower);
+    const createAppointment =
+      /\b(create|crea|make|set up|organise|organize|arrange|book(?:ing)?|schedule|scheduling|send(?:ing)?|assign|get)\b.*\b(appoin?t?ment|appointement|someone|somone|technician|tradie|out)\b/.test(
+        lower,
+      ) ||
+      /\bbook(?:ing)?\s+[A-Za-z][A-Za-z\s'-]{1,80}\b/i.test(text) ||
+      /\b[A-Za-z][A-Za-z\s'-]{1,80}?\s+needs\s+someone\b/i.test(text) ||
+      /\bschedule\s+[A-Za-z][A-Za-z\s'-]{1,80}?'s\b/i.test(text);
+    const createCustomer =
+      /\b(create|add|new)\b.*\bcustomer\b/.test(lower) ||
+      /\bnew customer\b/.test(lower);
+    const createJob = /\b(create|add|prepare)\b.*\b(job|work)\b/.test(lower);
+    const assignTechnician =
+      /\b(assign|send(?:ing)?|book(?:ing)?|schedule|scheduling|organise|organize|arrange|get)\b.*\b(someone|somone|technician|tradie|available|best|out)\b/.test(
+        lower,
+      ) && !requestAvailable;
+    const dispatch =
+      !requestAvailable &&
+      (createAppointment || assignTechnician) &&
+      Boolean(customer?.name || customer?.phone || customer?.email) &&
+      Boolean(jobTitle || location || dateTime.date || daypart);
+    const intents: ToriParsedRequest['intents'] = [];
+    if (requestAvailable) intents.push('READ_AVAILABILITY');
+    if (/\b(appointment|appointments|schedule|calendar)\b/.test(lower)) {
+      intents.push('READ_APPOINTMENTS');
+    }
+    if (createCustomer) intents.push('CREATE_CUSTOMER');
+    if (createJob || jobTitle) intents.push('CREATE_JOB');
+    if (createAppointment) intents.push('CREATE_APPOINTMENT');
+    if (assignTechnician) intents.push('ASSIGN_TECHNICIAN');
+    if (dispatch) intents.push('DISPATCH');
+
+    return {
+      action: {
+        assignTechnician,
+        createAppointment,
+        createCustomer,
+        createJob: createJob || Boolean(jobTitle),
+        dispatch,
+      },
+      customer,
+      intents: [...new Set(intents)],
+      job:
+        jobTitle || this.extractJobNumber(text)
+          ? {
+              issueText: jobTitle,
+              jobNumber: this.extractJobNumber(text),
+              title: jobTitle,
+            }
+          : undefined,
+      location: location ?? undefined,
+      scheduling:
+        dateTime.date || dateTime.time || daypart || durationMinutes
+          ? {
+              date: dateTime.date,
+              daypart,
+              durationMinutes,
+              time: dateTime.time,
+            }
+          : undefined,
+      technician:
+        requestAvailable || requestBest
+          ? { requestAvailable, requestBest }
+          : undefined,
+    };
+  }
+
+  private isNewCurrentTurnObjective(parsed: ToriParsedRequest) {
+    return Boolean(
+      parsed.action.dispatch ||
+      (parsed.action.createAppointment &&
+        parsed.customer?.referenceType === 'EXPLICIT' &&
+        (parsed.job?.title || parsed.scheduling?.date)),
+    );
+  }
+
+  private isDispatchCreateObjective(parsed: ToriParsedRequest) {
+    return Boolean(
+      parsed.action.dispatch ||
+      (parsed.action.createAppointment &&
+        parsed.customer?.referenceType === 'EXPLICIT' &&
+        (parsed.job?.title || parsed.location || parsed.scheduling?.date) &&
+        !parsed.technician?.requestAvailable),
+    );
+  }
+
+  private isActionableCurrentTurn(parsed: ToriParsedRequest) {
+    return Boolean(
+      this.isDispatchCreateObjective(parsed) ||
+      parsed.action.createCustomer ||
+      parsed.action.createJob ||
+      parsed.action.assignTechnician,
+    );
+  }
+
+  private isNoAvailabilityRetryTurn(
+    parsed: ToriParsedRequest,
+    lower: string,
+    pending: PendingDispatch,
+  ) {
+    if (pending.stage !== 'NO_AVAILABILITY') {
+      return false;
+    }
+    return Boolean(
+      parsed.scheduling?.date ||
+      parsed.scheduling?.daypart ||
+      parsed.scheduling?.time ||
+      /\b(any time|another time|later|try|afternoon|morning)\b/.test(lower) ||
+      /\bwho\b.*\b(available|free)\b/.test(lower),
+    );
+  }
+
+  private async startDispatchWorkflow(
+    currentUser: AuthenticatedUser,
+    business: BusinessSummary,
+    text: string,
+    parsed = this.parseCurrentTurn(text, business.timezone),
+  ): Promise<DraftPreparation> {
+    this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
+    const dispatch = this.dispatchFromParsedRequest(
+      text,
+      business.timezone,
+      parsed,
+    );
+    return this.continueDispatchWorkflow(currentUser, business, text, dispatch);
+  }
+
+  private async continueDispatchWorkflow(
+    currentUser: AuthenticatedUser,
+    business: BusinessSummary,
+    text: string,
+    pending: PendingDispatch,
+  ): Promise<DraftPreparation> {
+    const duration = this.parseDurationMinutes(text);
+    const dispatch: PendingDispatch = {
+      ...pending,
+      customer: { ...pending.customer },
+      job: { ...pending.job },
+      scheduling: {
+        ...pending.scheduling,
+        ...(duration ? { durationMinutes: duration } : {}),
+      },
+      technician: pending.technician ? { ...pending.technician } : undefined,
+    };
+
+    const current = this.parseCurrentTurn(text, business.timezone);
+    if (
+      this.isPositiveConfirmation(text.toLowerCase()) &&
+      dispatch.job.proposedAddress
+    ) {
+      dispatch.job = {
+        ...dispatch.job,
+        addressLine1: dispatch.job.proposedAddress.addressLine1,
+        postcode: dispatch.job.proposedAddress.postcode,
+        proposedAddress: undefined,
+        state: dispatch.job.proposedAddress.state,
+        suburb: dispatch.job.proposedAddress.suburb,
+      };
+    }
+    const currentAddress =
+      current.location ?? this.extractAustralianAddressSlot(text);
+    if (currentAddress) {
+      dispatch.job = { ...dispatch.job, ...currentAddress };
+    }
+    if (current.customer?.name) {
+      dispatch.customer = {
+        ...dispatch.customer,
+        name: current.customer.name,
+      };
+    }
+    if (current.customer?.phone || current.customer?.email) {
+      dispatch.customer = {
+        ...dispatch.customer,
+        ...(current.customer.email ? { email: current.customer.email } : {}),
+        ...(current.customer.phone ? { phone: current.customer.phone } : {}),
+      };
+    }
+    if (current.job?.title) {
+      dispatch.job = {
+        ...dispatch.job,
+        description: current.job.issueText ?? current.job.title,
+        title: current.job.title,
+      };
+    }
+    if (
+      current.scheduling?.date ||
+      current.scheduling?.daypart ||
+      current.scheduling?.time
+    ) {
+      dispatch.scheduling = {
+        ...dispatch.scheduling,
+        ...this.dispatchSchedulingUpdateFromCurrent(
+          current,
+          dispatch.scheduling,
+          business.timezone,
+        ),
+      };
+    }
+
+    if (!dispatch.customer.name && !dispatch.customer.customerId) {
+      return this.dispatchAsk(
+        dispatch,
+        'Who is the customer for this dispatch?',
+      );
+    }
+    const customerResolution = await this.resolveDispatchCustomer(
+      currentUser.businessId,
+      dispatch,
+    );
+    if (customerResolution.ambiguous) {
+      return this.dispatchAsk(dispatch, customerResolution.message);
+    }
+    if (customerResolution.customer) {
+      dispatch.customer.customerId = customerResolution.customer.id;
+      dispatch.customer.name = customerResolution.customer.displayName;
+    }
+    const filledDispatch = await this.fillDispatchFromCustomerAndJob(
+      currentUser.businessId,
+      dispatch,
+    );
+    dispatch.customer = filledDispatch.customer;
+    dispatch.job = filledDispatch.job;
+    dispatch.scheduling = filledDispatch.scheduling;
+    dispatch.technician = filledDispatch.technician;
+    if (
+      !dispatch.customer.phone &&
+      !dispatch.customer.email &&
+      !dispatch.customer.customerId
+    ) {
+      return this.dispatchAsk(
+        dispatch,
+        'What phone number or email should I use for the customer?',
+      );
+    }
+    if (!dispatch.job.title) {
+      return this.dispatchAsk(dispatch, 'What is the job for?');
+    }
+    const address = this.dispatchAddress(dispatch.job);
+    if (!address) {
+      const customerLocationQuestion =
+        await this.dispatchCustomerLocationQuestion(
+          currentUser.businessId,
+          dispatch,
+        );
+      return this.dispatchAsk(
+        dispatch,
+        customerLocationQuestion ??
+          'What is the full service address for this job, including suburb and postcode?',
+      );
+    }
+    if (!dispatch.scheduling.date || !dispatch.scheduling.windowStart) {
+      return this.dispatchAsk(dispatch, 'When should I book this job?');
+    }
+    const shouldCreateJobBeforeSchedulingDetails = Boolean(
+      dispatch.customer.customerId && !dispatch.job.jobId && dispatch.job.title,
+    );
+    const needsSpecificTime = Boolean(
+      dispatch.scheduling.date &&
+      !dispatch.scheduling.daypart &&
+      !dispatch.scheduling.preferredStart &&
+      dispatch.stage !== 'NO_AVAILABILITY',
+    );
+    if (needsSpecificTime && dispatch.job.jobId) {
+      dispatch.stage = 'AWAITING_DURATION';
+      const [year, month, day] = dispatch.scheduling.date
+        .split('-')
+        .map(Number);
+      const date = zonedTimeToUtc(
+        { day, hour: 0, minute: 0, month, year },
+        business.timezone,
+      );
+      return this.dispatchAsk(
+        dispatch,
+        `What time on ${formatBusinessDate(date, business.timezone)}?`,
+      );
+    }
+    if (!dispatch.scheduling.durationMinutes) {
+      dispatch.stage = 'AWAITING_DURATION';
+      if (!shouldCreateJobBeforeSchedulingDetails) {
+        return this.dispatchAsk(
+          dispatch,
+          [
+            'I can prepare that dispatch.',
+            '',
+            `Customer: ${dispatch.customer.name}`,
+            dispatch.customer.phone
+              ? `Phone: ${dispatch.customer.phone}`
+              : null,
+            `Job: ${dispatch.job.title}`,
+            `Location: ${this.dispatchAddressLabel(dispatch.job)}`,
+            `Requested: ${this.dispatchRequestedLabel(dispatch, business.timezone)}`,
+            '',
+            'How long should I allow for the job?',
+          ]
+            .filter((line): line is string => line !== null)
+            .join('\n'),
+        );
+      }
+    }
+
+    this.ensureDispatchPreferredTimeWindow(dispatch, business.timezone);
+
+    if (!dispatch.customer.customerId) {
+      dispatch.stage = 'AWAITING_CUSTOMER_CONFIRMATION';
+      const customerPayload = this.dispatchCustomerPayload(dispatch);
+      const draft = this.actionDraft({
+        description: `Create customer ${customerPayload.firstName ?? customerPayload.companyName}.`,
+        entityId: null,
+        entityType: 'CUSTOMER',
+        payload: {
+          customerPayload,
+          dispatchContext: dispatch,
+          type: 'CREATE_CUSTOMER',
+        },
+        proposedChanges: [
+          { label: 'Customer', to: this.dispatchCustomerName(dispatch) },
+          ...(dispatch.customer.phone
+            ? [{ label: 'Phone', to: dispatch.customer.phone }]
+            : []),
+        ],
+        title: 'Create customer',
+        validationState: 'READY',
+        warnings: [],
+      });
+      return {
+        actionDraft: draft,
+        content:
+          'I prepared the customer draft for this dispatch. Confirm it and I’ll continue with the job.',
+        context: { pendingDispatch: dispatch },
+      };
+    }
+
+    if (!dispatch.job.jobId) {
+      dispatch.stage = 'AWAITING_JOB_CONFIRMATION';
+      const jobPayload = this.dispatchJobPayload(dispatch, business.timezone);
+      const draft = this.actionDraft({
+        description: `Create a job for ${this.dispatchCustomerName(dispatch)}.`,
+        entityId: null,
+        entityType: 'JOB',
+        payload: {
+          dispatchContext: dispatch,
+          jobPayload,
+          type: 'CREATE_JOB',
+        },
+        proposedChanges: [
+          { label: 'Customer', to: this.dispatchCustomerName(dispatch) },
+          { label: 'Job', to: dispatch.job.title ?? 'Job' },
+          { label: 'Service location', to: this.addressLabel(address) },
+          {
+            label: 'Requested',
+            to: this.dispatchRequestedLabel(dispatch, business.timezone),
+          },
+        ],
+        title: 'Create job',
+        validationState: 'READY',
+        warnings: [
+          'This creates a job only. It will not create an appointment yet.',
+        ],
+      });
+      return {
+        actionDraft: draft,
+        content:
+          'I prepared the job draft for this dispatch. Confirm it and I’ll check technician availability.',
+        context: { pendingDispatch: dispatch },
+      };
+    }
+
+    const recommendation = await this.recommendDispatchAppointment(
+      currentUser,
+      business,
+      dispatch,
+    );
+    if (!recommendation) {
+      dispatch.stage = 'NO_AVAILABILITY';
+      return {
+        content: [
+          `No technician can fit a ${dispatch.scheduling.durationMinutes}-minute appointment ${this.dispatchRequestedLabel(dispatch, business.timezone)}.`,
+          '',
+          'I can check:',
+          '• tomorrow afternoon',
+          '• another time tomorrow',
+          '• another date',
+        ].join('\n'),
+        context: { pendingDispatch: dispatch },
+      };
+    }
+
+    dispatch.stage = 'AWAITING_APPOINTMENT_CONFIRMATION';
+    dispatch.technician = {
+      reason: recommendation.reason,
+      recommendedEnd: recommendation.scheduledEnd.toISOString(),
+      recommendedStart: recommendation.scheduledStart.toISOString(),
+      technicianId: recommendation.technicianId,
+      technicianName: recommendation.technicianName,
+    };
+    const appointmentPayload = this.dispatchAppointmentPayload(
+      dispatch,
+      recommendation,
+    );
+    const draft = this.actionDraft({
+      description: `Book ${dispatch.job.title} for ${this.dispatchCustomerName(dispatch)} with ${recommendation.technicianName}.`,
+      entityId: null,
+      entityType: 'APPOINTMENT',
+      payload: {
+        appointmentPayload,
+        dispatchContext: dispatch,
+        type: 'CREATE_APPOINTMENT',
+      },
+      proposedChanges: [
+        { label: 'Customer', to: this.dispatchCustomerName(dispatch) },
+        { label: 'Job', to: dispatch.job.title ?? 'Job' },
+        {
+          label: 'Time',
+          to: formatBusinessTimeRange(
+            recommendation.scheduledStart,
+            recommendation.scheduledEnd,
+            business.timezone,
+          ),
+        },
+        { label: 'Technician', to: recommendation.technicianName },
+        { label: 'Reason', to: recommendation.reason },
+      ],
+      title: 'Book dispatch appointment',
+      validationState: 'READY',
+      warnings: [],
+    });
+    return {
+      actionDraft: draft,
+      content: `${recommendation.technicianName} is available from ${formatBusinessTimeRange(
+        recommendation.scheduledStart,
+        recommendation.scheduledEnd,
+        business.timezone,
+      )} and has no conflict. Confirm this draft to book and assign ${recommendation.technicianName}.`,
+      context: { pendingDispatch: dispatch },
+    };
+  }
+
+  private dispatchAsk(
+    dispatch: PendingDispatch,
+    content: string,
+  ): DraftPreparation {
+    return { content, context: { pendingDispatch: dispatch } };
+  }
+
+  private dispatchFromParsedRequest(
+    text: string,
+    timezone: string,
+    parsed = this.parseCurrentTurn(text, timezone),
+  ): PendingDispatch {
+    const phone =
+      parsed.customer?.phone ?? this.extractAustralianPhone(text) ?? undefined;
+    const email =
+      parsed.customer?.email ??
+      text.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0];
+    const address =
+      parsed.location ?? this.extractDispatchAddress(text) ?? undefined;
+    const scheduling = this.dispatchSchedulingFromParsed(parsed, timezone);
+    const title =
+      parsed.job?.title ?? this.extractDispatchJobTitle(text, parsed) ?? '';
+    return {
+      customer: {
+        email,
+        name: parsed.customer?.name ?? this.extractDispatchCustomerName(text),
+        phone,
+      },
+      job: {
+        ...(address ?? {}),
+        description: parsed.job?.issueText ?? title,
+        title,
+      },
+      scheduling,
+      stage: 'AWAITING_DURATION',
+    };
+  }
+
+  private dispatchCustomerPayload(dispatch: PendingDispatch): CustomerPayload {
+    const name = this.dispatchCustomerName(dispatch);
+    const [firstName, ...lastName] = name.split(/\s+/);
+    return {
+      ...(dispatch.customer.email ? { email: dispatch.customer.email } : {}),
+      ...(firstName ? { firstName } : {}),
+      ...(lastName.length ? { lastName: lastName.join(' ') } : {}),
+      ...(dispatch.customer.phone ? { phone: dispatch.customer.phone } : {}),
+      contactPreference: dispatch.customer.phone ? 'PHONE' : 'EMAIL',
+      customerType: 'RESIDENTIAL',
+    };
+  }
+
+  private dispatchJobPayload(
+    dispatch: PendingDispatch,
+    timezone: string,
+  ): JobPayload {
+    const address = this.dispatchAddress(dispatch.job);
+    if (!address || !dispatch.customer.customerId) {
+      throw this.domainError(
+        'TORI_DISPATCH_INCOMPLETE',
+        'This dispatch is missing customer or address details.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return {
+      ...address,
+      customerId: dispatch.customer.customerId,
+      customerNotes: 'Prepared by Tori dispatch. Review before scheduling.',
+      description:
+        dispatch.job.description ?? dispatch.job.title ?? 'Service job',
+      estimatedDurationMinutes: null,
+      priority: 'NORMAL',
+      requiresInvoice: false,
+      requiresQuote: false,
+      scheduledEnd: null,
+      scheduledStart: this.defaultJobStart(timezone),
+      status: 'NEW',
+      title: dispatch.job.title ?? 'Service job',
+      tradeType: this.extractTradeType(dispatch.job.title ?? ''),
+    };
+  }
+
+  private dispatchAppointmentPayload(
+    dispatch: PendingDispatch,
+    recommendation: NonNullable<DispatchAvailabilityRecommendation>,
+  ): AppointmentPayload {
+    const address = this.dispatchAddress(dispatch.job);
+    if (!address || !dispatch.job.jobId) {
+      throw this.domainError(
+        'TORI_DISPATCH_INCOMPLETE',
+        'This dispatch is missing job or address details.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return {
+      ...address,
+      appointmentType: 'MAINTENANCE',
+      assignedUserId: recommendation.technicianId,
+      customerSiteId: null,
+      estimatedDurationMinutes: dispatch.scheduling.durationMinutes ?? 60,
+      jobId: dispatch.job.jobId,
+      locationSource: 'MANUAL',
+      scheduledEnd: recommendation.scheduledEnd.toISOString(),
+      scheduledStart: recommendation.scheduledStart.toISOString(),
+    };
+  }
+
+  private async resolveDispatchCustomer(
+    businessId: string,
+    dispatch: PendingDispatch,
+  ): Promise<{
+    ambiguous: boolean;
+    customer: CustomerMatch | null;
+    message: string;
+  }> {
+    if (dispatch.customer.customerId) {
+      const resolved = await this.resolveCustomerForJob(
+        businessId,
+        dispatch.customer.name,
+        dispatch.customer.customerId,
+      );
+      return {
+        ambiguous: false,
+        customer: resolved.match,
+        message: resolved.message,
+      };
+    }
+    const phone = dispatch.customer.phone
+      ? this.normalisePhone(dispatch.customer.phone)
+      : null;
+    const email = dispatch.customer.email?.trim().toLowerCase();
+    if (!phone && !email) {
+      if (!dispatch.customer.name) {
+        return { ambiguous: false, customer: null, message: '' };
+      }
+      const byName = await this.resolveCustomerForJob(
+        businessId,
+        dispatch.customer.name,
+      );
+      return {
+        ambiguous: byName.message.startsWith('I found '),
+        customer: byName.match,
+        message: byName.message,
+      };
+    }
+    const matches = await this.prisma.customer.findMany({
+      where: {
+        businessId,
+        isArchived: false,
+        OR: [
+          ...(phone ? [{ phoneNormalised: phone }] : []),
+          ...(email ? [{ emailNormalised: email }] : []),
+        ],
+      },
+      include: { sites: { where: { isArchived: false } } },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+    });
+    if (matches.length === 1) {
+      return { ambiguous: false, customer: matches[0], message: '' };
+    }
+    if (matches.length > 1) {
+      return {
+        ambiguous: true,
+        customer: null,
+        message:
+          'I found multiple customers with that contact detail. Which customer should I use?',
+      };
+    }
+    return { ambiguous: false, customer: null, message: '' };
+  }
+
+  private async fillDispatchFromCustomerAndJob(
+    businessId: string,
+    dispatch: PendingDispatch,
+  ) {
+    if (!dispatch.customer.customerId) return dispatch;
+    const customer = await this.resolveCustomerForJob(
+      businessId,
+      dispatch.customer.name,
+      dispatch.customer.customerId,
+    );
+    const next: PendingDispatch = {
+      ...dispatch,
+      customer: { ...dispatch.customer },
+      job: { ...dispatch.job },
+      scheduling: { ...dispatch.scheduling },
+      technician: dispatch.technician ? { ...dispatch.technician } : undefined,
+    };
+    if (customer.match) {
+      next.customer.name = customer.match.displayName;
+      const site = this.singleUsableSite(customer.match.sites);
+      if (
+        site &&
+        !next.job.addressLine1 &&
+        site.addressLine1 &&
+        site.suburb &&
+        this.isAustralianState(site.state) &&
+        site.postcode
+      ) {
+        next.job.addressLine1 = site.addressLine1;
+        next.job.suburb = site.suburb;
+        next.job.state = site.state;
+        next.job.postcode = site.postcode;
+      }
+      if (
+        !site &&
+        !next.job.addressLine1 &&
+        this.hasCompleteAddress(customer.match)
+      ) {
+        next.job.addressLine1 = customer.match.addressLine1;
+        next.job.suburb = customer.match.suburb;
+        next.job.state = customer.match.state;
+        next.job.postcode = customer.match.postcode;
+      }
+      if (!next.job.addressLine1 && !next.job.proposedAddress) {
+        const historicalAddress = await this.uniqueHistoricalJobAddress(
+          businessId,
+          customer.match.id,
+        );
+        if (historicalAddress.kind === 'single') {
+          next.job.proposedAddress = {
+            ...historicalAddress.address,
+            source: 'HISTORICAL_JOB',
+          };
+        }
+      }
+    }
+    if (!next.job.jobId && next.job.title) {
+      const matchingJob = await this.findMatchingActiveJobForDispatch(
+        businessId,
+        next.customer.customerId,
+        next.job.title,
+      );
+      if (matchingJob) {
+        next.job.jobId = matchingJob.id;
+        next.job.jobNumber = matchingJob.jobNumber;
+        next.job.title = matchingJob.title;
+        next.job.description = matchingJob.title;
+        if (!next.job.addressLine1) {
+          next.job.addressLine1 = matchingJob.addressLine1;
+          next.job.suburb = matchingJob.suburb;
+          next.job.state = matchingJob.state;
+          next.job.postcode = matchingJob.postcode;
+        }
+      }
+    }
+    return next;
+  }
+
+  private async dispatchCustomerLocationQuestion(
+    businessId: string,
+    dispatch: PendingDispatch,
+  ) {
+    if (!dispatch.customer.customerId) return null;
+    const customer = await this.resolveCustomerForJob(
+      businessId,
+      dispatch.customer.name,
+      dispatch.customer.customerId,
+    );
+    if (!customer.match) return null;
+    if (this.singleUsableSite(customer.match.sites)) return null;
+    if (this.hasCompleteAddress(customer.match)) return null;
+    if (dispatch.job.proposedAddress) {
+      return `I found ${this.addressLabel(dispatch.job.proposedAddress)} from ${customer.match.displayName}'s previous job. Use this address?`;
+    }
+    if (customer.match.sites.length > 1) {
+      const choices = customer.match.sites
+        .map(
+          (site, index) =>
+            `${index + 1}. ${this.addressLabel({
+              addressLine1: site.addressLine1,
+              postcode: site.postcode,
+              state: site.state as AustralianState,
+              suburb: site.suburb,
+            })}`,
+        )
+        .join('\n');
+      return `${customer.match.displayName} has multiple service locations:\n${choices}\n\nWhich location is this job for?`;
+    }
+    const historicalAddress = await this.uniqueHistoricalJobAddress(
+      businessId,
+      customer.match.id,
+    );
+    if (historicalAddress.kind === 'multiple') {
+      const choices = historicalAddress.addresses
+        .map(
+          (address, index) =>
+            `${index + 1}. ${this.addressLabel({
+              addressLine1: address.addressLine1,
+              postcode: address.postcode,
+              state: address.state,
+              suburb: address.suburb,
+            })}`,
+        )
+        .join('\n');
+      return `I found multiple previous job addresses for ${customer.match.displayName}:\n${choices}\n\nWhich location is this job for?`;
+    }
+    return null;
+  }
+
+  private async uniqueHistoricalJobAddress(
+    businessId: string,
+    customerId: string,
+  ): Promise<
+    | { kind: 'none' }
+    | {
+        kind: 'single';
+        address: {
+          addressLine1: string;
+          suburb: string;
+          state: AustralianState;
+          postcode: string;
+        };
+      }
+    | {
+        kind: 'multiple';
+        addresses: Array<{
+          addressLine1: string;
+          suburb: string;
+          state: AustralianState;
+          postcode: string;
+        }>;
+      }
+  > {
+    const jobs = await this.prisma.job.findMany({
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        addressLine1: true,
+        postcode: true,
+        state: true,
+        suburb: true,
+      },
+      take: 10,
+      where: {
+        businessId,
+        customerId,
+        isArchived: false,
+      },
+    });
+    const unique = new Map<
+      string,
+      {
+        addressLine1: string;
+        suburb: string;
+        state: AustralianState;
+        postcode: string;
+      }
+    >();
+    for (const job of jobs) {
+      if (!this.hasCompleteAddress(job) || !this.isAustralianState(job.state)) {
+        continue;
+      }
+      const state = job.state;
+      const address = {
+        addressLine1: job.addressLine1,
+        postcode: job.postcode,
+        state,
+        suburb: job.suburb,
+      };
+      unique.set(this.addressKey(address), address);
+    }
+    const addresses = [...unique.values()];
+    if (addresses.length === 1)
+      return { address: addresses[0], kind: 'single' };
+    if (addresses.length > 1) return { addresses, kind: 'multiple' };
+    return { kind: 'none' };
+  }
+
+  private async findMatchingActiveJobForDispatch(
+    businessId: string,
+    customerId: string | undefined,
+    title: string,
+  ) {
+    if (!customerId) return null;
+    const tokens = this.normalisedIntentTokens(title);
+    const jobs = await this.prisma.job.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+      where: {
+        businessId,
+        customerId,
+        isArchived: false,
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      },
+    });
+    return (
+      jobs.find((job) => {
+        const haystack = this.normalisedIntentTokens(job.title ?? '').join(' ');
+        return tokens.every((token) => haystack.includes(token));
+      }) ?? null
+    );
+  }
+
+  private async recommendDispatchAppointment(
+    currentUser: AuthenticatedUser,
+    business: BusinessSummary,
+    dispatch: PendingDispatch,
+  ): Promise<DispatchAvailabilityRecommendation> {
+    const windowStart = dispatch.scheduling.windowStart
+      ? new Date(dispatch.scheduling.windowStart)
+      : null;
+    const windowEnd = dispatch.scheduling.windowEnd
+      ? new Date(dispatch.scheduling.windowEnd)
+      : null;
+    const duration = dispatch.scheduling.durationMinutes;
+    if (!windowStart || !windowEnd || !duration) return null;
+
+    const members = await this.prisma.businessMember.findMany({
+      where: {
+        businessId: currentUser.businessId,
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        status: 'ACTIVE',
+        user: { isActive: true },
+        userId: { not: null },
+      },
+      include: {
+        user: {
+          select: { email: true, firstName: true, id: true, lastName: true },
+        },
+      },
+      orderBy: [{ joinedAt: 'asc' }],
+    });
+    const technicians = members
+      .map((member) => member.user)
+      .filter((user): user is NonNullable<typeof user> => Boolean(user));
+    const stepMinutes = 30;
+    const options: Array<NonNullable<DispatchAvailabilityRecommendation>> = [];
+    for (const technician of technicians) {
+      for (
+        let startMs = windowStart.getTime();
+        startMs + duration * 60_000 <= windowEnd.getTime();
+        startMs += stepMinutes * 60_000
+      ) {
+        const scheduledStart = new Date(startMs);
+        const scheduledEnd = new Date(startMs + duration * 60_000);
+        const availability = await this.appointments.availability(currentUser, {
+          assignedUserId: technician.id,
+          scheduledEnd: scheduledEnd.toISOString(),
+          scheduledStart: scheduledStart.toISOString(),
+        });
+        if (!availability.hasConflict) {
+          options.push({
+            reason: `${this.userLabel(technician)} has no overlapping appointment in the requested window.`,
+            scheduledEnd,
+            scheduledStart,
+            technicianId: technician.id,
+            technicianName: this.userLabel(technician),
+          });
+          break;
+        }
+      }
+    }
+    return (
+      options.sort(
+        (left, right) =>
+          left.scheduledStart.getTime() - right.scheduledStart.getTime() ||
+          left.technicianName.localeCompare(right.technicianName) ||
+          left.technicianId.localeCompare(right.technicianId),
+      )[0] ?? null
+    );
+  }
+
+  private dispatchSchedulingFromText(
+    text: string,
+    timezone: string,
+  ): PendingDispatch['scheduling'] {
+    return this.dispatchSchedulingFromParsed(
+      this.parseCurrentTurn(text, timezone),
+      timezone,
+    );
+  }
+
+  private dispatchSchedulingFromParsed(
+    parsed: ToriParsedRequest,
+    timezone: string,
+  ): PendingDispatch['scheduling'] {
+    return this.dispatchSchedulingUpdateFromCurrent(parsed, {}, timezone);
+  }
+
+  private dispatchSchedulingUpdateFromCurrent(
+    parsed: ToriParsedRequest,
+    existing: PendingDispatch['scheduling'],
+    timezone: string,
+  ): PendingDispatch['scheduling'] {
+    const date = parsed.scheduling?.date ?? existing.date;
+    const daypart = parsed.scheduling?.daypart;
+    const time = parsed.scheduling?.time;
+    if (!date) {
+      return parsed.scheduling?.durationMinutes
+        ? { durationMinutes: parsed.scheduling.durationMinutes }
+        : {};
+    }
+    const [year, month, day] = date.split('-').map(Number);
+    const durationForWindow =
+      parsed.scheduling?.durationMinutes ?? existing.durationMinutes;
+    const startHour = time
+      ? Number(time.split(':')[0])
+      : daypart === 'AFTERNOON'
+        ? 12
+        : 8;
+    const startMinute = time ? Number(time.split(':')[1]) : 0;
+    const endHour = daypart === 'MORNING' ? 12 : 17;
+    const windowStart = zonedTimeToUtc(
+      { day, hour: startHour, minute: startMinute, month, year },
+      timezone,
+    );
+    const windowEnd =
+      time && durationForWindow
+        ? new Date(windowStart.getTime() + durationForWindow * 60_000)
+        : zonedTimeToUtc(
+            {
+              day,
+              hour: time ? startHour + 1 : endHour,
+              minute: 0,
+              month,
+              year,
+            },
+            timezone,
+          );
+    return {
+      date,
+      daypart,
+      durationMinutes: durationForWindow,
+      preferredStart: time ?? undefined,
+      windowEnd: windowEnd.toISOString(),
+      windowStart: windowStart.toISOString(),
+    };
+  }
+
+  private ensureDispatchPreferredTimeWindow(
+    dispatch: PendingDispatch,
+    timezone: string,
+  ) {
+    const date = dispatch.scheduling.date;
+    const preferredStart = dispatch.scheduling.preferredStart;
+    const duration = dispatch.scheduling.durationMinutes;
+    if (!date || !preferredStart || !duration) return;
+    const [year, month, day] = date.split('-').map(Number);
+    const [hour, minute] = preferredStart.split(':').map(Number);
+    const windowStart = zonedTimeToUtc(
+      { day, hour, minute, month, year },
+      timezone,
+    );
+    dispatch.scheduling.windowStart = windowStart.toISOString();
+    dispatch.scheduling.windowEnd = new Date(
+      windowStart.getTime() + duration * 60_000,
+    ).toISOString();
+  }
+
+  private extractCurrentTurnCustomer(
+    text: string,
+  ): ToriParsedRequest['customer'] | undefined {
+    const phone = this.extractAustralianPhone(text) ?? undefined;
+    const email = text.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0];
+    const name =
+      this.extractDispatchCustomerName(text) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\bnew customer\s+([A-Za-z][A-Za-z\s'-]{1,80}?)\s+(?:\+?61|0)?\d[\d\s-]{7,}\b/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\bbook\s+([A-Za-z][A-Za-z\s'-]{1,80}?)\s+(?:today|tomorrow|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\b(?:appointment|appoinment|appointement)\s+for\s+([A-Za-z][A-Za-z\s'-]{1,80}?)\s+(?:today|tomorrow|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\bsend(?:ing)?\s+someone\s+to\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:\s+today|\s+tomorrow|\s+on\b|\s+at\b|\s+for\b|[,.]|$)/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(/\bschedule\s+([A-Za-z][A-Za-z\s'-]{1,80}?)'s\b/i)?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(/\b([A-Za-z][A-Za-z\s'-]{1,80}?)\s+needs\s+someone\b/i)?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\b(?:appointment|appoinment|appointement)\s+for\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:\s+for\b|\s+on\b|\s+at\b|[,.]|$)/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\bfor\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:\s+for\b|\s+on\b|\s+at\b|[,.]|$)/i,
+        )?.[1],
+      ) ||
+      this.cleanCustomerNameCandidate(
+        text.match(
+          /\bbook\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:\s+today|\s+tomorrow|\s+on\b|\s+for\b|\s+at\b|[,.]|$)/i,
+        )?.[1],
+      );
+    if (!name && !phone && !email) {
+      if (/\b(her|him|his|their|this customer|that customer)\b/i.test(text)) {
+        return { pronounReference: true, referenceType: 'RECENT' };
+      }
+      return undefined;
+    }
+    return {
+      ...(email ? { email } : {}),
+      ...(name ? { name } : {}),
+      ...(phone ? { phone } : {}),
+      impliesNew: /\bnew customer\b/i.test(text),
+      referenceType: name ? 'EXPLICIT' : 'RECENT',
+    };
+  }
+
+  private extractDispatchCustomerName(text: string) {
+    const patterns = [
+      /\bnew customer\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:[,.]|\s+(?:her|his|their|number|phone|called)\b)/i,
+      /\bcustomer\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:[,.]|\s+(?:on|at|with|number|phone|for)\b)/i,
+      /^([A-Za-z][A-Za-z\s'-]{1,80}?)\s+called\b/i,
+      /\b([A-Za-z][A-Za-z\s'-]{1,80}?)\s+called\b/i,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        const name = this.cleanCustomerNameCandidate(match[1]);
+        if (name) return name;
+      }
+    }
+    return '';
+  }
+
+  private extractDispatchJobTitle(text: string, parsed?: ToriParsedRequest) {
+    if (parsed?.job?.title) return parsed.job.title;
+    const currentTurnTitle = this.extractCurrentTurnJobTitle(text);
+    if (currentTurnTitle) return currentTurnTitle;
+    const lower = text.toLowerCase();
+    if (
+      /\bkitchen sink\b.*\b(blocked|clogged)\b|\b(blocked|clogged)\b.*\bkitchen sink\b/i.test(
+        text,
+      )
+    ) {
+      return 'Blocked kitchen sink';
+    }
+    if (/\bblocked toilet\b/i.test(text)) return 'Blocked toilet';
+    if (/\bleaking tap\b/i.test(text)) return 'Leaking tap';
+    if (/\bbroken hot water system\b/i.test(text)) {
+      return 'Broken hot water system';
+    }
+    const match =
+      text.match(/\bjob is\s+([^,.]+?)(?:\s+at\b|[,.]|$)/i) ??
+      text.match(/\babout\s+(?:a\s+)?([^,.]+?)(?:\s+at\b|[,.]|$)/i);
+    if (match?.[1]) return this.cleanJobTitleSlot(match[1]);
+    if (lower.includes('sink') && lower.includes('blocked')) {
+      return 'Blocked sink';
+    }
+    return this.extractJobTitle(text) || '';
+  }
+
+  private extractCurrentTurnJobTitle(text: string) {
+    const explicit = this.extractIssuePhrase(text);
+    if (explicit) return this.normaliseIssueTitle(explicit);
+    const lower = text.toLowerCase();
+    if (
+      /\bkitchen sink\b.*\b(blocked|clogged)\b|\b(blocked|clogged)\b.*\bkitchen sink\b/i.test(
+        text,
+      )
+    ) {
+      return 'Blocked kitchen sink';
+    }
+    if (lower.includes('sink') && lower.includes('blocked')) {
+      return 'Blocked sink';
+    }
+    return '';
+  }
+
+  private extractIssuePhrase(text: string) {
+    for (const match of text.matchAll(
+      /\b(?:her|his|their|the)\s+([^,.?!]+?)(?:\s+at\s+\d+\b|[,.]|$)/gi,
+    )) {
+      const phrase = match[1]?.trim();
+      if (phrase && this.looksLikeServiceIssue(phrase)) return phrase;
+    }
+    const patterns = [
+      /\b(?:\+?61|0)?\d[\d\s-]{7,}\s*,\s*([^,.?!]+?)(?:\s*,\s*\d+\s+[A-Za-z]|\s+at\s+\d+\b|[,.?!]|$)/i,
+      /\bbook\s+[A-Za-z][A-Za-z\s'-]{1,80}?\s+(?:today|tomorrow|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})[^,.?!]*?\s+for\s+(?:the\s+)?([^,.?!]+?)(?:[,.?!]|$)/i,
+      /\bfor\s+[A-Za-z][A-Za-z\s'-]{1,80}?\s+for\s+([^,.?!]+?)(?:\s+for\s+(?:today|tomorrow|next\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[/\s])|\s+at\s+\d+\b|[,.]|$)/i,
+      /\bsend(?:ing)?\s+someone\s+to\s+[A-Za-z][A-Za-z\s'-]{1,80}?.*?\s+for\s+(?:the\s+)?([^,.?!]+?)(?:\s+\d+\s*(?:min|mins|minutes?|mons?|hours?|hrs?)|[,.?!]|$)/i,
+      /\bschedule\s+[A-Za-z][A-Za-z\s'-]{1,80}?'s\s+([^,.?!]+?)(?:\s+(?:today|tomorrow|morning|afternoon|evening|on\b|at\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|[,.?!]|$)/i,
+      /\b[A-Za-z][A-Za-z\s'-]{1,80}?\s+needs\s+someone\s+for\s+(?:his|her|their|the)?\s*([^,.?!]+?)(?:\s+(?:today|tomorrow|on\b|at\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|[,.?!]|$)/i,
+      /\bfor\s+(?:the\s+)?([^,.?!]+?)(?:\s+(?:today|tomorrow|morning|afternoon|evening|on\b|at\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\s+\d+\s*(?:min|mins|minutes?|mons?|hours?|hrs?)|[,.?!]|$)/i,
+      /\b(?:about|job is|work is)\s+(?:a\s+)?([^,.?!]+?)(?:\s+at\s+\d+\b|[,.]|$)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      const phrase = match?.[1]?.trim();
+      if (phrase && this.looksLikeServiceIssue(phrase)) return phrase;
+    }
+    return '';
+  }
+
+  private looksLikeServiceIssue(value: string) {
+    return /\b(leak|leaking|tap|sink|blocked|toilet|hot water|repair|fix|broken|install|inspect|service|bath|bathroom|bed|yard|pergola|pipe)\b/i.test(
+      value,
+    );
+  }
+
+  private normaliseIssueTitle(value: string) {
+    const cleaned = value
+      .replace(/\bmaster bed bath\b/gi, 'master bedroom/bathroom')
+      .replace(/^(?:his|her|their|the)\s+/i, '')
+      .replace(
+        /\s+(?:for\s+)?(?:today|tomorrow|on\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b.*$/i,
+        '',
+      )
+      .replace(/\s+on\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b.*$/i, '')
+      .replace(/\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b.*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (
+      /\bkitchen sink\b/i.test(cleaned) &&
+      /\b(blocked|clogged)\b/i.test(cleaned)
+    ) {
+      return 'Blocked kitchen sink';
+    }
+    if (/^(blocked|clogged)\b/i.test(cleaned)) {
+      return this.cleanJobTitleSlot(cleaned);
+    }
+    if (/\b(blocked|clogged)\b/i.test(cleaned)) {
+      return this.cleanJobTitleSlot(cleaned.replace(/\bis\b/gi, ''));
+    }
+    return this.cleanJobTitleSlot(cleaned);
+  }
+
+  private extractDispatchAddress(text: string) {
+    const explicit = this.extractAustralianAddressSlot(text);
+    if (explicit) return explicit;
+    const match = text.match(
+      /\b(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)(?:[,.]|$)/i,
+    );
+    if (!match) return null;
+    const suburb = this.cleanExtractedName(match[2]);
+    const inferred = this.inferAddressFromSuburb(suburb);
+    return inferred
+      ? {
+          addressLine1: match[1].trim(),
+          postcode: inferred.postcode,
+          state: inferred.state,
+          suburb,
+        }
+      : null;
+  }
+
+  private inferAddressFromSuburb(suburb: string) {
+    const key = suburb.toLowerCase();
+    const known: Record<string, { postcode: string; state: AustralianState }> =
+      {
+        tarneit: { postcode: '3029', state: 'VIC' },
+        werribee: { postcode: '3030', state: 'VIC' },
+      };
+    return known[key] ?? null;
+  }
+
+  private dispatchAddress(job: PendingDispatch['job']) {
+    if (job.addressLine1 && job.suburb && job.state && job.postcode) {
+      return {
+        addressLine1: job.addressLine1,
+        postcode: job.postcode,
+        state: job.state as AustralianState,
+        suburb: job.suburb,
+      };
+    }
+    return null;
+  }
+
+  private dispatchAddressLabel(job: PendingDispatch['job']) {
+    const address = this.dispatchAddress(job);
+    if (address) return this.addressLabel(address);
+    return [job.addressLine1, job.suburb, job.state, job.postcode]
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  private dispatchCustomerName(dispatch: PendingDispatch) {
+    return dispatch.customer.name ?? 'Customer';
+  }
+
+  private dispatchRequestedLabel(dispatch: PendingDispatch, timezone: string) {
+    const start = dispatch.scheduling.windowStart
+      ? new Date(dispatch.scheduling.windowStart)
+      : null;
+    if (!start) return 'Requested time';
+    const date = formatBusinessDate(start, timezone);
+    const part = dispatch.scheduling.daypart
+      ? dispatch.scheduling.daypart.toLowerCase()
+      : 'time window';
+    return `${date} ${part}`;
+  }
+
+  private cancelDispatchMessage(dispatch: PendingDispatch) {
+    const created: string[] = [];
+    if (dispatch.customer.customerId) created.push('customer');
+    if (dispatch.job.jobId) created.push('job');
+    return created.length
+      ? `Okay, I cancelled the remaining dispatch workflow. The already-created ${created.join(
+          ' and ',
+        )} will remain in TradieOS.`
+      : 'Okay, I cancelled that dispatch workflow. No TradieOS data changed.';
   }
 
   private appointmentResumeContextFromCreatedJob(job: {
@@ -839,6 +2422,19 @@ export class AiService {
       pendingQuestion: {
         intent: 'CREATE_APPOINTMENT_FOR_JOB',
         type: 'APPOINTMENT_DATE',
+      },
+      recentCustomer: customerId
+        ? {
+            displayName: customerName ?? 'Customer',
+            id: customerId,
+          }
+        : undefined,
+      recentJob: {
+        customerId,
+        customerName,
+        id: job.id,
+        jobNumber: job.jobNumber,
+        title: job.title,
       },
       serviceLocation,
     };
@@ -1196,7 +2792,7 @@ export class AiService {
     };
   }
 
-  private async prepareReassignDraft(
+  private async prepareSmartReassignDraft(
     currentUser: AuthenticatedUser,
     business: BusinessSummary,
     text: string,
@@ -1215,53 +2811,131 @@ export class AiService {
           "I couldn't identify the appointment to reassign. Which appointment should I use?",
       };
     }
+    const lower = text.toLowerCase();
     const technician = await this.findTechnicianMention(
       currentUser.businessId,
-      text.toLowerCase(),
+      lower,
     );
-    if (!technician) {
+    const candidates = await this.technicianRecommendationsForAppointment(
+      currentUser,
+      business,
+      appointment,
+    );
+    const namedIneligible = technician
+      ? null
+      : await this.findAnyMemberMention(currentUser.businessId, lower);
+    if (namedIneligible) {
+      return {
+        content: `${this.userLabel(namedIneligible.user)} cannot be assigned as the field technician for this appointment. In Phase 1, Tori can only assign active Technician role members.`,
+      };
+    }
+    const requestedBest = this.looksLikeBestTechnicianAssignment(lower);
+    const selectedCandidate = technician
+      ? candidates.find((candidate) => candidate.userId === technician.id)
+      : requestedBest
+        ? candidates.find((candidate) => candidate.isAvailable)
+        : null;
+    if (!selectedCandidate) {
+      if (requestedBest) {
+        return {
+          content:
+            'I could not find an available eligible technician for that appointment.',
+        };
+      }
       return {
         content: 'Which technician should I assign this appointment to?',
       };
     }
-    const availability = await this.appointments.availability(currentUser, {
-      assignedUserId: technician.id,
-      excludeAppointmentId: appointment.id,
-      scheduledEnd: appointment.scheduledEnd.toISOString(),
-      scheduledStart: appointment.scheduledStart.toISOString(),
-    });
-    const warnings = availability.hasConflict ? [availability.reason] : [];
+    if (!selectedCandidate.isAvailable) {
+      const alternative = candidates.find((candidate) => candidate.isAvailable);
+      return {
+        content: alternative
+          ? `${selectedCandidate.name} is not available: ${selectedCandidate.availabilityReason} ${alternative.name} is available with ${alternative.scheduledMinutes} scheduled minutes that day. Would you like me to prepare ${alternative.name} instead?`
+          : `${selectedCandidate.name} is not available: ${selectedCandidate.availabilityReason} I could not find another eligible technician available for that time.`,
+      };
+    }
+    const reason = `${selectedCandidate.name} is available with no overlapping appointment and has ${selectedCandidate.scheduledMinutes} scheduled minutes that day.`;
     const draft = this.actionDraft({
-      description: `Assign ${appointment.job.customer.displayName}'s appointment to ${this.userLabel(technician)}.`,
+      description: `Assign ${appointment.job.customer.displayName}'s appointment to ${selectedCandidate.name}.`,
       entityId: appointment.id,
       entityType: 'APPOINTMENT',
       payload: {
         appointmentId: appointment.id,
         expectedUpdatedAt: appointment.updatedAt.toISOString(),
         reassignmentPayload: {
-          assignedUserId: technician.id,
-          reason: 'Prepared by Tori',
+          assignedUserId: selectedCandidate.userId,
+          reason,
         },
         type: 'REASSIGN_TECHNICIAN',
       },
       proposedChanges: [
+        { label: 'Appointment', to: appointment.appointmentNumber },
+        { label: 'Customer', to: appointment.job.customer.displayName },
         {
           from: this.userLabel(appointment.assignedUser),
           label: 'Technician',
-          to: this.userLabel(technician),
+          to: selectedCandidate.name,
         },
+        { label: 'Reason', to: reason },
       ],
       title: 'Reassign technician',
-      validationState: warnings.length ? 'CONFLICT' : 'READY',
-      warnings,
+      validationState: 'READY',
+      warnings: [],
     });
     return {
       actionDraft: draft,
-      content:
-        'I prepared a reassignment draft. Nothing has changed yet—confirm it if this looks right.',
+      content: `I recommend ${selectedCandidate.name}. I prepared a reassignment draft. Nothing has changed yet—confirm it if this looks right.`,
     };
   }
 
+  private async answerTechnicianRecommendation(
+    currentUser: AuthenticatedUser,
+    business: BusinessSummary,
+    text: string,
+    context?: ToriContext,
+  ) {
+    const appointment = await this.resolveAppointment(
+      currentUser,
+      business,
+      text,
+      context,
+    );
+    if (!appointment) {
+      return "I couldn't identify the appointment. Which appointment should I check?";
+    }
+    const candidates = await this.technicianRecommendationsForAppointment(
+      currentUser,
+      business,
+      appointment,
+    );
+    const available = candidates.filter((candidate) => candidate.isAvailable);
+    if (!candidates.length) {
+      return 'I could not find any active Technician role members in this workspace.';
+    }
+    if (!available.length) {
+      return `No eligible technicians are available for ${appointment.appointmentNumber}. ${candidates
+        .slice(0, 3)
+        .map(
+          (candidate) => `${candidate.name}: ${candidate.availabilityReason}`,
+        )
+        .join(' ')}`;
+    }
+    const recommended = available[0];
+    return [
+      `Available technicians for ${appointment.appointmentNumber}:`,
+      ...available
+        .slice(0, 3)
+        .map(
+          (candidate, index) =>
+            `${index + 1}. ${candidate.name} — available ${formatBusinessTimeRange(
+              appointment.scheduledStart,
+              appointment.scheduledEnd,
+              business.timezone,
+            )}; ${candidate.scheduledMinutes} scheduled minutes that day.`,
+        ),
+      `Recommended: ${recommended.name}. ${recommended.name} has no conflict and the lightest eligible schedule.`,
+    ].join('\n');
+  }
   private async beginAppointmentFromContext(
     currentUser: AuthenticatedUser,
     _text: string,
@@ -1771,10 +3445,14 @@ export class AiService {
       addressLine1: existingPendingJob?.addressLine1,
       customerId:
         existingPendingJob?.customerId ??
-        request.context?.pendingAppointment?.customerId,
+        request.context?.pendingAppointment?.customerId ??
+        request.context?.customerId ??
+        request.context?.recentCustomer?.id,
       customerName:
         existingPendingJob?.customerName ??
-        request.context?.pendingAppointment?.customerName,
+        request.context?.pendingAppointment?.customerName ??
+        request.context?.customerName ??
+        request.context?.recentCustomer?.displayName,
       description: existingPendingJob?.description,
       postcode: existingPendingJob?.postcode,
       state:
@@ -1933,10 +3611,12 @@ export class AiService {
           ? pending.job.state
           : undefined,
     };
-    const job: JobDraftSlots = {
-      ...pendingJob,
-      ...this.jobSlots(text, request),
-    };
+    const job = this.mergeJobSlotsForCurrentTurn(
+      pendingJob,
+      text,
+      request,
+      'CREATE_CUSTOMER_AND_JOB',
+    );
     if (!customer.firstName && !customer.companyName) {
       return {
         content:
@@ -2486,6 +4166,19 @@ export class AiService {
     };
   }
 
+  private assistantMessage(
+    content: string,
+    actionDraft?: ToriActionDraft,
+  ): ToriChatResponse['message'] {
+    return {
+      actionDraft,
+      content,
+      createdAt: new Date().toISOString(),
+      id: randomUUID(),
+      role: 'assistant',
+    };
+  }
+
   private async loadAppointmentJob(businessId: string, jobId: string) {
     return this.prisma.job.findFirst({
       include: {
@@ -2740,6 +4433,20 @@ export class AiService {
     return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
   }
 
+  private addressKey(address: {
+    addressLine1?: string | null;
+    postcode?: string | null;
+    state?: string | null;
+    suburb?: string | null;
+  }) {
+    return [
+      this.addressPart(address.addressLine1),
+      this.addressPart(address.suburb),
+      this.addressPart(address.state),
+      this.addressPart(address.postcode),
+    ].join('|');
+  }
+
   private async appointmentDraftFromPending(
     currentUser: AuthenticatedUser,
     business: BusinessSummary,
@@ -2914,12 +4621,116 @@ export class AiService {
     }
   }
 
+  private async technicianRecommendationsForAppointment(
+    currentUser: AuthenticatedUser,
+    business: BusinessSummary,
+    appointment: NonNullable<
+      Awaited<ReturnType<AiService['resolveAppointment']>>
+    >,
+  ) {
+    const members = await this.prisma.businessMember.findMany({
+      where: {
+        businessId: currentUser.businessId,
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        status: 'ACTIVE',
+        user: { isActive: true },
+        userId: { not: null },
+      },
+      include: {
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+            id: true,
+            lastName: true,
+          },
+        },
+      },
+      orderBy: [{ joinedAt: 'asc' }],
+    });
+    const technicians = members
+      .map((member) =>
+        member.user
+          ? {
+              email: member.user.email,
+              name: this.userLabel(member.user),
+              role: member.role,
+              userId: member.user.id,
+            }
+          : null,
+      )
+      .filter((member): member is NonNullable<typeof member> =>
+        Boolean(member),
+      );
+    const dayRange = getBusinessDayRangeUtc(
+      appointment.scheduledStart,
+      business.timezone,
+    );
+    const dayAppointments = await this.prisma.appointment.findMany({
+      where: {
+        assignedUserId: { in: technicians.map((item) => item.userId) },
+        businessId: currentUser.businessId,
+        scheduledStart: { gte: dayRange.start, lt: dayRange.end },
+        status: { notIn: [...CLOSED_APPOINTMENT_STATUSES] },
+      },
+      select: {
+        assignedUserId: true,
+        scheduledEnd: true,
+        scheduledStart: true,
+      },
+    });
+
+    const candidates = await Promise.all(
+      technicians.map(async (technician) => {
+        const availability = await this.appointments.availability(currentUser, {
+          assignedUserId: technician.userId,
+          excludeAppointmentId: appointment.id,
+          scheduledEnd: appointment.scheduledEnd.toISOString(),
+          scheduledStart: appointment.scheduledStart.toISOString(),
+        });
+        const technicianAppointments = dayAppointments.filter(
+          (item) => item.assignedUserId === technician.userId,
+        );
+        const scheduledMinutes = technicianAppointments.reduce(
+          (sum, item) =>
+            sum +
+            Math.max(
+              0,
+              Math.round(
+                (item.scheduledEnd.getTime() - item.scheduledStart.getTime()) /
+                  60_000,
+              ),
+            ),
+          0,
+        );
+        return {
+          ...technician,
+          availabilityReason: availability.reason,
+          conflicts: availability.conflicts,
+          isAvailable: !availability.hasConflict,
+          scheduledMinutes,
+          todayWorkload: technicianAppointments.length,
+        };
+      }),
+    );
+
+    return candidates.sort(
+      (left, right) =>
+        Number(right.isAvailable) - Number(left.isAvailable) ||
+        left.scheduledMinutes - right.scheduledMinutes ||
+        left.todayWorkload - right.todayWorkload ||
+        left.name.localeCompare(right.name) ||
+        left.userId.localeCompare(right.userId),
+    );
+  }
+
   private async findTechnicianMention(businessId: string, lower: string) {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId,
-        role: { in: ['OWNER', 'ADMIN', 'TECHNICIAN'] },
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
         status: 'ACTIVE',
+        user: { isActive: true },
         userId: { not: null },
       },
       include: { user: true },
@@ -2937,6 +4748,30 @@ export class AiService {
             lower.includes(user.email.toLowerCase().split('@')[0])
           );
         }) ?? null
+    );
+  }
+
+  private async findAnyMemberMention(businessId: string, lower: string) {
+    const members = await this.prisma.businessMember.findMany({
+      where: {
+        businessId,
+        status: 'ACTIVE',
+        user: { isActive: true },
+        userId: { not: null },
+      },
+      include: { user: true },
+      take: 50,
+    });
+    return (
+      members.find((member) => {
+        if (!member.user) return false;
+        const name = this.userLabel(member.user).toLowerCase();
+        return (
+          lower.includes(name) ||
+          lower.includes(member.user.firstName.toLowerCase()) ||
+          lower.includes(member.user.email.toLowerCase().split('@')[0])
+        );
+      }) ?? null
     );
   }
 
@@ -3199,7 +5034,7 @@ export class AiService {
   private parseDurationMinutes(text: string) {
     const hourMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(hours?|hrs?|h)\b/i);
     if (hourMatch) return Math.round(Number(hourMatch[1]) * 60);
-    const minuteMatch = text.match(/\b(\d+)\s*(minutes?|mins?|m)\b/i);
+    const minuteMatch = text.match(/\b(\d+)\s*(minutes?|mins?|mons?|m)\b/i);
     return minuteMatch ? Number(minuteMatch[1]) : null;
   }
 
@@ -3300,9 +5135,12 @@ export class AiService {
     existing: JobDraftSlots,
     text: string,
     request: ToriChatRequest,
+    intent: NonNullable<
+      ToriContext['pendingQuestion']
+    >['intent'] = 'CREATE_JOB',
   ): JobDraftSlots {
     const expected = request.context?.pendingQuestion;
-    if (expected?.intent === 'CREATE_JOB') {
+    if (expected?.intent === intent) {
       if (expected.type === 'JOB_TITLE') {
         const title = this.cleanJobTitleSlot(text);
         return {
@@ -3383,7 +5221,18 @@ export class AiService {
     const match = text.match(
       /\b(?:create|add|prepare)\s+(?:a\s+)?(?:plumbing\s+|electrical\s+|cleaning\s+)?job\s+for\s+([A-Za-z][A-Za-z\s'-]{1,80}?)(?:\s+to\b|\s+for\b|$)/i,
     );
-    return this.cleanExtractedName(match?.[1] ?? '');
+    const raw = match?.[1] ?? '';
+    if (!raw) return '';
+    const lower = raw.toLowerCase().trim();
+    if (
+      this.referencesKnownCustomer(lower) ||
+      /^(her|him|them|this customer|that customer|the customer|newly created customer|created customer|customer above)$/.test(
+        lower,
+      )
+    ) {
+      return '';
+    }
+    return this.cleanExtractedName(raw.replace(/\s+customer$/i, ''));
   }
 
   private extractJobTitle(text: string) {
@@ -3424,14 +5273,22 @@ export class AiService {
     state: AustralianState;
     postcode: string;
   } | null {
-    const match = text.match(
+    const stateBeforePostcode = text.match(
       /\b(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)\s+(VIC|NSW|QLD|SA|WA|TAS|ACT|NT)\s+(\d{4})\b/i,
     );
+    const postcodeBeforeState =
+      stateBeforePostcode ??
+      text.match(
+        /\b(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)[,]?\s+(\d{4})\s+(VIC|NSW|QLD|SA|WA|TAS|ACT|NT)\b/i,
+      );
+    const match = postcodeBeforeState;
     if (!match) return null;
+    const state = stateBeforePostcode ? match[3] : match[4];
+    const postcode = stateBeforePostcode ? match[4] : match[3];
     return {
       addressLine1: match[1].trim(),
-      postcode: match[4],
-      state: match[3].toUpperCase() as AustralianState,
+      postcode,
+      state: state.toUpperCase() as AustralianState,
       suburb: this.cleanExtractedName(match[2]),
     };
   }
@@ -3446,7 +5303,7 @@ export class AiService {
     if (explicit) return explicit;
 
     const match = text.match(
-      /^\s*(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)[,]?\s+(\d{4})\s*$/i,
+      /\b(\d+\s+[A-Za-z][A-Za-z0-9\s'-]*(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Lane|Ln|Way|Place|Pl))[,]?\s+([A-Za-z][A-Za-z\s'-]+?)[,]?\s+(\d{4})(?:\s+(?:VIC|NSW|QLD|SA|WA|TAS|ACT|NT))?(?:[,.]|$)/i,
     );
     if (!match) return null;
     const state = this.inferAustralianStateFromPostcode(match[3]);
@@ -3674,6 +5531,38 @@ export class AiService {
       .trim();
   }
 
+  private cleanCustomerNameCandidate(value?: string) {
+    if (!value) return '';
+    const cleaned = this.cleanExtractedName(value)
+      .replace(
+        /\b(?:please|today|tomorrow|morning|afternoon|evening|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}(?:st|nd|rd|th)?)\b/gi,
+        '',
+      )
+      .trim();
+    if (!cleaned || cleaned.length > 80) return '';
+    if (this.looksLikeServiceIssue(cleaned)) return '';
+    if (/^(someone|somone|technician|tradie|appointment)$/i.test(cleaned)) {
+      return '';
+    }
+    return cleaned;
+  }
+
+  private extractJobNumber(text: string) {
+    return text.match(/\bJOB-\d{4}-\d{6}\b/i)?.[0]?.toUpperCase();
+  }
+
+  private normalisedIntentTokens(text: string) {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(
+        (token) =>
+          token.length > 2 &&
+          !['fix', 'the', 'and', 'job', 'for', 'with'].includes(token),
+      );
+  }
+
   private normalisePhone(value: string) {
     const digits = value.trim().replace(/\D/g, '');
     if (digits.startsWith('614')) return `0${digits.slice(2)}`;
@@ -3851,6 +5740,30 @@ export class AiService {
     );
   }
 
+  private looksLikeTechnicianRecommendation(lower: string) {
+    return (
+      /\b(who|which)\b.*\b(available|free|take|best technician)\b/.test(
+        lower,
+      ) ||
+      /\brecommend\b.*\b(technician|someone)\b/.test(lower) ||
+      /\bwho can take\b/.test(lower)
+    );
+  }
+
+  private looksLikeTechnicianAssignment(lower: string) {
+    return (
+      /\bassign\b.*\b(best|available|someone|whoever|free|least busy|technician)\b/.test(
+        lower,
+      ) || /\bassign\b/.test(lower)
+    );
+  }
+
+  private looksLikeBestTechnicianAssignment(lower: string) {
+    return /\b(best|available|someone|whoever|free|least busy|technician)\b/.test(
+      lower,
+    );
+  }
+
   private looksLikeCreateAppointment(lower: string) {
     return (
       /\b(book|schedule)\b.*\bappointment\b/.test(lower) ||
@@ -3859,7 +5772,26 @@ export class AiService {
     );
   }
 
+  private looksLikeDispatchRequest(lower: string) {
+    return (
+      (/\b(new customer|customer|called)\b/.test(lower) ||
+        /\b\d{4}[\s-]?\d{3}[\s-]?\d{3}\b/.test(lower)) &&
+      /\b(book(?:ing)?|schedule|scheduling|send(?:ing)? someone|someone|appointment)\b/.test(
+        lower,
+      ) &&
+      /\b(today|tomorrow|morning|afternoon|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\/\d{1,2})\b/.test(
+        lower,
+      ) &&
+      /\b(blocked|leaking|broken|sink|toilet|tap|hot water|repair|fix)\b/.test(
+        lower,
+      )
+    );
+  }
+
   private looksLikeExplicitCreateCustomerAndJob(lower: string) {
+    if (this.looksLikeCreateJobForReferencedCustomer(lower)) {
+      return false;
+    }
     return (
       (/\b(creat|create|add)\b/.test(lower) &&
         /\bcustomer\b/.test(lower) &&
@@ -3881,10 +5813,30 @@ export class AiService {
     return /\b(create|add|prepare)\b.*\bjob\b/.test(lower);
   }
 
+  private looksLikeCreateJobForReferencedCustomer(lower: string) {
+    return (
+      this.looksLikeExplicitCreateJob(lower) &&
+      this.referencesKnownCustomer(lower)
+    );
+  }
+
+  private referencesKnownCustomer(lower: string) {
+    return (
+      /\b(newly created|just created|created)\s+customer\b/.test(lower) ||
+      /\b(this|that|the|above)\s+customer\b/.test(lower) ||
+      /\bcustomer\s+(above|mentioned|we just created)\b/.test(lower) ||
+      /\bfor\s+(her|him|them)\b/.test(lower) ||
+      /\banother\s+job\s+for\s+this\s+customer\b/.test(lower)
+    );
+  }
+
   private looksLikeCreateCustomerAndJob(
     lower: string,
     request: ToriChatRequest,
   ) {
+    if (this.looksLikeCreateJobForReferencedCustomer(lower)) {
+      return false;
+    }
     return (
       (/\b(create|add)\b/.test(lower) &&
         /\bcustomer\b/.test(lower) &&
@@ -3990,6 +5942,7 @@ export class AiService {
       request.context?.pendingAppointment ||
       request.context?.pendingCustomer ||
       request.context?.pendingCustomerAndJob ||
+      request.context?.pendingDispatch ||
       request.context?.pendingQuestion ||
       this.looksLikePendingCustomerAndJob(request) ||
       this.looksLikePendingCustomer(request) ||
@@ -3998,7 +5951,9 @@ export class AiService {
   }
 
   private isCancelCommand(lower: string) {
-    return /^(cancel|stop|never mind|nevermind|forget it)$/i.test(lower.trim());
+    return /^(cancel(?: this)?|stop|never mind|nevermind|forget it)$/i.test(
+      lower.trim(),
+    );
   }
 
   private isPositiveConfirmation(lower: string) {
@@ -4019,6 +5974,7 @@ export class AiService {
       pendingAppointment,
       pendingCustomer,
       pendingCustomerAndJob,
+      pendingDispatch,
       pendingJob,
       pendingQuestion,
       ...rest
@@ -4026,6 +5982,7 @@ export class AiService {
     void pendingAppointment;
     void pendingCustomer;
     void pendingCustomerAndJob;
+    void pendingDispatch;
     void pendingJob;
     void pendingQuestion;
     return rest;

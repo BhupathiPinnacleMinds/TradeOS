@@ -182,6 +182,7 @@ export function ToriChatScreen() {
           id: nextLocalMessageId('assistant-result'),
           role: 'assistant',
         },
+        ...(result.nextMessage ? [result.nextMessage] : []),
       ]);
     } catch (confirmError) {
       setMessages((current) => [

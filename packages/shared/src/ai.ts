@@ -4,7 +4,7 @@ import type {
 } from './appointments';
 import type { BusinessRole } from './auth';
 import type { ManualCustomerCommunicationPayload } from './communications';
-import type { CustomerPayload } from './customers';
+import type { AustralianState, CustomerPayload } from './customers';
 import type { InvoicePayload } from './invoices';
 import type { JobPayload } from './jobs';
 import type { QuotePayload } from './quotes';
@@ -50,6 +50,30 @@ export interface ToriContext {
   appointmentId?: string;
   customerId?: string;
   customerName?: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  recentCustomer?: {
+    id: string;
+    displayName: string;
+    phone?: string | null;
+    email?: string | null;
+  };
+  recentJob?: {
+    id: string;
+    jobNumber?: string;
+    title: string;
+    customerId?: string;
+    customerName?: string;
+  };
+  recentAppointment?: {
+    id: string;
+    appointmentNumber?: string;
+    jobId?: string | null;
+  };
+  recentTechnician?: {
+    id: string;
+    name: string;
+  };
   jobId?: string;
   jobNumber?: string;
   jobTitle?: string;
@@ -130,6 +154,52 @@ export interface ToriContext {
     time?: string;
     durationMinutes?: number;
   };
+  pendingDispatch?: {
+    stage:
+      | 'AWAITING_DURATION'
+      | 'AWAITING_CUSTOMER_CONFIRMATION'
+      | 'AWAITING_JOB_CONFIRMATION'
+      | 'AWAITING_APPOINTMENT_CONFIRMATION'
+      | 'NO_AVAILABILITY';
+    customer: {
+      customerId?: string;
+      name?: string;
+      phone?: string;
+      email?: string;
+    };
+    job: {
+      jobId?: string;
+      jobNumber?: string;
+      title?: string;
+      description?: string;
+      addressLine1?: string;
+      suburb?: string;
+      state?: string;
+      postcode?: string;
+      proposedAddress?: {
+        addressLine1: string;
+        suburb: string;
+        state: AustralianState;
+        postcode: string;
+        source: 'HISTORICAL_JOB';
+      };
+    };
+    scheduling: {
+      date?: string;
+      daypart?: 'MORNING' | 'AFTERNOON';
+      preferredStart?: string;
+      windowStart?: string;
+      windowEnd?: string;
+      durationMinutes?: number;
+    };
+    technician?: {
+      technicianId?: string;
+      technicianName?: string;
+      recommendedStart?: string;
+      recommendedEnd?: string;
+      reason?: string;
+    };
+  };
 }
 
 export interface ToriChatMessage {
@@ -175,6 +245,7 @@ export type ToriActionPayload =
   | {
       type: 'CREATE_APPOINTMENT';
       appointmentPayload: AppointmentPayload;
+      dispatchContext?: ToriContext['pendingDispatch'];
     }
   | {
       type: 'CREATE_QUOTE';
@@ -191,11 +262,13 @@ export type ToriActionPayload =
   | {
       type: 'CREATE_CUSTOMER';
       customerPayload: CustomerPayload;
+      dispatchContext?: ToriContext['pendingDispatch'];
     }
   | {
       type: 'CREATE_JOB';
       jobPayload: JobPayload;
       resumeAppointment?: ToriContext['pendingAppointment'];
+      dispatchContext?: ToriContext['pendingDispatch'];
     }
   | {
       type: 'CREATE_CUSTOMER_AND_JOB';
@@ -247,6 +320,7 @@ export interface ToriActionConfirmResponse {
   entityId: string;
   details: Array<{ label: string; value: string }>;
   context?: ToriContext;
+  nextMessage?: ToriChatMessage;
 }
 
 export const TORI_READ_ROLES: BusinessRole[] = [

@@ -74,6 +74,18 @@ type AppointmentUpdateCall = [
   },
 ];
 
+type BusinessMemberLookupCall = [
+  {
+    where: {
+      businessId?: string;
+      role?: { in?: string[] };
+      status?: string;
+      user?: { isActive?: boolean };
+      userId?: string;
+    };
+  },
+];
+
 function appointment(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     actualEnd: null,
@@ -430,6 +442,35 @@ describe('AppointmentsService', () => {
       });
   });
 
+  it('does not allow active admins to be assigned as field technicians', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst.mockResolvedValueOnce(null);
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        assignedUserId: 'admin-1',
+        jobId: 'job-1',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      })
+      .catch((error) => {
+        expectDomainError(error, 'ASSIGNEE_NOT_FOUND');
+        expect((error as HttpException).getStatus()).toBe(404);
+      });
+
+    const memberCalls = prisma.businessMember.findFirst.mock
+      .calls as unknown as BusinessMemberLookupCall[];
+    expect(memberCalls[0][0].where).toEqual(
+      expect.objectContaining({
+        businessId: 'business-1',
+        role: { in: ['TECHNICIAN'] },
+        status: 'ACTIVE',
+        userId: 'admin-1',
+      }),
+    );
+  });
+
   it('rejects invalid manual appointment postcodes', async () => {
     const { service } = createService();
 
@@ -617,6 +658,47 @@ describe('AppointmentsService', () => {
     });
 
     expect(recommendation.recommendedTechnicianId).toBe('tech-1');
+    const memberCalls = prisma.businessMember.findMany.mock
+      .calls as unknown as BusinessMemberLookupCall[];
+    expect(memberCalls[0][0].where).toEqual(
+      expect.objectContaining({
+        role: { in: ['TECHNICIAN'] },
+        status: 'ACTIVE',
+        user: { isActive: true },
+      }),
+    );
+  });
+
+  it('ranks technician recommendations by lowest same-day workload', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findMany.mockResolvedValueOnce([
+      {
+        role: 'TECHNICIAN',
+        user: { firstName: 'Mia', id: 'tech-1', lastName: 'Technician' },
+      },
+      {
+        role: 'TECHNICIAN',
+        user: { firstName: 'Raj', id: 'tech-2', lastName: 'Field' },
+      },
+    ]);
+    prisma.appointment.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        appointment({
+          assignedUserId: 'tech-1',
+          scheduledEnd: new Date('2026-07-15T05:00:00.000Z'),
+          scheduledStart: new Date('2026-07-15T03:00:00.000Z'),
+        }),
+      ]);
+
+    const recommendation = await service.recommend(owner, {
+      jobId: 'job-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(recommendation.recommendedTechnicianId).toBe('tech-2');
+    expect(recommendation.reason).toContain('0 scheduled minutes');
   });
 
   it('blocks overlapping appointments unless an owner overrides', async () => {
@@ -792,6 +874,13 @@ describe('AppointmentsService', () => {
     expect(result.appointment.id).toBe('appointment-1');
     expect(result.technicians[0].todayWorkload).toBe(1);
     expect(result.recommendation.technicianId).toBe('tech-1');
+    const memberCalls = prisma.businessMember.findMany.mock
+      .calls as unknown as BusinessMemberLookupCall[];
+    expect(memberCalls[0][0].where).toEqual(
+      expect.objectContaining({
+        role: { in: ['TECHNICIAN'] },
+      }),
+    );
   });
 
   it('loads dispatcher board with technicians, unassigned work and recommendations', async () => {

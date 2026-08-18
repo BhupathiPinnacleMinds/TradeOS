@@ -37,6 +37,37 @@ draft creation uses `QuotesService`, invoice draft creation uses
 
 Appointment action drafts include the target appointment `updatedAt` timestamp.
 Confirmation reloads the appointment and rejects stale drafts before mutation.
+Confirmation responses also update structured Tori context with active/recent
+entity references. Follow-up workflows must use this context for references such
+as “this customer”, “her”, “it” or “the newly created customer” instead of
+parsing arbitrary prior chat text.
+
+Compound dispatch workflows use the same architecture. `AiService` stores
+multi-step customer/job/appointment orchestration in structured
+`pendingDispatch` context and resumes it across separate chat requests. Each
+step still produces a normal Action Draft and confirmation still delegates to
+the existing customer, job and appointment services. The dispatch orchestrator
+does not duplicate the appointment conflict engine; it asks the existing
+availability service for candidate technician slots before drafting an
+appointment.
+
+Tori routing starts with a structured current-turn interpretation layer. The
+parser extracts intents and entities from the latest user message before any
+pending workflow or recent context is considered. Explicit current-turn
+customer, job/issue, address and scheduling entities override stale recent
+context; pending/recent context is used only when the current turn is implicit
+or ambiguous. This parser feeds `pendingDispatch` and existing appointment/job
+workflows, and is designed to be reusable by future voice input without moving
+business mutations out of the confirmed Action Draft path.
+
+Tori dispatch planning now separates current-turn understanding from tenant
+entity resolution. Customer names are resolved against tenant customers before
+safe context is applied. Service location resolution prefers explicit current
+addresses, then customer service sites/defaults, then same-customer historical
+job addresses with confirmation or choice prompts. Confirmed Tori dispatch jobs
+reuse `CustomersService.createSite()` to persist new customer service locations
+without duplicating existing sites, keeping customer profiles useful for future
+appointments.
 
 ## Customer communications and reminders
 
@@ -408,7 +439,7 @@ Appointment and scheduling architecture:
 - `Appointment` represents when the work happens and who performs it.
 - One job can have many appointments for inspections, installations, maintenance, return visits and emergency visits.
 - Calendar, Tori scheduling, notifications and future travel planning should use appointments instead of job schedule fields.
-- Appointment recommendation is deliberately non-AI for now. It checks working hours, active technicians and existing appointment conflicts, then returns a recommendation with a human-readable reason.
+- Appointment recommendation is deliberately non-AI for now. It checks business working hours, active `TECHNICIAN` role members with active user accounts, existing appointment conflicts and same-day workload, then returns a recommendation with a human-readable reason. Owners/admins manage scheduling but are not considered assignable field technicians by default.
 - Calendar is a mobile tab over appointment APIs. It supports day, week, month
   and agenda ranges, technician/status/search filters, jump-to-date, swipe date
   movement and appointment detail drill-in. Calendar ranges and grouping are

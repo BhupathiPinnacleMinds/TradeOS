@@ -512,6 +512,16 @@ export interface AppointmentReassignmentOptionsResponse {
   recommendation: AppointmentReassignmentRecommendation;
 }
 
+export const APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES: BusinessRole[] = [
+  'TECHNICIAN',
+];
+
+export function roleCanBeAssignedAppointments(role: BusinessRole | undefined) {
+  return Boolean(
+    role && APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES.includes(role),
+  );
+}
+
 export type DispatcherTechnicianStatus =
   | 'AVAILABLE'
   | 'TRAVELLING'

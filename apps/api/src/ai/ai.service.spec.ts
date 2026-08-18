@@ -126,7 +126,11 @@ function service(prisma = createPrisma()) {
     update: jest.fn(),
   };
   const communications = { sendManual: jest.fn() };
-  const customers = { create: jest.fn() };
+  const customers = {
+    create: jest.fn(),
+    createSite: jest.fn(),
+    listSites: jest.fn().mockResolvedValue([]),
+  };
   const jobs = { create: jest.fn() };
   const quotes = { create: jest.fn() };
   const invoices = { create: jest.fn() };
@@ -285,7 +289,1909 @@ describe('AiService', () => {
     );
     expect(result.entityType).toBe('CUSTOMER');
     expect(result.entityId).toBe('customer-1');
+    expect(result.context).toMatchObject({
+      customerId: 'customer-1',
+      customerName: 'John Smith',
+      recentCustomer: {
+        displayName: 'John Smith',
+        id: 'customer-1',
+      },
+    });
   });
+
+  it('creates a job for the newly created customer across structured context without creating a duplicate customer', async () => {
+    const prisma = createPrisma();
+    const pooja = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Pooja',
+      email: null,
+      firstName: 'Pooja',
+      id: 'customer-pooja',
+      lastName: null,
+      phone: '0450488583',
+      sites: [],
+    };
+    prisma.customer.findFirst.mockResolvedValue(pooja);
+    prisma.customer.findMany.mockResolvedValue([]);
+    const { customers, jobs, service: ai } = service(prisma);
+    customers.create.mockResolvedValue({ customer: pooja });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '30 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Pooja', id: 'customer-pooja' },
+        customerId: 'customer-pooja',
+        id: 'job-pooja-1',
+        jobNumber: 'JOB-2026-000101',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Blocked kitchen sink',
+      },
+    });
+
+    const startCustomer = await ai.chat(owner, { message: 'Create customer' });
+    expect(startCustomer.message.content).toContain("customer's name");
+
+    const name = await ai.chat(owner, {
+      context: roundTripContext(startCustomer.context),
+      message: 'Pooja',
+    });
+    expect(name.message.content).toContain('phone number or email');
+
+    const phone = await ai.chat(owner, {
+      context: roundTripContext(name.context),
+      message: '0450488583',
+    });
+    const customerDraft = phone.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+    expect(customers.create).not.toHaveBeenCalled();
+
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const createdCustomer = await ai.confirm(
+      owner,
+      customerDraft.id,
+      roundTripContext(customerDraft),
+    );
+    expect(createdCustomer.context).toMatchObject({
+      customerId: 'customer-pooja',
+      customerName: 'Pooja',
+      recentCustomer: {
+        displayName: 'Pooja',
+        id: 'customer-pooja',
+      },
+    });
+
+    const createJob = await ai.chat(owner, {
+      context: roundTripContext(createdCustomer.context),
+      message: 'Create job for the newly created customer',
+    });
+    expect(createJob.message.content).toContain('What is the job for');
+    expect(createJob.message.content).not.toContain("customer's name");
+    expect(createJob.message.actionDraft).toBeUndefined();
+    expect(createJob.context?.pendingJob).toMatchObject({
+      customerId: 'customer-pooja',
+      customerName: 'Pooja',
+    });
+
+    const title = await ai.chat(owner, {
+      context: roundTripContext(createJob.context),
+      message: 'Blocked kitchen sink',
+    });
+    expect(title.message.content).toContain('service address');
+    expect(title.context?.pendingJob?.title).toBe('Blocked kitchen sink');
+
+    const address = await ai.chat(owner, {
+      context: roundTripContext(title.context),
+      message: '30 Coffey Street, Tarneit, 3029',
+    });
+    const jobDraft = address.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+    expect(address.message.content).not.toContain('service address');
+    expect(address.context?.pendingJob).toMatchObject({
+      addressLine1: '30 Coffey Street',
+      customerId: 'customer-pooja',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Blocked kitchen sink',
+    });
+    expect(
+      jobDraft?.payload.type === 'CREATE_JOB'
+        ? jobDraft.payload.jobPayload
+        : undefined,
+    ).toMatchObject({
+      addressLine1: '30 Coffey Street',
+      customerId: 'customer-pooja',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Blocked kitchen sink',
+    });
+    expect(customers.create).toHaveBeenCalledTimes(1);
+    expect(jobs.create).not.toHaveBeenCalled();
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const createdJob = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+
+    expect(jobs.create).toHaveBeenCalledWith(
+      owner,
+      expect.objectContaining({
+        customerId: 'customer-pooja',
+        title: 'Blocked kitchen sink',
+      }),
+    );
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+    expect(customers.create).toHaveBeenCalledTimes(1);
+    expect(createdJob.context).toMatchObject({
+      customerId: 'customer-pooja',
+      customerName: 'Pooja',
+      jobId: 'job-pooja-1',
+      jobTitle: 'Blocked kitchen sink',
+      recentJob: {
+        id: 'job-pooja-1',
+        title: 'Blocked kitchen sink',
+      },
+    });
+  });
+
+  it('orchestrates the exact Pooja dispatch request through safe drafts and confirmation resume', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([]);
+    prisma.customer.findFirst.mockResolvedValue({
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Pooja',
+      email: null,
+      firstName: 'Pooja',
+      id: 'customer-pooja',
+      lastName: null,
+      phone: '0450488583',
+      sites: [],
+    });
+    prisma.businessMember.findMany.mockResolvedValue([
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'mia@demo-tradieos.com',
+          firstName: 'Mia',
+          id: 'mia-1',
+          lastName: 'Nguyen',
+        },
+        userId: 'mia-1',
+      },
+    ]);
+    const { appointments, customers, jobs, service: ai } = service(prisma);
+    customers.create.mockResolvedValue({
+      customer: {
+        displayName: 'Pooja',
+        email: null,
+        id: 'customer-pooja',
+        phone: '0450488583',
+      },
+    });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '30 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Pooja', id: 'customer-pooja' },
+        customerId: 'customer-pooja',
+        id: 'job-pooja',
+        jobNumber: 'JOB-2026-000111',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Blocked kitchen sink',
+      },
+    });
+    appointments.create.mockResolvedValue({
+      appointment: {
+        appointmentNumber: 'APT-2026-000111',
+        id: 'appointment-pooja',
+        jobId: 'job-pooja',
+        scheduledStart: new Date('2026-08-18T23:00:00.000Z'),
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Pooja. Her number is 0450488583. Her kitchen sink is blocked at 30 Coffey Street, Tarneit. Book someone tomorrow morning.',
+    });
+
+    expect(start.message.content).not.toContain(
+      "couldn't find appointments for tomorrow",
+    );
+    expect(start.message.content).toContain('How long should I allow');
+    expect(start.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Pooja', phone: '0450488583' },
+      job: {
+        addressLine1: '30 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Blocked kitchen sink',
+      },
+      scheduling: {
+        daypart: 'MORNING',
+      },
+      stage: 'AWAITING_DURATION',
+    });
+
+    const duration = await ai.chat(owner, {
+      context: roundTripContext(start.context),
+      message: '60 minutes',
+    });
+    const customerDraft = duration.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+    expect(customers.create).not.toHaveBeenCalled();
+
+    if (!customerDraft) throw new Error('Expected customer draft');
+    const customerResult = await ai.confirm(
+      owner,
+      customerDraft.id,
+      roundTripContext(customerDraft),
+    );
+    expect(customers.create).toHaveBeenCalledTimes(1);
+    expect(customerResult.nextMessage?.actionDraft?.type).toBe('CREATE_JOB');
+
+    const jobDraft = customerResult.nextMessage?.actionDraft;
+    if (!jobDraft) throw new Error('Expected job draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+    expect(jobResult.nextMessage?.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(jobResult.nextMessage?.content).toContain('Mia Nguyen is available');
+
+    const appointmentDraft = jobResult.nextMessage?.actionDraft;
+    if (!appointmentDraft) throw new Error('Expected appointment draft');
+    expect(
+      appointmentDraft.payload.type === 'CREATE_APPOINTMENT'
+        ? appointmentDraft.payload.appointmentPayload
+        : undefined,
+    ).toMatchObject({
+      addressLine1: '30 Coffey Street',
+      assignedUserId: 'mia-1',
+      jobId: 'job-pooja',
+      locationSource: 'MANUAL',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+    });
+    await ai.confirm(owner, appointmentDraft.id, appointmentDraft);
+    expect(appointments.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('parses Ranjan compound dispatch with current-turn entities before appointment search', async () => {
+    const { service: ai } = service();
+
+    const result = await ai.chat(owner, {
+      message:
+        'I have a new customer Ranjan. His number is 0450588583. Her master bed bath leak at 29 Coffey Street, Tarneit, 3029 VIC. Book someone for tomorrow',
+    });
+
+    expect(result.message.content).not.toContain(
+      "couldn't find appointments for tomorrow",
+    );
+    expect(result.message.content).toContain('How long should I allow');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Ranjan', phone: '0450588583' },
+      job: {
+        addressLine1: '29 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Master bedroom/bathroom leak',
+      },
+      stage: 'AWAITING_DURATION',
+    });
+    expect(typeof result.context?.pendingDispatch?.scheduling.date).toBe(
+      'string',
+    );
+  });
+
+  it('parses Ben dispatch with alternate wording and inferred Tarneit address details', async () => {
+    const { service: ai } = service();
+
+    const result = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. Her outdoor pergola tap leak at 27 Coffey Street Tarneit. Book someone for tomorrow',
+    });
+
+    expect(result.message.content).toContain('How long should I allow');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Ben', phone: '0414303345' },
+      job: {
+        addressLine1: '27 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Outdoor pergola tap leak',
+      },
+    });
+    expect(typeof result.context?.pendingDispatch?.scheduling.date).toBe(
+      'string',
+    );
+  });
+
+  it.each([
+    'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning for 120 minutes.',
+    'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Book someone for tomorrow morning for 120 minutes.',
+    'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Schedule someone tomorrow morning for 120 minutes.',
+    'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Send someone tomorrow morning for 120 minutes.',
+  ])(
+    'prioritises compound dispatch creation over tomorrow read lookup: %s',
+    async (message) => {
+      const { service: ai } = service();
+
+      const result = await ai.chat(owner, { message });
+
+      expect(result.message.content).not.toContain('Appointments tomorrow');
+      expect(result.message.content).not.toContain('How long should I allow');
+      expect(result.message.content).not.toContain('When should I book');
+      expect(result.message.actionDraft?.type).toBe('CREATE_CUSTOMER');
+      expect(result.context?.pendingDispatch).toMatchObject({
+        customer: { name: 'Ben', phone: '0414303345' },
+        job: {
+          addressLine1: '27 Coffey Street',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+          title: 'Pergola tap is leaking',
+        },
+        scheduling: {
+          daypart: 'MORNING',
+          durationMinutes: 120,
+        },
+        stage: 'AWAITING_CUSTOMER_CONFIRMATION',
+      });
+      expect(result.context?.pendingDispatch?.scheduling.date).toBeTruthy();
+      expect(
+        result.context?.pendingDispatch?.scheduling.windowStart,
+      ).toBeTruthy();
+    },
+  );
+
+  it('lets existing Ben by equivalent phone skip duplicate customer creation in compound dispatch', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ben',
+        email: null,
+        firstName: 'Ben',
+        id: 'customer-ben',
+        lastName: null,
+        phone: '0414303345',
+        sites: [],
+      },
+    ]);
+    const { customers, service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning for 120 minutes.',
+    });
+
+    expect(result.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(customers.create).not.toHaveBeenCalled();
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: {
+        customerId: 'customer-ben',
+        name: 'Ben',
+      },
+      scheduling: {
+        durationMinutes: 120,
+      },
+    });
+  });
+
+  it('continues dispatch after CREATE_JOB confirmation without standalone appointment prompt', async () => {
+    const prisma = createPrisma();
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ben]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { appointments, customers, jobs, service: ai } = service(prisma);
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000501',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes',
+    });
+    const jobDraft = start.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+
+    expect(jobResult.message).not.toContain(
+      'Would you like me to prepare an appointment?',
+    );
+    expect(jobResult.message).toContain("I'll check technician availability");
+    expect(jobResult.nextMessage?.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(customers.create).not.toHaveBeenCalled();
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+    expect(appointments.create).not.toHaveBeenCalled();
+  });
+
+  it('runs new-customer dispatch through customer, job and appointment drafts without auto-confirming appointment', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([]);
+    prisma.customer.findFirst.mockResolvedValue({
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    });
+    const { appointments, customers, jobs, service: ai } = service(prisma);
+    customers.create.mockResolvedValue({
+      customer: {
+        displayName: 'Ben',
+        email: null,
+        id: 'customer-ben',
+        phone: '0414303345',
+      },
+    });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000502',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes',
+    });
+    const customerDraft = start.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const customerResult = await ai.confirm(
+      owner,
+      customerDraft.id,
+      roundTripContext(customerDraft),
+    );
+    const jobDraft = customerResult.nextMessage?.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+
+    expect(jobResult.nextMessage?.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(customers.create).toHaveBeenCalledTimes(1);
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+    expect(appointments.create).not.toHaveBeenCalled();
+  });
+
+  it('preserves dispatch context after no availability and retries afternoon without duplicate customer or job', async () => {
+    const prisma = createPrisma();
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ben]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { appointments, customers, jobs, service: ai } = service(prisma);
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [{ id: 'appointment-conflict' }],
+      hasConflict: true,
+      reason: 'Technician already has an overlapping appointment.',
+    });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000503',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes',
+    });
+    const jobDraft = start.message.actionDraft;
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+
+    expect(jobResult.nextMessage?.content).toContain(
+      'No technician can fit a 120-minute appointment',
+    );
+    expect(jobResult.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ben', name: 'Ben' },
+      job: {
+        jobId: 'job-ben',
+        title: 'Pergola tap is leaking',
+      },
+      scheduling: {
+        daypart: 'MORNING',
+        durationMinutes: 120,
+      },
+      stage: 'NO_AVAILABILITY',
+    });
+    appointments.availability.mockReset();
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [],
+      hasConflict: false,
+      reason: 'No conflict',
+    });
+
+    const retry = await ai.chat(owner, {
+      context: roundTripContext(jobResult.context),
+      message: 'Afternoon',
+    });
+
+    expect(retry.message.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(retry.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ben', name: 'Ben' },
+      job: { jobId: 'job-ben', title: 'Pergola tap is leaking' },
+      scheduling: {
+        daypart: 'AFTERNOON',
+        durationMinutes: 120,
+      },
+    });
+    expect(customers.create).not.toHaveBeenCalled();
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries no-availability dispatch for any time tomorrow without duplicate records', async () => {
+    const prisma = createPrisma();
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ben]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { appointments, jobs, service: ai } = service(prisma);
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [{ id: 'appointment-conflict' }],
+      hasConflict: true,
+      reason: 'Technician already has an overlapping appointment.',
+    });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000504',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes',
+    });
+    const jobDraft = start.message.actionDraft;
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+    appointments.availability.mockReset();
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [],
+      hasConflict: false,
+      reason: 'No conflict',
+    });
+
+    const retry = await ai.chat(owner, {
+      context: roundTripContext(jobResult.context),
+      message: 'Any time tomorrow',
+    });
+
+    expect(retry.message.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(retry.context?.pendingDispatch?.scheduling.daypart).toBeUndefined();
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries no-availability dispatch for another date while retaining customer, job and duration', async () => {
+    const prisma = createPrisma();
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ben]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { appointments, jobs, service: ai } = service(prisma);
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [{ id: 'appointment-conflict' }],
+      hasConflict: true,
+      reason: 'Technician already has an overlapping appointment.',
+    });
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000505',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes',
+    });
+    const jobDraft = start.message.actionDraft;
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+    appointments.availability.mockReset();
+    appointments.availability.mockResolvedValue({
+      canOverride: false,
+      conflicts: [],
+      hasConflict: false,
+      reason: 'No conflict',
+    });
+
+    const retry = await ai.chat(owner, {
+      context: roundTripContext(jobResult.context),
+      message: 'Try August 20',
+    });
+
+    expect(retry.message.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+    expect(retry.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ben' },
+      job: { jobId: 'job-ben' },
+      scheduling: { durationMinutes: 120 },
+    });
+    expect(retry.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-20$/,
+    );
+    expect(jobs.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps standalone CREATE_JOB appointment offer unchanged when no dispatch was requested', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ben',
+        email: null,
+        firstName: 'Ben',
+        id: 'customer-ben',
+        lastName: null,
+        phone: '0414303345',
+        sites: [
+          {
+            accessInstructions: null,
+            addressLine1: '27 Coffey Street',
+            addressLine2: null,
+            id: 'site-ben',
+            isPrimary: true,
+            label: 'Home',
+            postcode: '3029',
+            state: 'VIC',
+            suburb: 'Tarneit',
+          },
+        ],
+      },
+    ]);
+    const { jobs, service: ai } = service(prisma);
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000506',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap leak',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message: 'Create a job for Ben for pergola tap leak',
+    });
+    const jobDraft = start.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+
+    expect(jobResult.message).toContain(
+      'Would you like me to prepare an appointment?',
+    );
+    expect(jobResult.nextMessage).toBeUndefined();
+  });
+
+  it('lets explicit Ben compound dispatch override stale Ranjan context', async () => {
+    const { service: ai } = service();
+
+    const result = await ai.chat(owner, {
+      context: {
+        customerId: 'customer-ranjan',
+        customerName: 'Ranjan',
+        jobId: 'job-ranjan',
+        jobTitle: 'Front yard tap leak',
+        recentCustomer: { displayName: 'Ranjan', id: 'customer-ranjan' },
+        recentJob: {
+          customerId: 'customer-ranjan',
+          customerName: 'Ranjan',
+          id: 'job-ranjan',
+          jobNumber: 'JOB-2026-000444',
+          title: 'Front yard tap leak',
+        },
+      },
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning for 120 minutes.',
+    });
+
+    expect(result.message.content).not.toContain('Ranjan');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: { name: 'Ben', phone: '0414303345' },
+      job: { title: 'Pergola tap is leaking' },
+      scheduling: {
+        daypart: 'MORNING',
+        durationMinutes: 120,
+      },
+    });
+  });
+
+  it('keeps create appointment wording actionable instead of tomorrow read lookup', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ben',
+        email: null,
+        firstName: 'Ben',
+        id: 'customer-ben',
+        lastName: null,
+        phone: '0414303345',
+        sites: [],
+      },
+    ]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ben tomorrow morning for 120 minutes.',
+    });
+
+    expect(result.message.content).not.toContain('Appointments tomorrow');
+    expect(result.context?.pendingDispatch?.customer.name).toBe('Ben');
+    expect(result.context?.pendingDispatch?.scheduling.durationMinutes).toBe(
+      120,
+    );
+  });
+
+  it.each([
+    'What appointments do I have tomorrow?',
+    "Show tomorrow's appointments.",
+    "What's happening tomorrow?",
+  ])(
+    'keeps genuine appointment read query as read only: %s',
+    async (message) => {
+      const { service: ai } = service();
+
+      const result = await ai.chat(owner, { message });
+
+      expect(result.message.content).toContain('Appointments tomorrow');
+      expect(result.message.actionDraft).toBeUndefined();
+      expect(result.context?.pendingDispatch).toBeUndefined();
+    },
+  );
+
+  it('uses explicit current-turn customer and issue instead of stale recent appointment context', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ranjan',
+        email: null,
+        firstName: 'Ranjan',
+        id: 'customer-ranjan',
+        lastName: null,
+        phone: '0450588583',
+        sites: [
+          {
+            accessInstructions: null,
+            addressLine1: '29 Coffey Street',
+            addressLine2: null,
+            id: 'site-ranjan',
+            isPrimary: true,
+            label: 'Home',
+            postcode: '3029',
+            state: 'VIC',
+            suburb: 'Tarneit',
+          },
+        ],
+      },
+    ]);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      context: {
+        customerId: 'customer-ben',
+        customerName: 'Ben',
+        jobId: 'job-ben',
+        jobTitle: 'Fix leak',
+        recentCustomer: { displayName: 'Ben', id: 'customer-ben' },
+        recentJob: {
+          customerId: 'customer-ben',
+          customerName: 'Ben',
+          id: 'job-ben',
+          jobNumber: 'JOB-2026-000333',
+          title: 'Fix leak',
+        },
+      },
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please',
+    });
+
+    expect(result.message.content).not.toContain('Ben');
+    expect(result.message.content).not.toContain('What date');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: {
+        customerId: 'customer-ranjan',
+        name: 'Ranjan',
+      },
+      job: {
+        title: 'Front yard tap leak',
+      },
+    });
+    expect(result.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-21$/,
+    );
+  });
+
+  it('resolves an existing customer saved service address before asking for appointment address', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+
+    expect(result.message.content).not.toContain('full service address');
+    expect(result.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(
+      result.message.actionDraft?.payload.type === 'CREATE_JOB'
+        ? result.message.actionDraft.payload.jobPayload
+        : undefined,
+    ).toMatchObject({
+      addressLine1: '29 Coffey Street',
+      customerId: 'customer-ranjan',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Front yard tap leak',
+    });
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ranjan', name: 'Ranjan' },
+      job: {
+        addressLine1: '29 Coffey Street',
+        title: 'Front yard tap leak',
+      },
+    });
+    expect(result.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-21$/,
+    );
+  });
+
+  it('does not attach an appointment request to an unrelated existing job', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([
+      {
+        addressLine1: '29 Coffey Street',
+        customerId: 'customer-ranjan',
+        id: 'job-unrelated',
+        jobNumber: 'JOB-2026-000201',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Master bedroom bathroom has a leak',
+      },
+    ]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+
+    expect(result.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(result.context?.pendingDispatch?.job.jobId).toBeUndefined();
+    expect(result.context?.pendingDispatch?.job.title).toBe(
+      'Front yard tap leak',
+    );
+  });
+
+  it('reuses a matching open job for an existing customer appointment request', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([
+      {
+        addressLine1: '29 Coffey Street',
+        customerId: 'customer-ranjan',
+        id: 'job-front-yard',
+        jobNumber: 'JOB-2026-000202',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Front yard tap leak',
+      },
+    ]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+
+    expect(result.message.actionDraft).toBeUndefined();
+    expect(result.message.content).toContain('What time on');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ranjan' },
+      job: { jobId: 'job-front-yard', title: 'Front yard tap leak' },
+    });
+  });
+
+  it('asks for a service address when the resolved customer has no saved service address', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+
+    expect(result.message.content).toContain('full service address');
+    expect(result.message.actionDraft).toBeUndefined();
+  });
+
+  it('asks the user to choose when a customer has multiple non-primary service locations', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan-1',
+          isPrimary: false,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+        {
+          accessInstructions: null,
+          addressLine1: '15 Example Street',
+          addressLine2: null,
+          id: 'site-ranjan-2',
+          isPrimary: false,
+          label: 'Rental',
+          postcode: '3030',
+          state: 'VIC',
+          suburb: 'Werribee',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+
+    expect(result.message.content).toContain('multiple service locations');
+    expect(result.message.content).toContain(
+      '1. 29 Coffey Street, Tarneit, VIC, 3029',
+    );
+    expect(result.message.content).toContain(
+      '2. 15 Example Street, Werribee, VIC, 3030',
+    );
+    expect(result.message.actionDraft).toBeUndefined();
+  });
+
+  it('uses an explicit current-turn address instead of the saved service address', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak at 50 Example Street, Tarneit VIC 3029 on Aug 21.',
+    });
+
+    expect(result.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(
+      result.message.actionDraft?.payload.type === 'CREATE_JOB'
+        ? result.message.actionDraft.payload.jobPayload
+        : undefined,
+    ).toMatchObject({
+      addressLine1: '50 Example Street',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+    });
+  });
+
+  it('retains resolved customer, issue, date and address across time and duration collection', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [
+        {
+          accessInstructions: null,
+          addressLine1: '29 Coffey Street',
+          addressLine2: null,
+          id: 'site-ranjan',
+          isPrimary: true,
+          label: 'Home',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      ],
+    };
+    const createdJob = {
+      addressLine1: '29 Coffey Street',
+      addressLine2: null,
+      customer: { displayName: 'Ranjan', id: 'customer-ranjan' },
+      customerId: 'customer-ranjan',
+      id: 'job-ranjan-front-yard',
+      jobNumber: 'JOB-2026-000203',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Front yard tap leak',
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { jobs, service: ai } = service(prisma);
+    jobs.create.mockResolvedValue({ job: createdJob });
+
+    const start = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 please.',
+    });
+    const jobDraft = start.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const jobResult = await ai.confirm(
+      owner,
+      jobDraft.id,
+      roundTripContext(jobDraft),
+    );
+    expect(jobResult.nextMessage?.content).toContain('What time on');
+
+    const time = await ai.chat(owner, {
+      context: roundTripContext(jobResult.context),
+      message: '9am',
+    });
+    expect(time.message.content).toContain('How long');
+    expect(time.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-ranjan', name: 'Ranjan' },
+      job: {
+        addressLine1: '29 Coffey Street',
+        jobId: 'job-ranjan-front-yard',
+        title: 'Front yard tap leak',
+      },
+      scheduling: { preferredStart: '09:00' },
+    });
+    expect(time.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-21$/,
+    );
+
+    const duration = await ai.chat(owner, {
+      context: roundTripContext(time.context),
+      message: '120 mins',
+    });
+    expect(duration.message.actionDraft?.type).toBe('CREATE_APPOINTMENT');
+  });
+
+  it.each([
+    {
+      expectedCustomer: 'Ben',
+      expectedDuration: 120,
+      expectedIssue: 'Pergola tap is leaking',
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes.',
+      setup: 'new-ben',
+      type: 'CREATE_CUSTOMER',
+    },
+    {
+      expectedCustomer: 'Ben',
+      expectedDuration: 120,
+      expectedIssue: 'Pergola tap leaking',
+      message:
+        'New customer Ben 0414303345, pergola tap leaking, 27 Coffey Street Tarneit. Book someone tomorrow morning for 2 hours.',
+      setup: 'new-ben',
+      type: 'CREATE_CUSTOMER',
+    },
+    {
+      expectedCustomer: 'Ben',
+      expectedDuration: 120,
+      expectedIssue: 'Pergola tap leak',
+      message:
+        'Can you send someone to Ben tomorrow morning for the pergola tap leak? 120 mins.',
+      setup: 'existing-ben',
+      type: 'CREATE_JOB',
+    },
+    {
+      expectedCustomer: 'Ben',
+      expectedIssue: 'Pergola tap leak',
+      message: "Schedule Ben's pergola tap leak tomorrow morning.",
+      setup: 'existing-ben',
+      type: 'CREATE_JOB',
+    },
+    {
+      expectedCustomer: 'Ranjan',
+      expectedIssue: 'Front yard tap leak',
+      message: 'Book Ranjan Aug 21 for the front yard tap leak.',
+      setup: 'existing-ranjan',
+      type: 'CREATE_JOB',
+    },
+    {
+      expectedCustomer: 'Ranjan',
+      expectedIssue: 'Front tap',
+      message: 'Ranjan needs someone for his front tap on Aug 21.',
+      setup: 'existing-ranjan',
+      type: 'CREATE_JOB',
+    },
+    {
+      expectedCustomer: 'Ranjan',
+      expectedDuration: 120,
+      expectedStart: '09:00',
+      message: 'Create appointment for Ranjan Aug 21 at 9am for 2 hours.',
+      setup: 'existing-ranjan',
+      type: undefined,
+    },
+  ])(
+    'normalises natural dispatch wording into one semantic workflow: $message',
+    async ({
+      expectedCustomer,
+      expectedDuration,
+      expectedIssue,
+      expectedStart,
+      message,
+      setup,
+      type,
+    }) => {
+      const prisma = createPrisma();
+      const ben = {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ben',
+        email: null,
+        firstName: 'Ben',
+        id: 'customer-ben',
+        lastName: null,
+        phone: '0414303345',
+        sites: [
+          {
+            accessInstructions: null,
+            addressLine1: '27 Coffey Street',
+            addressLine2: null,
+            id: 'site-ben',
+            isPrimary: true,
+            label: 'Home',
+            postcode: '3029',
+            state: 'VIC',
+            suburb: 'Tarneit',
+          },
+        ],
+      };
+      const ranjan = {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ranjan',
+        email: null,
+        firstName: 'Ranjan',
+        id: 'customer-ranjan',
+        lastName: null,
+        phone: '0450588583',
+        sites: [
+          {
+            accessInstructions: null,
+            addressLine1: '29 Coffey Street',
+            addressLine2: null,
+            id: 'site-ranjan',
+            isPrimary: true,
+            label: 'Home',
+            postcode: '3029',
+            state: 'VIC',
+            suburb: 'Tarneit',
+          },
+        ],
+      };
+      if (setup === 'new-ben') {
+        prisma.customer.findMany.mockResolvedValue([]);
+        prisma.customer.findFirst.mockResolvedValue(ben);
+      } else {
+        prisma.customer.findMany.mockResolvedValue([
+          setup === 'existing-ben' ? ben : ranjan,
+        ]);
+        prisma.customer.findFirst.mockResolvedValue(
+          setup === 'existing-ben' ? ben : ranjan,
+        );
+      }
+      prisma.job.findMany.mockResolvedValue([]);
+      const { service: ai } = service(prisma);
+
+      const result = await ai.chat(owner, { message });
+
+      expect(result.message.content).not.toContain('Appointments tomorrow');
+      expect(result.message.actionDraft?.type).toBe(type);
+      expect(result.context?.pendingDispatch?.customer.name).toBe(
+        expectedCustomer,
+      );
+      if (expectedIssue) {
+        expect(result.context?.pendingDispatch?.job.title).toBe(expectedIssue);
+      }
+      if (expectedDuration) {
+        expect(
+          result.context?.pendingDispatch?.scheduling.durationMinutes,
+        ).toBe(expectedDuration);
+      }
+      if (expectedStart) {
+        expect(result.context?.pendingDispatch?.scheduling.preferredStart).toBe(
+          expectedStart,
+        );
+      }
+    },
+  );
+
+  it('proposes a single trusted historical job address for the same customer instead of asking for a full address', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([
+      {
+        addressLine1: '29 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Master bedroom bathroom has a leak',
+      },
+    ]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message: 'Create appointment for Ranjan for front yard tap leak Aug 21.',
+    });
+
+    expect(result.message.content).toContain(
+      "from Ranjan's previous job. Use this address?",
+    );
+    expect(result.message.content).toContain('29 Coffey Street');
+    expect(result.context?.pendingDispatch?.job.proposedAddress).toMatchObject({
+      addressLine1: '29 Coffey Street',
+      source: 'HISTORICAL_JOB',
+    });
+
+    const accepted = await ai.chat(owner, {
+      context: roundTripContext(result.context),
+      message: 'yes',
+    });
+    expect(accepted.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(accepted.context?.pendingDispatch?.job).toMatchObject({
+      addressLine1: '29 Coffey Street',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Front yard tap leak',
+    });
+  });
+
+  it('asks the user to choose when multiple historical job addresses exist for the same customer', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([
+      {
+        addressLine1: '29 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+      },
+      {
+        addressLine1: '15 Example Street',
+        postcode: '3030',
+        state: 'VIC',
+        suburb: 'Werribee',
+      },
+    ]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message: 'Create appointment for Ranjan for front yard tap leak Aug 21.',
+    });
+
+    expect(result.message.content).toContain('multiple previous job addresses');
+    expect(result.message.content).toContain('29 Coffey Street');
+    expect(result.message.content).toContain('15 Example Street');
+    expect(result.message.actionDraft).toBeUndefined();
+  });
+
+  it('never leaks another customer historical address into explicit current-turn customer resolution', async () => {
+    const prisma = createPrisma();
+    const ranjan = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ranjan',
+      email: null,
+      firstName: 'Ranjan',
+      id: 'customer-ranjan',
+      lastName: null,
+      phone: '0450588583',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ranjan]);
+    prisma.customer.findFirst.mockResolvedValue(ranjan);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message: 'Create appointment for Ranjan for front yard tap leak Aug 21.',
+    });
+
+    expect(result.message.content).toContain('full service address');
+    type JobFindManyInput = {
+      where?: { businessId?: string; customerId?: string };
+    };
+    const jobFindManyCalls = prisma.job.findMany.mock.calls as Array<
+      [JobFindManyInput]
+    >;
+    const historicalLookup = jobFindManyCalls.find(
+      ([input]) =>
+        input?.where?.businessId === 'business-1' &&
+        input.where.customerId === 'customer-ranjan',
+    );
+    expect(historicalLookup).toBeDefined();
+  });
+
+  it('persists a dispatch job address as a customer service location after confirmed job creation without duplicating existing sites', async () => {
+    const prisma = createPrisma();
+    const ben = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Ben',
+      email: null,
+      firstName: 'Ben',
+      id: 'customer-ben',
+      lastName: null,
+      phone: '0414303345',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValue([ben]);
+    prisma.customer.findFirst.mockResolvedValue(ben);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { customers, jobs, service: ai } = service(prisma);
+    jobs.create.mockResolvedValue({
+      job: {
+        addressLine1: '27 Coffey Street',
+        addressLine2: null,
+        customer: { displayName: 'Ben', id: 'customer-ben' },
+        customerId: 'customer-ben',
+        id: 'job-ben',
+        jobNumber: 'JOB-2026-000601',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+        title: 'Pergola tap is leaking',
+      },
+    });
+
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes.',
+    });
+    const jobDraft = start.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+
+    await ai.confirm(owner, jobDraft.id, roundTripContext(jobDraft));
+
+    expect(customers.createSite).toHaveBeenCalledWith(owner, 'customer-ben', {
+      addressLine1: '27 Coffey Street',
+      isPrimary: true,
+      label: 'Service address',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+    });
+
+    customers.createSite.mockClear();
+    customers.listSites.mockResolvedValueOnce([
+      {
+        addressLine1: '27 Coffey Street',
+        postcode: '3029',
+        state: 'VIC',
+        suburb: 'Tarneit',
+      },
+    ]);
+    const secondStart = await ai.chat(owner, {
+      message:
+        'I have a new customer Ben. His number is 0414303345. His pergola tap is leaking at 27 Coffey Street, Tarneit. Booking someone for tomorrow morning 120 minutes.',
+    });
+    const secondDraft = secondStart.message.actionDraft;
+    if (!secondDraft) throw new Error('Expected second CREATE_JOB draft');
+    await ai.confirm(owner, secondDraft.id, roundTripContext(secondDraft));
+    expect(customers.createSite).not.toHaveBeenCalled();
+  });
+
+  it('extracts customer, issue, date, time and duration in one appointment turn', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Ranjan',
+        email: null,
+        firstName: 'Ranjan',
+        id: 'customer-ranjan',
+        lastName: null,
+        phone: '0450588583',
+        sites: [
+          {
+            accessInstructions: null,
+            addressLine1: '29 Coffey Street',
+            addressLine2: null,
+            id: 'site-ranjan',
+            isPrimary: true,
+            label: 'Home',
+            postcode: '3029',
+            state: 'VIC',
+            suburb: 'Tarneit',
+          },
+        ],
+      },
+    ]);
+    prisma.job.findMany.mockResolvedValue([]);
+    const { service: ai } = service(prisma);
+
+    const result = await ai.chat(owner, {
+      message:
+        'Create an appointment for Ranjan for front yard tap leak for Aug 21 at 9am for 120 mins',
+    });
+
+    expect(result.message.content).not.toContain('What date');
+    expect(result.message.content).not.toContain('What start time');
+    expect(result.message.content).not.toContain('How long');
+    expect(result.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(result.context?.pendingDispatch).toMatchObject({
+      customer: {
+        customerId: 'customer-ranjan',
+        name: 'Ranjan',
+      },
+      job: {
+        title: 'Front yard tap leak',
+      },
+      scheduling: {
+        durationMinutes: 120,
+        preferredStart: '09:00',
+      },
+    });
+    expect(result.context?.pendingDispatch?.scheduling.date).toMatch(
+      /^\d{4}-08-21$/,
+    );
+  });
+
+  it('keeps availability questions as read queries instead of dispatch creation', async () => {
+    const { service: ai } = service();
+
+    const result = await ai.chat(owner, {
+      message: 'Who is available tomorrow?',
+    });
+
+    expect(result.context?.pendingDispatch).toBeUndefined();
+    expect(result.message.actionDraft).toBeUndefined();
+    expect(result.message.content).toContain('available');
+  });
+
+  it('reuses an existing customer in dispatch orchestration and skips CREATE_CUSTOMER', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Pooja',
+        email: null,
+        firstName: 'Pooja',
+        id: 'customer-pooja',
+        lastName: null,
+        phone: '0450488583',
+        sites: [],
+      },
+    ]);
+    const { customers, service: ai } = service(prisma);
+
+    const start = await ai.chat(owner, {
+      message:
+        'New customer Pooja, 0450488583, blocked kitchen sink at 30 Coffey Street, Tarneit. Send someone tomorrow morning.',
+    });
+    const duration = await ai.chat(owner, {
+      context: roundTripContext(start.context),
+      message: '60 minutes',
+    });
+
+    expect(duration.message.actionDraft?.type).toBe('CREATE_JOB');
+    expect(customers.create).not.toHaveBeenCalled();
+    expect(duration.context?.pendingDispatch?.customer.customerId).toBe(
+      'customer-pooja',
+    );
+  });
+
+  it('keeps pending dispatch active across read interruptions and supports cancellation', async () => {
+    const { service: ai } = service();
+    const start = await ai.chat(owner, {
+      message:
+        'I have a new customer Pooja. Her number is 0450488583. Her kitchen sink is blocked at 30 Coffey Street, Tarneit. Book someone tomorrow morning.',
+    });
+
+    const read = await ai.chat(owner, {
+      context: roundTripContext(start.context),
+      message: 'Who is working tomorrow?',
+    });
+    expect(read.context?.pendingDispatch?.customer.name).toBe('Pooja');
+
+    const cancel = await ai.chat(owner, {
+      context: roundTripContext(read.context),
+      message: 'Cancel this',
+    });
+    expect(cancel.message.content).toContain('cancelled');
+    expect(cancel.context?.pendingDispatch).toBeUndefined();
+  });
+
+  it.each([
+    'Create job for this customer',
+    'Create job for her',
+    'Create a job for Pooja',
+    'Create another job for this customer',
+  ])(
+    'starts CREATE_JOB for a recent customer reference: %s',
+    async (message) => {
+      const prisma = createPrisma();
+      prisma.customer.findFirst.mockResolvedValue({
+        companyName: null,
+        contactPreference: 'SMS',
+        displayName: 'Pooja',
+        email: null,
+        firstName: 'Pooja',
+        id: 'customer-pooja',
+        lastName: null,
+        phone: '0450488583',
+        sites: [],
+      });
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          companyName: null,
+          contactPreference: 'SMS',
+          displayName: 'Pooja',
+          email: null,
+          firstName: 'Pooja',
+          id: 'customer-pooja',
+          lastName: null,
+          phone: '0450488583',
+          sites: [],
+        },
+      ]);
+      const { service: ai } = service(prisma);
+
+      const response = await ai.chat(owner, {
+        context: {
+          customerId: 'customer-pooja',
+          customerName: 'Pooja',
+          recentCustomer: {
+            displayName: 'Pooja',
+            id: 'customer-pooja',
+            phone: '0450488583',
+          },
+        },
+        message,
+      });
+
+      expect(response.message.content).toContain('What is the job for');
+      expect(response.message.content).not.toContain("customer's name");
+      expect(response.context?.pendingQuestion).toMatchObject({
+        intent: 'CREATE_JOB',
+        type: 'JOB_TITLE',
+      });
+      expect(response.context?.pendingJob).toMatchObject({
+        customerId: 'customer-pooja',
+        customerName: 'Pooja',
+      });
+    },
+  );
+
+  it.each([
+    'Create job for this customer',
+    'Create job for her',
+    'Create job for the newly created customer',
+  ])(
+    'asks which customer when a recent reference is missing: %s',
+    async (message) => {
+      const { service: ai } = service();
+
+      const response = await ai.chat(owner, { message });
+
+      expect(response.message.content).toContain(
+        'Which customer is this job for',
+      );
+      expect(response.message.actionDraft).toBeUndefined();
+    },
+  );
 
   it('warns about likely duplicate customers before confirmation', async () => {
     const prisma = createPrisma();
@@ -2093,6 +3999,269 @@ describe('AiService', () => {
     expect(
       validResponse.context?.pendingCustomerAndJob?.customer.firstName,
     ).toBe('Ranjee');
+  });
+
+  it('answers technician availability with active Technician role members only', async () => {
+    const prisma = createPrisma();
+    const members = [
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'mia@demo-tradieos.com',
+          firstName: 'Mia',
+          id: 'mia-1',
+          lastName: 'Nguyen',
+        },
+        userId: 'mia-1',
+      },
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'raj@demo-tradieos.com',
+          firstName: 'Raj',
+          id: 'raj-1',
+          lastName: 'Patel',
+        },
+        userId: 'raj-1',
+      },
+      {
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        user: {
+          email: 'ava@demo-tradieos.com',
+          firstName: 'Ava',
+          id: 'ava-1',
+          lastName: 'Admin',
+        },
+        userId: 'ava-1',
+      },
+    ];
+    prisma.businessMember.findMany.mockImplementation((args?: unknown) => {
+      const roleIn = (
+        args as { where?: { role?: { in?: string[] } } } | undefined
+      )?.where?.role?.in;
+      return Promise.resolve(
+        roleIn
+          ? members.filter((member) => roleIn.includes(member.role))
+          : members,
+      );
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    const { service: ai } = service(prisma);
+
+    const response = await ai.chat(owner, {
+      context: { appointmentId: 'appointment-1' },
+      message: 'Who is available for this appointment?',
+    });
+
+    expect(response.message.content).toContain('Available technicians');
+    expect(response.message.content).toContain('Mia Nguyen');
+    expect(response.message.content).toContain('Raj Patel');
+    expect(response.message.content).not.toContain('Ava Admin');
+    expect(response.message.actionDraft).toBeUndefined();
+  });
+
+  it('prepares a smart reassignment draft for the lowest-workload available technician without mutating', async () => {
+    const prisma = createPrisma();
+    prisma.businessMember.findMany.mockResolvedValue([
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'mia@demo-tradieos.com',
+          firstName: 'Mia',
+          id: 'mia-1',
+          lastName: 'Nguyen',
+        },
+        userId: 'mia-1',
+      },
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'raj@demo-tradieos.com',
+          firstName: 'Raj',
+          id: 'raj-1',
+          lastName: 'Patel',
+        },
+        userId: 'raj-1',
+      },
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      {
+        assignedUserId: 'mia-1',
+        scheduledEnd: new Date('2026-08-15T02:00:00.000Z'),
+        scheduledStart: new Date('2026-08-15T00:00:00.000Z'),
+      },
+    ]);
+    const { appointments, service: ai } = service(prisma);
+
+    const response = await ai.chat(owner, {
+      context: { appointmentId: 'appointment-1' },
+      message: 'Assign the best technician',
+    });
+
+    expect(response.message.actionDraft?.type).toBe('REASSIGN_TECHNICIAN');
+    expect(response.message.actionDraft?.payload).toMatchObject({
+      reassignmentPayload: { assignedUserId: 'raj-1' },
+      type: 'REASSIGN_TECHNICIAN',
+    });
+    expect(response.message.content).toContain('Raj Patel');
+    expect(appointments.reassign).not.toHaveBeenCalled();
+  });
+
+  it('does not prepare a reassignment draft for an active admin mention', async () => {
+    const prisma = createPrisma();
+    const members = [
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'mia@demo-tradieos.com',
+          firstName: 'Mia',
+          id: 'mia-1',
+          lastName: 'Nguyen',
+        },
+        userId: 'mia-1',
+      },
+      {
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        user: {
+          email: 'ava@demo-tradieos.com',
+          firstName: 'Ava',
+          id: 'ava-1',
+          lastName: 'Admin',
+        },
+        userId: 'ava-1',
+      },
+    ];
+    prisma.businessMember.findMany.mockImplementation((args?: unknown) => {
+      const roleIn = (
+        args as { where?: { role?: { in?: string[] } } } | undefined
+      )?.where?.role?.in;
+      return Promise.resolve(
+        roleIn
+          ? members.filter((member) => roleIn.includes(member.role))
+          : members,
+      );
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    const { service: ai } = service(prisma);
+
+    const response = await ai.chat(owner, {
+      context: { appointmentId: 'appointment-1' },
+      message: 'Assign Ava Admin',
+    });
+
+    expect(response.message.content).toContain(
+      'cannot be assigned as the field technician',
+    );
+    expect(response.message.actionDraft).toBeUndefined();
+  });
+
+  it('does not draft a named reassignment when the technician has a conflict and offers an available alternative', async () => {
+    const prisma = createPrisma();
+    prisma.businessMember.findMany.mockResolvedValue([
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'mia@demo-tradieos.com',
+          firstName: 'Mia',
+          id: 'mia-1',
+          lastName: 'Nguyen',
+        },
+        userId: 'mia-1',
+      },
+      {
+        role: 'TECHNICIAN',
+        status: 'ACTIVE',
+        user: {
+          email: 'raj@demo-tradieos.com',
+          firstName: 'Raj',
+          id: 'raj-1',
+          lastName: 'Patel',
+        },
+        userId: 'raj-1',
+      },
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    const { appointments, service: ai } = service(prisma);
+    appointments.availability.mockImplementation(
+      (_user: AuthenticatedUser, input: { assignedUserId?: string | null }) =>
+        Promise.resolve(
+          input.assignedUserId === 'mia-1'
+            ? {
+                canOverride: true,
+                conflicts: [{ appointmentNumber: 'APT-2026-000010' }],
+                hasConflict: true,
+                reason: 'Mia Nguyen already has an appointment at that time.',
+              }
+            : {
+                canOverride: false,
+                conflicts: [],
+                hasConflict: false,
+                reason: 'No conflict',
+              },
+        ),
+    );
+
+    const response = await ai.chat(owner, {
+      context: { appointmentId: 'appointment-1' },
+      message: 'Assign Mia to this appointment',
+    });
+
+    expect(response.message.content).toContain('Mia Nguyen is not available');
+    expect(response.message.content).toContain('Raj Patel is available');
+    expect(response.message.actionDraft).toBeUndefined();
+  });
+
+  it('confirms reassignment drafts through the appointment service exactly once', async () => {
+    const prisma = createPrisma();
+    const { appointments, service: ai } = service(prisma);
+    appointments.reassign.mockResolvedValue({
+      appointment: {
+        appointmentNumber: 'APT-2026-000001',
+        assignedUser: {
+          firstName: 'Raj',
+          id: 'raj-1',
+          lastName: 'Patel',
+        },
+        assignedUserId: 'raj-1',
+        id: 'appointment-1',
+      },
+    });
+    const draft = {
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      id: 'reassign-draft-once',
+      payload: {
+        appointmentId: 'appointment-1',
+        expectedUpdatedAt: '2026-08-14T00:00:00.000Z',
+        reassignmentPayload: {
+          assignedUserId: 'raj-1',
+          reason: 'Raj Patel is available with no overlapping appointment.',
+        },
+        type: 'REASSIGN_TECHNICIAN',
+      },
+      type: 'REASSIGN_TECHNICIAN',
+    } as ToriActionDraft;
+
+    const result = await ai.confirm(owner, draft.id, draft);
+
+    expect(result.status).toBe('COMPLETED');
+    expect(result.entityId).toBe('appointment-1');
+    expect(appointments.reassign).toHaveBeenCalledWith(
+      owner,
+      'appointment-1',
+      expect.objectContaining({ assignedUserId: 'raj-1' }),
+    );
+    await expect(ai.confirm(owner, draft.id, draft)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(appointments.reassign).toHaveBeenCalledTimes(1);
   });
 
   it('blocks READ_ONLY users from confirming action drafts', async () => {

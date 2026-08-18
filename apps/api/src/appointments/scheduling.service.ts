@@ -3,10 +3,13 @@ import type {
   AppointmentRecommendationRequest,
   AppointmentRecommendationResponse,
 } from '@tradieos/shared';
-import { getBusinessDateParts } from '@tradieos/shared';
+import {
+  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
+  getBusinessDayRangeUtc,
+  getBusinessDateParts,
+} from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
-const TECHNICIAN_ROLES = ['TECHNICIAN', 'OWNER', 'ADMIN'] as const;
 const WORK_START_HOUR = 7;
 const WORK_END_HOUR = 18;
 
@@ -44,8 +47,9 @@ export class SchedulingService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId,
-        role: { in: [...TECHNICIAN_ROLES] },
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
         status: 'ACTIVE',
+        user: { isActive: true },
         userId: { not: null },
       },
       include: {
@@ -84,23 +88,67 @@ export class SchedulingService {
         .filter((id): id is string => Boolean(id)),
     );
 
-    const recommended =
-      candidates.find((user) => !conflictedUserIds.has(user.id)) ?? null;
+    const availableCandidates = candidates.filter(
+      (user) => !conflictedUserIds.has(user.id),
+    );
 
-    if (!recommended) {
+    if (!availableCandidates.length) {
       return {
         recommendedTechnicianId: null,
         technicianName: null,
         reason:
-          'All available technicians already have an appointment at that time.',
+          'All eligible technicians already have an appointment at that time.',
       };
     }
+
+    const dayRange = getBusinessDayRangeUtc(scheduledStart, business?.timezone);
+    const dayAppointments = await this.prisma.appointment.findMany({
+      where: {
+        assignedUserId: { in: availableCandidates.map((user) => user.id) },
+        businessId,
+        scheduledStart: { gte: dayRange.start, lt: dayRange.end },
+        status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW'] },
+      },
+      select: {
+        assignedUserId: true,
+        scheduledEnd: true,
+        scheduledStart: true,
+      },
+    });
+
+    const workloadMinutes = new Map<string, number>();
+    for (const appointment of dayAppointments) {
+      if (!appointment.assignedUserId) continue;
+      workloadMinutes.set(
+        appointment.assignedUserId,
+        (workloadMinutes.get(appointment.assignedUserId) ?? 0) +
+          Math.max(
+            0,
+            Math.round(
+              (appointment.scheduledEnd.getTime() -
+                appointment.scheduledStart.getTime()) /
+                60_000,
+            ),
+          ),
+      );
+    }
+
+    const ranked = [...availableCandidates].sort(
+      (left, right) =>
+        (workloadMinutes.get(left.id) ?? 0) -
+          (workloadMinutes.get(right.id) ?? 0) ||
+        `${left.firstName} ${left.lastName}`.localeCompare(
+          `${right.firstName} ${right.lastName}`,
+        ) ||
+        left.id.localeCompare(right.id),
+    );
+    const recommended = ranked[0];
+    const recommendedWorkload = workloadMinutes.get(recommended.id) ?? 0;
 
     return {
       recommendedTechnicianId: recommended.id,
       technicianName: `${recommended.firstName} ${recommended.lastName}`,
-      reason:
-        'Closest available technician with no scheduling conflict. Travel time will be refined when route planning is added.',
+      reason: `${recommended.firstName} ${recommended.lastName} is available with no overlapping appointment and has ${recommendedWorkload} scheduled minutes that day.`,
     };
   }
 

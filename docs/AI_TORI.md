@@ -192,6 +192,134 @@ Appointment drafts include `expectedUpdatedAt`. Confirmation reloads the
 appointment and rejects stale drafts if another user changed it after Tori
 prepared the action.
 
+Successful confirmations return structured conversational context for the
+confirmed entity. For example, `CREATE_CUSTOMER` returns the active/recent
+customer id and display name, `CREATE_JOB` returns the active/recent customer
+and job, and appointment confirmations return the active/recent appointment.
+Follow-up prompts such as “Create job for the newly created customer”, “Create
+job for this customer” and “Create job for her” must resolve through this
+structured context when it is unambiguous. They must not scan arbitrary
+historical chat text or route to `CREATE_CUSTOMER_AND_JOB`.
+
+### Dispatch orchestrator Phase 1
+
+Tori supports compound dispatch requests that describe a new or existing
+customer, service problem, service address and scheduling preference in one
+natural-language message. Example:
+
+```text
+I have a new customer Pooja. Her number is 0450488583. Her kitchen sink is
+blocked at 30 Coffey Street, Tarneit. Book someone tomorrow morning.
+```
+
+The orchestrator stores the workflow in structured `pendingDispatch` context
+instead of relying on chat transcript text. That context can survive separate
+`POST /api/ai/tori/chat` requests and tracks customer details, job details,
+scheduling window, duration and the recommended technician/slot.
+
+Dispatch still follows the safety model:
+
+```text
+collect slots -> CREATE_CUSTOMER draft -> confirm -> CREATE_JOB draft
+  -> confirm -> availability check -> CREATE_APPOINTMENT draft -> confirm
+```
+
+Tori must never create the customer, job or appointment until the user confirms
+the relevant draft. After each confirmation, the API may return a `nextMessage`
+containing the next draft so the workflow resumes automatically without asking
+the user to restate already-collected information.
+When a confirmed `CREATE_JOB` draft belongs to an active `pendingDispatch`,
+Tori must continue to technician availability instead of using the standalone
+job-created appointment offer. The final `CREATE_APPOINTMENT` remains a draft
+and still requires explicit confirmation.
+
+Existing customers are reused when Tori can safely match an equivalent phone
+number or email. New customers are only drafted when no tenant-scoped match is
+found. Missing duration is asked explicitly with: "How long should I allow for
+the job?" Invalid or unrelated answers must not erase already-collected dispatch
+slots.
+
+Scheduling windows use the business timezone. "Tomorrow morning" means 8:00 AM
+to 12:00 PM local business time; "tomorrow afternoon" means 12:00 PM to 5:00
+PM. Technician recommendations must reuse the existing appointment availability
+engine so conflict detection and working-hour rules stay centralised.
+If no technician can fit the requested dispatch window, Tori preserves the full
+`pendingDispatch` context and lets the user retry with natural scheduling
+replies such as "afternoon", "any time tomorrow" or "try 20 August" without
+creating a duplicate customer or job.
+
+### Structured current-turn parsing
+
+Before routing a chat message into read tools, slot collection or dispatch,
+Tori parses the current user turn into a typed interpretation containing
+intents, customer, job/issue, location, scheduling and technician signals. This
+current-turn structure has priority over stale active/recent context.
+
+Entity resolution order:
+
+1. Explicit entity in the current user message.
+2. Explicit pending workflow state.
+3. Existing tenant-scoped database records for the explicitly named
+   customer/job, including safe customer service-location defaults.
+4. Active/recent structured context when the current turn is implicit.
+5. Clarifying question when still ambiguous.
+
+This prevents a previous Ben customer/job context from hijacking a new message
+such as "Create an appointment for Ranjan for front yard tap leak for Aug 21".
+If the current turn includes a customer, issue, address, date, time or duration,
+Tori must not ask for that value again. It should ask only for genuinely missing
+required fields and briefly acknowledge the interpreted dispatch before asking.
+For appointment creation requests that name an existing customer and a new
+issue, Tori must resolve the customer from the database, use a single/primary
+saved service location where safe, avoid reusing unrelated recent jobs, and
+prepare a new job draft before collecting only the missing appointment timing
+details. Multiple non-primary service locations require a choice prompt listing
+the known addresses; no saved address requires a service-address prompt.
+
+Tori normalises action wording into semantic concepts before routing. Phrases
+such as "book someone", "booking someone", "send someone", "schedule",
+"arrange", "organise", "get someone out", "make an appointment" and "set up an
+appointment" feed the same appointment/dispatch planner when the current turn
+contains actionable customer/job/scheduling entities. Generic date words such
+as "tomorrow" do not create intent by themselves.
+
+Issue extraction is structural rather than a closed list of trade problems.
+Tori removes customer/contact/address/scheduling fragments and preserves the
+meaningful issue wording, such as "pergola tap leaking", "front yard tap leak",
+"hot water isn't working" or "power keeps tripping in the kitchen".
+
+Service-location resolution order for dispatch/appointment planning:
+
+1. Explicit current-turn address.
+2. Selected or primary customer service location.
+3. Single saved customer service location.
+4. Customer default address.
+5. Historical job addresses for the same tenant/customer only.
+6. Clarifying question.
+
+When exactly one trustworthy historical job address exists, Tori proposes it
+and waits for confirmation in conversation before drafting the new job. When
+multiple historical addresses exist, Tori lists concise choices. Tori-created
+dispatch jobs persist the confirmed service address as a duplicate-safe customer
+service location through the existing Customers service, so future workflows do
+not need to rediscover the address from job history.
+
+The parser recognises common Australian trade-language forms such as "new
+customer Ranjan", "Ranjan called", "appointment for Ranjan", "front yard tap
+leak", "master bedroom/bathroom leak", "29 Coffey Street, Tarneit, 3029 VIC",
+"tomorrow morning", "Aug 21 at 9am", "120 mins" and common typo variants such
+as "appoinment", "book somone" and "120 mons". Availability questions such as
+"Who is available tomorrow?" remain read/recommendation queries and must not be
+converted into dispatch creation.
+
+Actionable create/dispatch intent has precedence over generic schedule-read
+keywords. If the current turn says "book someone", "booking someone",
+"schedule someone", "send someone", "create appointment", "create job" or a
+similar creation phrase with customer/job/scheduling entities, Tori must enter
+the safe dispatch workflow before considering read-only phrases such as
+"tomorrow". The word "tomorrow" alone is never enough to convert a creation
+request into an appointment-list query.
+
 ### Data minimisation and prompt-injection protection
 
 Tori tools return compact business-friendly summaries and exclude internal ids,
@@ -213,6 +341,28 @@ The current implementation uses tenant-scoped appointment, availability and
 calendar APIs plus Tori Action Drafts. Tori must still present drafts or
 recommendations and wait for explicit user confirmation before creating, moving,
 cancelling, notifying or messaging anyone about an appointment.
+
+### Smart technician assignment Phase 1
+
+Tori can answer availability/recommendation prompts and prepare technician
+reassignment drafts for existing appointments. Eligible assignees are active
+business members with the `TECHNICIAN` role and an active linked user account.
+Owners, admins and office staff can manage scheduling, but they are not treated
+as field technicians by the recommender.
+
+Recommendations are deterministic and explainable: Tori reuses the appointment
+availability engine for the target appointment window, excludes conflicting
+technicians from draft creation, ranks available technicians by lower
+business-day scheduled workload, then uses name/id ordering as a stable tie
+breaker. Named reassignment requests that conflict or mention an ineligible
+member return an explanation instead of an unsafe draft. Confirmation still
+routes through the appointment reassignment service, which re-checks tenant
+scope, role permissions, appointment freshness, assignee eligibility and
+availability.
+
+Phase 1 uses standard business working hours and appointment overlaps. Per-
+technician working hours, skills, service areas, GPS distance and route
+optimisation remain future scheduling inputs.
 
 ## Future AI architecture
 

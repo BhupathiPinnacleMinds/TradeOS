@@ -16,6 +16,7 @@ import type {
   MyDayResponse,
 } from '@tradieos/shared';
 import {
+  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
   APPOINTMENT_CONFIRM_ROLES,
   APPOINTMENT_STATUS_UPDATE_ROLES,
   APPOINTMENT_VIEW_ROLES,
@@ -79,7 +80,7 @@ const DISPATCHER_MANAGE_ROLES = [
   'OFFICE_MANAGER',
   'SCHEDULER',
 ] as const;
-const DISPATCHER_TECHNICIAN_ROLES = ['OWNER', 'ADMIN', 'TECHNICIAN'] as const;
+const DISPATCHER_TECHNICIAN_ROLES = APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES;
 const WORKDAY_MINUTES = 8 * 60;
 const TRAVEL_PLACEHOLDER_MINUTES = 10;
 
@@ -605,7 +606,7 @@ export class AppointmentsService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId: currentUser.businessId,
-        role: { in: ['OWNER', 'ADMIN', 'TECHNICIAN'] },
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
         status: 'ACTIVE',
         userId: { not: null },
       },
@@ -2054,6 +2055,7 @@ export class AppointmentsService {
     const member = await this.prisma.businessMember.findFirst({
       where: {
         businessId,
+        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
         status: 'ACTIVE',
         user: { id: assignedUserId, isActive: true },
         userId: assignedUserId,

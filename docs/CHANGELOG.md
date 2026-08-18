@@ -10,9 +10,46 @@
   Drafts for scheduling, quote, invoice and customer-message workflows.
 - Added Tori Action Draft safety contracts in `packages/shared`, including
   role/action matrices and stale appointment confirmation protection.
+- Added Tori smart technician assignment recommendations for appointment
+  reassignment drafts. Phase 1 only recommends active `TECHNICIAN` role members,
+  ranks available candidates by same-day workload and keeps reassignment
+  confirmation on the existing conflict-safe appointment service.
+- Added Tori Dispatch Orchestrator Phase 1 for compound customer, job and
+  appointment booking requests. Tori now stores structured `pendingDispatch`
+  context, asks for missing duration, reuses matching customers, drafts each
+  mutation safely and resumes the chain after customer/job confirmations.
+- Added structured current-turn intent and entity extraction for Tori. Explicit
+  customer, job/issue, address and scheduling details in the latest message now
+  override stale recent context, preserve detailed trade issue titles and route
+  availability questions separately from dispatch creation.
+- Hardened Tori intent precedence so actionable compound dispatch phrases such
+  as "booking someone tomorrow" win over generic appointment-read matching,
+  while genuine read prompts like "What appointments do I have tomorrow?" and
+  "Who is available tomorrow?" remain read-only.
+- Hardened the Tori dispatch confirmation resume so confirmed dispatch job
+  drafts continue directly into technician availability instead of showing the
+  standalone "prepare an appointment?" prompt, and no-availability retries keep
+  the same customer, job, address, duration and business-time scheduling
+  context.
+- Improved Tori appointment/dispatch entity resolution for explicitly named
+  existing customers. Tori now resolves saved customer service locations before
+  asking for an address, avoids attaching new issue text to unrelated recent
+  jobs, drafts a new job when no matching open job exists and retains the
+  resolved customer/job/date/address across follow-up time and duration turns.
+- Added a focused Tori NLU/planning hardening pass. Current-turn action wording
+  is normalised into semantic appointment/dispatch concepts, issue extraction
+  strips customer/date/address noise while preserving trade wording, historical
+  same-customer job addresses are proposed or listed safely, and confirmed Tori
+  dispatch jobs persist duplicate-safe customer service locations through the
+  existing Customers service.
 
 ### Fixed
 
+- Tori now preserves structured customer/job/appointment context after action
+  confirmations. Follow-up prompts such as “Create job for the newly created
+  customer” use the confirmed customer id, collect the job title/address, infer
+  VIC from postcode `3029`, and create exactly one job for the existing
+  customer instead of restarting a combined customer-and-job workflow.
 - Quote communications now schedule `QUOTE_FOLLOW_UP` only from the genuine
   send lifecycle event, using the business timezone and the persisted quote
   `sentAt` value instead of wall-clock `Date.now()`.
