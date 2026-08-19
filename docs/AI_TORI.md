@@ -247,6 +247,10 @@ If no technician can fit the requested dispatch window, Tori preserves the full
 `pendingDispatch` context and lets the user retry with natural scheduling
 replies such as "afternoon", "any time tomorrow" or "try 20 August" without
 creating a duplicate customer or job.
+If the user replies "yes please" after Tori offered multiple alternatives,
+Tori stores an `ALTERNATIVE_AVAILABILITY` pending choice and asks whether to
+check tomorrow afternoon, another time tomorrow or another date instead of
+repeating the same no-availability response.
 
 ### Structured current-turn parsing
 
@@ -254,6 +258,89 @@ Before routing a chat message into read tools, slot collection or dispatch,
 Tori parses the current user turn into a typed interpretation containing
 intents, customer, job/issue, location, scheduling and technician signals. This
 current-turn structure has priority over stale active/recent context.
+
+Phase 2 formalises the deterministic local NLU/planner pipeline:
+
+1. `understandCurrentTurn` extracts semantic intents and entities from the
+   latest message.
+2. `detectWorkflowBoundary` decides whether the message starts a new root
+   workflow or is a compatible slot answer/read interruption.
+3. Entity resolution looks up tenant-scoped customers, jobs and service
+   locations from TradieOS records.
+4. The planner decides whether to answer, ask a clarification or create an
+   Action Draft.
+5. Confirmed drafts execute through existing TradieOS domain services.
+
+Future AI/NLU providers may produce the same typed understanding shape, but
+free-form AI output must never mutate business data directly.
+
+Phase 3 adds an explicit conversational workflow engine on top of that parsed
+current turn. Tori no longer infers what a short reply means from the previous
+assistant text. Questions that require a yes/no answer, a contact detail, a
+choice or an alternative scheduling decision are stored as structured
+`pendingQuestion` state with a typed purpose, workflow id, subject and optional
+choice values. Replies such as "yes", "tomorrow", "60 mins", "use that" and
+"the second one" are routed against that state before generic intent detection.
+
+Routing precedence is:
+
+1. Explicit strong new root command in the current turn.
+2. Answer to a structured `pendingQuestion`.
+3. Answer to the expected workflow slot.
+4. Read-only interruption, preserving the active workflow.
+5. Contextual continuation.
+6. Generic intent detection.
+7. Unsupported response.
+
+This means "Create an appointment for Anjanna" followed by "Yes" continues the
+stored missing-customer workflow for Anjanna and asks for contact details. It
+does not repeat the customer lookup question and does not fall back to a
+previous Ben/Ranjan/Sayanna context. If the user asks "How much is
+outstanding?" while Tori is waiting for Anjanna's contact details, Tori answers
+the financial read question and preserves the same pending contact slot for the
+next user reply.
+
+A strong mutating root command is an explicit instruction to begin a different
+workflow, such as "Create customer", "Create job", "Create appointment",
+"Create quote", "Create invoice" or switch wording such as "forget that, create
+customer". These commands must not be consumed as stale slot values from an
+older workflow. When this happens, Tori clears incompatible pending slot state
+and starts the new workflow, while preserving neutral recent entity references
+only when they are safe. Read-only interruptions such as "How much is
+outstanding?" can still answer from tenant-scoped data and then resume the
+original pending slot.
+
+Phase 4 makes expected-slot consumption generic for dispatch workflows.
+`pendingQuestion` is the authoritative representation of what Tori expects
+next; the workflow engine consumes compatible replies before falling back to
+generic phrase extraction. For example, when Tori asks "What is the job for?",
+the next natural text such as "Fix temple room", "Blocked toilet", "Install
+ceiling fan" or "Hot water isn't working" becomes the dispatch job description
+without requiring words like "job" or "appointment". The same expected-slot
+path handles customer contact details, job selections, service addresses,
+appointment dates, appointment times and durations. Read-only interruptions
+remain allowed, but only when the reply is not compatible with the active slot.
+Strong new root commands still clear incompatible stale dispatch state.
+
+Confirmation replies are normalised as exact utterances, not unsafe substring
+matches. Supported affirmative examples include "yes", "yeah", "yea", "yep",
+"sure", "ok", "okay", "go ahead", "please do" and "do it"; negatives include
+"no", "nope", "nah", "cancel" and "not now". Confirmation-before-mutation
+still applies to every customer, job and appointment action.
+
+Quote creation uses the same structured expected-slot approach. When Tori asks
+for quote line items, it stores a `QUOTE_LINE_ITEMS` pending question and a
+`pendingQuote` customer context. Natural replies such as "1.5 hours labour at
+$150 plus $100 materials", "2 hours labour $120/hour and parts $80" or "$80
+materials and 1 hour labour at $150" are consumed as quote line items before
+generic intent routing. Read interruptions preserve the pending quote workflow,
+while an explicit new command such as "Create quote for Ben", "Create invoice"
+or "Create customer" starts the requested fresh workflow instead of being parsed
+as quote line-item text.
+
+Confirmed quote and invoice drafts return completed Tori workflow context, not
+an active pending slot. This prevents a completed quote workflow from remaining
+alive on mobile and hijacking the next standalone request.
 
 Entity resolution order:
 
@@ -269,12 +356,22 @@ such as "Create an appointment for Ranjan for front yard tap leak for Aug 21".
 If the current turn includes a customer, issue, address, date, time or duration,
 Tori must not ask for that value again. It should ask only for genuinely missing
 required fields and briefly acknowledge the interpreted dispatch before asking.
+If an explicit current-turn customer differs from the active workflow customer,
+Tori starts a new root workflow and does not inherit the previous customer's
+job, address, date, duration or technician. Completed workflows are never
+automatic parents for the next explicit request. Genuine slot answers such as
+"2pm" or "60 mins" continue the active workflow when Tori is waiting for that
+slot.
 For appointment creation requests that name an existing customer and a new
 issue, Tori must resolve the customer from the database, use a single/primary
 saved service location where safe, avoid reusing unrelated recent jobs, and
 prepare a new job draft before collecting only the missing appointment timing
 details. Multiple non-primary service locations require a choice prompt listing
 the known addresses; no saved address requires a service-address prompt.
+When an appointment request names a customer but no job/issue, Tori resolves
+that customer's active jobs first: one suitable active job can be used, multiple
+active jobs require a choice, and zero active jobs requires a "what work is
+required?" clarification before date/time collection.
 
 Tori normalises action wording into semantic concepts before routing. Phrases
 such as "book someone", "booking someone", "send someone", "schedule",
@@ -287,6 +384,12 @@ Issue extraction is structural rather than a closed list of trade problems.
 Tori removes customer/contact/address/scheduling fragments and preserves the
 meaningful issue wording, such as "pergola tap leaking", "front yard tap leak",
 "hot water isn't working" or "power keeps tripping in the kitchen".
+Recognised scheduling spans, including explicit dates, weekdays, dayparts,
+times and duration phrases such as "45 minutes", "90 mins", "an hour" or "two
+hours", are consumed as scheduling metadata before job issue/title extraction.
+This prevents requests like "Book Ben tomorrow at 2pm for 45 minutes for
+leaking outdoor tap" from creating a job titled "45 minutes for leaking outdoor
+tap".
 
 Service-location resolution order for dispatch/appointment planning:
 
@@ -311,6 +414,12 @@ leak", "master bedroom/bathroom leak", "29 Coffey Street, Tarneit, 3029 VIC",
 as "appoinment", "book somone" and "120 mons". Availability questions such as
 "Who is available tomorrow?" remain read/recommendation queries and must not be
 converted into dispatch creation.
+Service-address slot parsing accepts common Australian address variants with or
+without comma separators, including "1 Coffey Street, Tarneit, VIC 3029",
+"1 Coffey Street Tarneit VIC 3029" and "1 Coffey St Tarneit 3029". If the
+postcode safely infers a state, Tori can fill that state; if an explicit state
+conflicts with the postcode, Tori keeps the address slot pending and asks for a
+corrected state/postcode pair.
 
 Actionable create/dispatch intent has precedence over generic schedule-read
 keywords. If the current turn says "book someone", "booking someone",
@@ -319,6 +428,10 @@ similar creation phrase with customer/job/scheduling entities, Tori must enter
 the safe dispatch workflow before considering read-only phrases such as
 "tomorrow". The word "tomorrow" alone is never enough to convert a creation
 request into an appointment-list query.
+
+Set `TORI_DEBUG=1` in local development to print safe Tori decision diagnostics
+for intent, explicit customer, workflow-boundary decision, context inheritance
+and missing planner slots. Do not log secrets or raw credentials.
 
 ### Data minimisation and prompt-injection protection
 

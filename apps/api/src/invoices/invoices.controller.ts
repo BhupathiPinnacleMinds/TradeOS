@@ -13,6 +13,7 @@ import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import {
   AccountsReceivableQueryDto,
+  InvoiceDraftQueryDto,
   ListInvoicesQueryDto,
   RecordInvoicePaymentDto,
   SendInvoiceDto,
@@ -38,6 +39,14 @@ export class InvoicesController {
     @Query() query: AccountsReceivableQueryDto,
   ) {
     return this.invoices.accountsReceivable(currentUser, query);
+  }
+
+  @Get('draft')
+  draft(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Query() query: InvoiceDraftQueryDto,
+  ) {
+    return this.invoices.draft(currentUser, query);
   }
 
   @Post()

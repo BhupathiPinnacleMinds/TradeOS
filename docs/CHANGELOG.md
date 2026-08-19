@@ -42,9 +42,50 @@
   same-customer job addresses are proposed or listed safely, and confirmed Tori
   dispatch jobs persist duplicate-safe customer service locations through the
   existing Customers service.
+- Hardened Tori dispatch issue/title boundaries so recognised scheduling spans
+  such as "45 minutes", "90 mins", "an hour", "two hours", weekdays and explicit
+  times are consumed as scheduling metadata instead of leaking into created job
+  titles.
+- Added Tori NLU + Workflow Planner Phase 2 guardrails. Tori now records
+  workflow identity metadata, detects explicit current-turn root workflow
+  boundaries, prevents previous completed workflows from contaminating new
+  customer requests such as "Create an appointment for Sayanna", resolves
+  customer active jobs before collecting appointment timing, and attaches "yes
+  please" no-availability replies to a structured alternative-availability
+  choice.
+- Added Tori Conversational Workflow Engine Phase 3. Structured pending
+  questions now route yes/no answers, customer-contact slots, active-job
+  selections, read interruptions and strong new-root commands before generic
+  intent detection, so flows such as "Create an appointment for Anjanna" ->
+  "Yes" continue naturally without repeating the customer lookup prompt.
+- Hardened Tori Australian service-address parsing for common comma-separated
+  and space-separated state/postcode formats such as
+  "1 Coffey Street, Tarneit, VIC 3029", with postcode-based state inference and
+  state/postcode conflict prompts that keep the active address slot pending.
+- Hardened Tori quote creation conversations. Quote line-item prompts now store
+  a typed `QUOTE_LINE_ITEMS` expected slot, preserve pending quote context across
+  read interruptions and parse decimal labour quantities, hourly rates,
+  materials, parts and multiple line items before preparing a safe
+  confirmation-only `CREATE_QUOTE` draft.
+- Added Tori Conversational Workflow Engine Phase 4 expected-slot consumption.
+  Dispatch prompts such as "What is the job for?", service-address collection,
+  date/time prompts and duration prompts now store typed expected slots so
+  natural replies like "Yea", "Fix Temple room", "tomorrow at 2pm" and
+  "60 mins" advance the same customer -> job -> appointment workflow across
+  serialized mobile/API requests.
 
 ### Fixed
 
+- Fixed Quote -> Job -> Invoice commercial-data inheritance. Creating an invoice
+  from a converted quote job now loads the accepted/converted source quote's
+  decimal line items, material lines, GST pricing mode and discount settings as
+  the editable invoice draft instead of falling back to generic labour defaults.
+- Fixed Tori stale-workflow precedence globally. Strong standalone commands
+  such as "Create invoice", "Create customer" and "Create job" now override
+  stale pending slots, including old quote line-item prompts, while read-only
+  interruptions still preserve the active workflow. Confirmed quote and invoice
+  drafts now return completed workflow context so mobile does not keep a stale
+  active workflow alive.
 - Tori now preserves structured customer/job/appointment context after action
   confirmations. Follow-up prompts such as “Create job for the newly created
   customer” use the confirmed customer id, collect the job title/address, infer

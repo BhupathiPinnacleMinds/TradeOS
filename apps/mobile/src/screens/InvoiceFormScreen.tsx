@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type {
   Customer,
   InvoiceDiscountType,
+  InvoiceDraftSourceQuote,
   InvoiceLineItemPayload,
   InvoicePayload,
   Job,
@@ -29,6 +30,7 @@ import {
 import {
   createInvoiceRequest,
   customersRequest,
+  invoiceDraftRequest,
   invoiceDetailRequest,
   jobsRequest,
   updateInvoiceRequest,
@@ -84,6 +86,8 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   );
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+  const [sourceQuoteSummary, setSourceQuoteSummary] =
+    useState<InvoiceDraftSourceQuote | null>(null);
   const [lineItems, setLineItems] = useState<FormLineItem[]>([
     {
       name: 'Labour',
@@ -102,6 +106,9 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
     let mounted = true;
     async function load() {
       setIsLoading(Boolean(invoiceId));
+      const shouldLoadDraft =
+        !invoiceId &&
+        Boolean(customerId || customerSiteId || jobId || sourceQuoteId);
       const [customerResponse, jobResponse] = await Promise.all([
         customersRequest(token!, { page: 1, pageSize: 100 }),
         jobsRequest(token!, { page: 1, pageSize: 100 }),
@@ -142,6 +149,37 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
           })),
         );
         navigation.setOptions({ title: `Edit ${invoice.invoiceNumber}` });
+      } else if (shouldLoadDraft) {
+        const response = await invoiceDraftRequest(token!, {
+          customerId,
+          customerSiteId,
+          jobId,
+          sourceQuoteId,
+        });
+        if (!mounted) return;
+        const draft = response.draft;
+        setSelectedCustomerId(draft.customerId);
+        setSelectedJobId(draft.jobId ?? '');
+        setSelectedSiteId(draft.customerSiteId ?? '');
+        setSelectedSourceQuoteId(draft.sourceQuoteId ?? '');
+        setSourceQuoteSummary(response.sourceQuote);
+        setTitle(draft.title);
+        setDescription(draft.description ?? '');
+        setIssueDate(draft.issueDate);
+        setDueDate(draft.dueDate);
+        setPricingMode(draft.pricingMode);
+        setDiscountType(draft.discountType ?? 'NONE');
+        setDiscountValue(
+          adjustmentValueToInput(
+            draft.discountType ?? 'NONE',
+            draft.discountValue ?? 0,
+          ),
+        );
+        setCreditApplied(centsToInput(draft.creditAppliedCents ?? 0));
+        setPaymentTerms(draft.paymentTerms ?? '');
+        setCustomerNotes(draft.customerNotes ?? '');
+        setInternalNotes(draft.internalNotes ?? '');
+        setLineItems(draft.lineItems.map(invoicePayloadLineToFormLine));
       }
       setIsLoading(false);
     }
@@ -159,12 +197,22 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
     };
-  }, [invoiceId, navigation, showToast, token]);
+  }, [
+    customerId,
+    customerSiteId,
+    invoiceId,
+    jobId,
+    navigation,
+    showToast,
+    sourceQuoteId,
+    token,
+  ]);
 
   const selectedCustomer = customers.find(
     (customer) => customer.id === selectedCustomerId,
   );
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
+  const isScopedFromJob = !invoiceId && Boolean(jobId);
   const parsedLineItems = useMemo(() => parseLineItems(lineItems), [lineItems]);
   const discountInput = useMemo(
     () => parseAdjustmentInput(discountType, discountValue),
@@ -337,57 +385,90 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
 
         {step === 0 ? (
           <Card title="Scope">
-            <Text style={styles.label}>Customer</Text>
-            <View style={styles.chips}>
-              {customers.map((customer) => (
-                <Chip
-                  active={selectedCustomerId === customer.id}
-                  key={customer.id}
-                  label={customer.displayName}
-                  onPress={() => {
-                    setSelectedCustomerId(customer.id);
-                    setSelectedSiteId(customer.sites[0]?.id ?? '');
-                  }}
+            {isScopedFromJob ? (
+              <View style={styles.scopeSummary}>
+                <SummaryText
+                  label="Customer"
+                  value={selectedCustomer?.displayName ?? 'Loading customer...'}
                 />
-              ))}
-            </View>
-            <Text style={styles.label}>Service site</Text>
-            <View style={styles.chips}>
-              {(selectedCustomer?.sites ?? []).map((site) => (
-                <Chip
-                  active={selectedSiteId === site.id}
-                  key={site.id}
-                  label={site.label}
-                  onPress={() => setSelectedSiteId(site.id)}
+                <SummaryText
+                  label="Job"
+                  value={
+                    selectedJob
+                      ? `${selectedJob.jobNumber} · ${selectedJob.title}`
+                      : 'Loading job...'
+                  }
                 />
-              ))}
-            </View>
-            <Text style={styles.label}>Related job</Text>
-            <View style={styles.chips}>
-              <Chip
-                active={!selectedJobId}
-                label="No job"
-                onPress={() => setSelectedJobId('')}
-              />
-              {jobs
-                .filter(
-                  (job) =>
-                    !selectedCustomerId ||
-                    job.customerId === selectedCustomerId,
-                )
-                .map((job) => (
+                <SummaryText
+                  label="Source quote"
+                  value={
+                    sourceQuoteSummary
+                      ? `${sourceQuoteSummary.quoteNumber} · ${sourceQuoteSummary.title}`
+                      : selectedSourceQuoteId
+                        ? 'Loading source quote...'
+                        : 'No source quote'
+                  }
+                />
+                <Text style={styles.muted}>
+                  This invoice is scoped from the selected job. Source quote
+                  pricing is loaded as the starting draft where available.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.label}>Customer</Text>
+                <View style={styles.chips}>
+                  {customers.map((customer) => (
+                    <Chip
+                      active={selectedCustomerId === customer.id}
+                      key={customer.id}
+                      label={customer.displayName}
+                      onPress={() => {
+                        setSelectedCustomerId(customer.id);
+                        setSelectedSiteId(customer.sites[0]?.id ?? '');
+                      }}
+                    />
+                  ))}
+                </View>
+                <Text style={styles.label}>Service site</Text>
+                <View style={styles.chips}>
+                  {(selectedCustomer?.sites ?? []).map((site) => (
+                    <Chip
+                      active={selectedSiteId === site.id}
+                      key={site.id}
+                      label={site.label}
+                      onPress={() => setSelectedSiteId(site.id)}
+                    />
+                  ))}
+                </View>
+                <Text style={styles.label}>Related job</Text>
+                <View style={styles.chips}>
                   <Chip
-                    active={selectedJobId === job.id}
-                    key={job.id}
-                    label={`${job.jobNumber} · ${job.title}`}
-                    onPress={() => {
-                      setSelectedJobId(job.id);
-                      setSelectedSourceQuoteId(job.sourceQuoteId ?? '');
-                    }}
+                    active={!selectedJobId}
+                    label="No job"
+                    onPress={() => setSelectedJobId('')}
                   />
-                ))}
-            </View>
-            {selectedJob?.sourceQuoteId ? (
+                  {jobs
+                    .filter(
+                      (job) =>
+                        !selectedCustomerId ||
+                        job.customerId === selectedCustomerId,
+                    )
+                    .map((job) => (
+                      <Chip
+                        active={selectedJobId === job.id}
+                        key={job.id}
+                        label={`${job.jobNumber} · ${job.title}`}
+                        onPress={() => {
+                          setSelectedJobId(job.id);
+                          setSelectedSourceQuoteId(job.sourceQuoteId ?? '');
+                        }}
+                      />
+                    ))}
+                </View>
+              </>
+            )}
+            {selectedJob?.sourceQuoteId && !sourceQuoteSummary ? (
               <Text style={styles.muted}>
                 Source quote will be preserved from this job.
               </Text>
@@ -629,6 +710,20 @@ function parseLineItems(items: FormLineItem[]) {
   return { errors, validItems };
 }
 
+function invoicePayloadLineToFormLine(
+  item: InvoiceLineItemPayload,
+): FormLineItem {
+  return {
+    description: item.description,
+    name: item.name,
+    quantityInput: String(item.quantity),
+    taxable: item.taxable,
+    type: item.type,
+    unit: item.unit,
+    unitPriceInput: centsToInput(item.unitPriceCents),
+  };
+}
+
 function parseAdjustmentInput(type: InvoiceDiscountType, value: string) {
   if (type === 'NONE') return { error: null, value: 0 };
   const parsed = parseInvoiceMoneyInput(value);
@@ -723,6 +818,17 @@ function Summary({
       <Text style={[styles.muted, strong && styles.strong]}>{label}</Text>
       <Text style={[styles.muted, strong && styles.strong]}>
         {formatAudCents(value)}
+      </Text>
+    </View>
+  );
+}
+
+function SummaryText({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.summary}>
+      <Text style={styles.muted}>{label}</Text>
+      <Text style={[styles.muted, styles.strong, styles.summaryValue]}>
+        {value}
       </Text>
     </View>
   );
@@ -852,6 +958,14 @@ const styles = StyleSheet.create({
     color: colours.primary,
     fontWeight: '900',
   },
+  scopeSummary: {
+    backgroundColor: colours.background,
+    borderColor: colours.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 10,
+    padding: 14,
+  },
   step: {
     borderColor: colours.border,
     borderRadius: 999,
@@ -887,7 +1001,12 @@ const styles = StyleSheet.create({
   },
   summary: {
     flexDirection: 'row',
+    gap: 12,
     justifyContent: 'space-between',
+  },
+  summaryValue: {
+    flex: 1,
+    textAlign: 'right',
   },
   textArea: {
     minHeight: 110,

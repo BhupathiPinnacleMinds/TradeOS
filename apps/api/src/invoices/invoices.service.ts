@@ -5,6 +5,7 @@ import type {
   AuthenticatedUser,
   AccountsReceivableResponse,
   Invoice,
+  InvoiceDraftResponse,
   InvoiceDetailResponse,
   InvoiceLineItem,
   InvoiceLineItemPayload,
@@ -44,6 +45,7 @@ import {
 import type {
   ListInvoicesQueryDto,
   AccountsReceivableQueryDto,
+  InvoiceDraftQueryDto,
   RecordInvoicePaymentDto,
   SendInvoiceDto,
   UpsertInvoiceDto,
@@ -229,6 +231,182 @@ export class InvoicesService {
         totalOutstandingCents: this.sumBalances(outstandingRows),
         totalOverdueCents: this.sumBalances(overdueRows),
       },
+    };
+  }
+
+  async draft(
+    currentUser: AuthenticatedUser,
+    query: InvoiceDraftQueryDto,
+  ): Promise<InvoiceDraftResponse> {
+    this.assertRole(currentUser, INVOICE_CREATE_ROLES);
+    const today = new Date();
+    const dueDate = new Date(today);
+    dueDate.setDate(dueDate.getDate() + 7);
+
+    const job = query.jobId
+      ? await this.prisma.job.findFirst({
+          where: {
+            businessId: currentUser.businessId,
+            id: query.jobId,
+            isArchived: false,
+            ...(query.customerId ? { customerId: query.customerId } : {}),
+          },
+          select: {
+            customerId: true,
+            id: true,
+            jobNumber: true,
+            sourceQuoteId: true,
+            title: true,
+          },
+        })
+      : null;
+    if (query.jobId && !job) {
+      throw this.domainError(
+        'INVOICE_ACCESS_DENIED',
+        'Job could not be found for this business and customer.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const customerId = query.customerId ?? job?.customerId;
+    if (!customerId) {
+      return {
+        draft: this.defaultInvoiceDraft({
+          customerId: '',
+          customerSiteId: query.customerSiteId ?? null,
+          dueDate,
+          issueDate: today,
+        }),
+        job: null,
+        source: 'EMPTY_DEFAULT',
+        sourceQuote: null,
+      };
+    }
+
+    const customer = await this.prisma.customer.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        id: customerId,
+        isArchived: false,
+      },
+      select: { displayName: true, id: true },
+    });
+    if (!customer) {
+      throw this.domainError(
+        'INVOICE_ACCESS_DENIED',
+        'Customer could not be found for this business.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const explicitSourceQuoteId = query.sourceQuoteId ?? null;
+    if (
+      explicitSourceQuoteId &&
+      job?.sourceQuoteId &&
+      explicitSourceQuoteId !== job.sourceQuoteId
+    ) {
+      throw this.domainError(
+        'INVOICE_SOURCE_MISMATCH',
+        'Source quote does not match this job.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    const sourceQuoteId = explicitSourceQuoteId ?? job?.sourceQuoteId ?? null;
+    const sourceQuote = sourceQuoteId
+      ? await this.prisma.quote.findFirst({
+          where: {
+            businessId: currentUser.businessId,
+            customerId,
+            id: sourceQuoteId,
+            status: { in: ['ACCEPTED', 'CONVERTED'] },
+          },
+          include: {
+            lineItems: { orderBy: { position: 'asc' } },
+          },
+        })
+      : null;
+
+    if (sourceQuoteId && !sourceQuote) {
+      throw this.domainError(
+        'INVOICE_SOURCE_INVALID',
+        'Accepted source quote could not be found for this customer.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (sourceQuote && job && !this.sourceQuoteBelongsToJob(sourceQuote, job)) {
+      throw this.domainError(
+        'INVOICE_SOURCE_MISMATCH',
+        'Source quote does not belong to this job.',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    if (sourceQuote) {
+      return {
+        draft: {
+          creditAppliedCents: 0,
+          customerId,
+          customerSiteId: query.customerSiteId ?? sourceQuote.customerSiteId,
+          customerNotes: sourceQuote.customerNotes ?? undefined,
+          description: sourceQuote.description ?? undefined,
+          discountType: sourceQuote.discountType,
+          discountValue: sourceQuote.discountValue,
+          dueDate: dueDate.toISOString(),
+          gstRateBasisPoints: sourceQuote.gstRateBasisPoints,
+          internalNotes: job
+            ? `Created from ${job.jobNumber} and source quote ${sourceQuote.quoteNumber}.`
+            : `Created from source quote ${sourceQuote.quoteNumber}.`,
+          issueDate: today.toISOString(),
+          jobId: job?.id ?? null,
+          lineItems: sourceQuote.lineItems
+            .filter((item) => item.type !== 'DISCOUNT')
+            .map((item) => ({
+              description: item.description ?? undefined,
+              name: item.name,
+              quantity: item.quantity.toString(),
+              taxable: item.taxable,
+              type: item.type as InvoiceLineItemPayload['type'],
+              unit: item.unit,
+              unitPriceCents: item.unitPriceCents,
+            })),
+          paymentTerms:
+            'Payment due within 7 days. Bank transfer details to be confirmed.',
+          pricingMode: sourceQuote.pricingMode,
+          sourceQuoteId: sourceQuote.id,
+          title: job
+            ? `Invoice for ${job.jobNumber}`
+            : `Invoice for ${sourceQuote.quoteNumber}`,
+        },
+        job: job
+          ? { id: job.id, jobNumber: job.jobNumber, title: job.title }
+          : null,
+        source: 'SOURCE_QUOTE',
+        sourceQuote: {
+          id: sourceQuote.id,
+          quoteNumber: sourceQuote.quoteNumber,
+          status: sourceQuote.status,
+          title: sourceQuote.title,
+          totalCents: sourceQuote.totalCents,
+        },
+      };
+    }
+
+    return {
+      draft: this.defaultInvoiceDraft({
+        customerId,
+        customerSiteId: query.customerSiteId ?? null,
+        dueDate,
+        issueDate: today,
+        jobId: job?.id ?? null,
+        title: job
+          ? `Invoice for ${job.jobNumber}`
+          : `Invoice for ${customer.displayName}`,
+      }),
+      job: job
+        ? { id: job.id, jobNumber: job.jobNumber, title: job.title }
+        : null,
+      source: job ? 'JOB_DEFAULT' : 'EMPTY_DEFAULT',
+      sourceQuote: null,
     };
   }
 
@@ -906,6 +1084,7 @@ export class InvoicesService {
       }
     }
     let sourceQuoteId = dto.sourceQuoteId ?? null;
+    let jobContext: { id: string; sourceQuoteId: string | null } | null = null;
     if (dto.jobId) {
       const job = await this.prisma.job.findFirst({
         where: {
@@ -923,6 +1102,7 @@ export class InvoicesService {
           HttpStatus.NOT_FOUND,
         );
       }
+      jobContext = job;
       sourceQuoteId = sourceQuoteId ?? job.sourceQuoteId;
     }
     if (sourceQuoteId) {
@@ -931,18 +1111,83 @@ export class InvoicesService {
           businessId: currentUser.businessId,
           customerId: dto.customerId,
           id: sourceQuoteId,
+          status: { in: ['ACCEPTED', 'CONVERTED'] },
         },
-        select: { id: true },
+        select: {
+          convertedJobId: true,
+          id: true,
+          jobId: true,
+          relatedJobId: true,
+        },
       });
       if (!quote) {
         throw this.domainError(
           'INVOICE_ACCESS_DENIED',
-          'Source quote could not be found for this customer.',
+          'Accepted source quote could not be found for this customer.',
           HttpStatus.NOT_FOUND,
+        );
+      }
+      if (jobContext && !this.sourceQuoteBelongsToJob(quote, jobContext)) {
+        throw this.domainError(
+          'INVOICE_SOURCE_MISMATCH',
+          'Source quote does not belong to this job.',
+          HttpStatus.CONFLICT,
         );
       }
     }
     return { customerSiteId, sourceQuoteId };
+  }
+
+  private sourceQuoteBelongsToJob(
+    quote: {
+      convertedJobId: string | null;
+      id: string;
+      jobId: string | null;
+      relatedJobId: string | null;
+    },
+    job: { id: string; sourceQuoteId: string | null },
+  ) {
+    return (
+      quote.convertedJobId === job.id ||
+      quote.relatedJobId === job.id ||
+      quote.jobId === job.id ||
+      job.sourceQuoteId === quote.id
+    );
+  }
+
+  private defaultInvoiceDraft(input: {
+    customerId: string;
+    customerSiteId?: string | null;
+    dueDate: Date;
+    issueDate: Date;
+    jobId?: string | null;
+    title?: string;
+  }) {
+    return {
+      creditAppliedCents: 0,
+      customerId: input.customerId,
+      customerSiteId: input.customerSiteId ?? null,
+      discountType: 'NONE' as const,
+      discountValue: 0,
+      dueDate: input.dueDate.toISOString(),
+      issueDate: input.issueDate.toISOString(),
+      jobId: input.jobId ?? null,
+      lineItems: [
+        {
+          name: 'Labour',
+          quantity: '1',
+          taxable: true,
+          type: 'LABOUR' as const,
+          unit: 'hour',
+          unitPriceCents: 12000,
+        },
+      ],
+      paymentTerms:
+        'Payment due within 7 days. Bank transfer details to be confirmed.',
+      pricingMode: 'GST_EXCLUSIVE' as const,
+      sourceQuoteId: null,
+      title: input.title ?? 'New invoice',
+    };
   }
 
   private assertDates(dto: UpsertInvoiceDto) {

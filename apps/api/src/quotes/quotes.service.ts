@@ -720,7 +720,7 @@ export class QuotesService {
           scheduledStart: new Date(),
           sourceQuoteId: quote.id,
           status: 'NEW',
-          title: quote.title,
+          title: this.convertedJobTitle(quote),
           createdBy: currentUser.id,
         },
       });
@@ -1977,6 +1977,32 @@ export class QuotesService {
       state: site?.state ?? 'NSW',
       suburb: site?.suburb ?? 'To be confirmed',
     };
+  }
+
+  private convertedJobTitle(quote: QuoteRecord) {
+    const fallback = `Quote for ${quote.customer.displayName}`;
+    const candidates = [
+      quote.title,
+      quote.description,
+      ...quote.lineItems.map((item) => item.description ?? item.name),
+    ];
+
+    return (
+      candidates
+        .map((candidate) => this.meaningfulJobTitleCandidate(candidate))
+        .find(Boolean) ?? fallback
+    );
+  }
+
+  private meaningfulJobTitleCandidate(candidate?: string | null) {
+    const value = candidate?.trim();
+    if (!value) return null;
+    if (/^quote\s+for\s+/i.test(value)) return null;
+    if (/^\$?\d+(\.\d{1,2})?$/.test(value)) return null;
+    if (/^(labou?r|materials?|parts?|service|fee|other)$/i.test(value)) {
+      return null;
+    }
+    return value.length > 160 ? `${value.slice(0, 157).trim()}...` : value;
   }
 
   private renderPreviewHtml(quote: Quote) {

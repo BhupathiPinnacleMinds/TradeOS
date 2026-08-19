@@ -29,6 +29,7 @@ import type {
   JobListResponse,
   JobPayload,
   JobStatus,
+  InvoiceDraftResponse,
   InvoiceDetailResponse,
   InvoiceListResponse,
   InvoicePayload,
@@ -907,6 +908,18 @@ export function invoiceDetailRequest(token: string, invoiceId: string) {
   return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}`, {
     token,
   });
+}
+
+export function invoiceDraftRequest(
+  token: string,
+  params: Record<string, string | undefined> = {},
+) {
+  return apiRequest<InvoiceDraftResponse>(
+    `/invoices/draft${queryString(params)}`,
+    {
+      token,
+    },
+  );
 }
 
 export function createInvoiceRequest(token: string, input: InvoicePayload) {

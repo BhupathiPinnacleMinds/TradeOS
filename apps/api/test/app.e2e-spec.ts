@@ -6,10 +6,14 @@ import type {
   CustomerCommunicationListResponse,
   HealthResponse,
   MediaListResponse,
+  ToriActionConfirmResponse,
   ToriChatResponse,
   ToriSnapshot,
 } from '@tradieos/shared';
-import { APPOINTMENT_TRANSITION_ROUTE_SEGMENTS } from '@tradieos/shared';
+import {
+  APPOINTMENT_TRANSITION_ROUTE_SEGMENTS,
+  calculateQuoteTotals,
+} from '@tradieos/shared';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -299,6 +303,226 @@ describe('Health endpoint (e2e)', () => {
     expect(secondBody.context?.pendingQuestion?.type).toBe(
       'APPOINTMENT_CUSTOMER',
     );
+  });
+
+  it('POST /api/ai/tori/chat preserves quote workflow context and parses line items over HTTP', async () => {
+    const prisma = app.get<{
+      customer: {
+        findFirst: jest.Mock;
+        findMany: jest.Mock;
+      };
+    }>(PrismaService);
+    const archer = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Archer',
+      email: null,
+      firstName: 'Archer',
+      id: 'customer-archer',
+      lastName: null,
+      phone: '0414000000',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValueOnce([archer]);
+    prisma.customer.findFirst.mockResolvedValueOnce(archer);
+
+    const first = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Create quote for Archer' })
+      .expect(201);
+    const firstBody = first.body as ToriChatResponse;
+    expect(firstBody.message.content).toContain('Tell me the quote line items');
+    expect(firstBody.context?.pendingQuestion).toMatchObject({
+      intent: 'CREATE_QUOTE',
+      type: 'QUOTE_LINE_ITEMS',
+    });
+
+    const second = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(firstBody.context),
+        message: '1.5 hours labour 150$ and Materials 100$',
+      })
+      .expect(201);
+    const secondBody = second.body as ToriChatResponse;
+    const draft = secondBody.message.actionDraft;
+    expect(draft?.type).toBe('CREATE_QUOTE');
+    if (!draft || draft.payload.type !== 'CREATE_QUOTE') {
+      throw new Error('Expected CREATE_QUOTE draft');
+    }
+    expect(draft.payload.quotePayload.lineItems).toMatchObject([
+      { name: 'Labour', quantity: '1.5', unitPriceCents: 15000 },
+      { name: 'Materials', quantity: '1', unitPriceCents: 10000 },
+    ]);
+    const totals = calculateQuoteTotals(draft.payload.quotePayload);
+    expect(totals.subtotalCents).toBe(32500);
+    expect(totals.gstCents).toBe(3250);
+    expect(totals.totalCents).toBe(35750);
+  });
+
+  it('POST /api/ai/tori/chat lets create invoice override a serialized stale quote slot', async () => {
+    const prisma = app.get<{
+      customer: {
+        findFirst: jest.Mock;
+        findMany: jest.Mock;
+      };
+    }>(PrismaService);
+    const archer = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'Archer',
+      email: null,
+      firstName: 'Archer',
+      id: 'customer-archer',
+      lastName: null,
+      phone: '0414000000',
+      sites: [],
+    };
+    prisma.customer.findMany.mockResolvedValueOnce([archer]);
+    prisma.customer.findFirst.mockResolvedValueOnce(archer);
+
+    const quoteStart = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Create quote for Archer' })
+      .expect(201);
+    const quoteStartBody = quoteStart.body as ToriChatResponse;
+    expect(quoteStartBody.context?.pendingQuestion?.type).toBe(
+      'QUOTE_LINE_ITEMS',
+    );
+
+    const invoiceStart = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(quoteStartBody.context),
+        message: 'Create invoice',
+      })
+      .expect(201);
+    const invoiceStartBody = invoiceStart.body as ToriChatResponse;
+
+    expect(invoiceStartBody.message.content).not.toContain(
+      "I couldn't read quote line items",
+    );
+    expect(invoiceStartBody.message.content).not.toContain('quote line items');
+    expect(invoiceStartBody.message.content).toContain('completed job');
+    expect(invoiceStartBody.context?.pendingQuestion?.type).not.toBe(
+      'QUOTE_LINE_ITEMS',
+    );
+    expect(invoiceStartBody.context?.pendingQuote).toBeUndefined();
+  });
+
+  it('POST /api/ai/tori/chat routes Yes to a serialized missing-customer dispatch question', async () => {
+    const prisma = app.get<{
+      customer: {
+        findMany: jest.Mock;
+      };
+    }>(PrismaService);
+    prisma.customer.findMany.mockResolvedValueOnce([]);
+
+    const first = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Create an appointment for Anjanna' })
+      .expect(201);
+
+    const firstBody = first.body as ToriChatResponse;
+    expect(firstBody.message.content).toContain(
+      "I couldn't find a customer named Anjanna",
+    );
+    expect(firstBody.context?.pendingQuestion).toMatchObject({
+      customerName: 'Anjanna',
+      intent: 'DISPATCH_JOB',
+      type: 'CREATE_MISSING_CUSTOMER',
+    });
+
+    const second = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(firstBody.context),
+        message: 'Yes',
+      })
+      .expect(201);
+
+    const secondBody = second.body as ToriChatResponse;
+    expect(secondBody.message.content).toContain(
+      "I'll prepare Anjanna as a new customer",
+    );
+    expect(secondBody.message.content).toContain(
+      'What phone number or email should I use',
+    );
+    expect(secondBody.message.content).not.toContain(
+      "I couldn't find a customer named Anjanna",
+    );
+    expect(secondBody.context?.pendingDispatch?.customer.name).toBe('Anjanna');
+    expect(secondBody.context?.pendingQuestion).toMatchObject({
+      customerName: 'Anjanna',
+      intent: 'DISPATCH_JOB',
+      type: 'CUSTOMER_CONTACT',
+    });
+  });
+
+  it('POST /api/ai/tori/chat preserves a serialized dispatch workflow across read interruptions', async () => {
+    const prisma = app.get<{
+      customer: {
+        findMany: jest.Mock;
+      };
+    }>(PrismaService);
+    prisma.customer.findMany.mockResolvedValueOnce([]);
+
+    const first = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Create an appointment for Anjanna' })
+      .expect(201);
+    const firstBody = first.body as ToriChatResponse;
+
+    const yes = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(firstBody.context),
+        message: 'Yes please',
+      })
+      .expect(201);
+    const yesBody = yes.body as ToriChatResponse;
+
+    const read = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(yesBody.context),
+        message: 'How much is outstanding?',
+      })
+      .expect(201);
+    const readBody = read.body as ToriChatResponse;
+    expect(readBody.message.content).toContain('Outstanding invoices');
+    expect(readBody.context?.pendingQuestion).toMatchObject({
+      customerName: 'Anjanna',
+      intent: 'DISPATCH_JOB',
+      type: 'CUSTOMER_CONTACT',
+    });
+
+    const contact = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(readBody.context),
+        message: '0412 345 678',
+      })
+      .expect(201);
+    const contactBody = contact.body as ToriChatResponse;
+    expect(contactBody.message.actionDraft?.type).toBe('CREATE_CUSTOMER');
+    expect(contactBody.message.actionDraft?.payload).toMatchObject({
+      customerPayload: {
+        firstName: 'Anjanna',
+        phone: '0412345678',
+      },
+      type: 'CREATE_CUSTOMER',
+    });
   });
 
   it('POST /api/ai/tori/chat completes fresh appointment slot collection over serialized HTTP contexts', async () => {
@@ -1114,6 +1338,200 @@ describe('Health endpoint (e2e)', () => {
     expect(
       durationBody.context?.pendingDispatch?.scheduling.durationMinutes,
     ).toBe(120);
+  });
+
+  it('POST /api/ai/tori/chat completes the SaiRam dispatch through serialized expected slots', async () => {
+    const customersService = app.get(CustomersService);
+    const jobsService = app.get(JobsService);
+    const appointmentsService = app.get(AppointmentsService);
+    const prisma = app.get<{
+      customer: { findFirst: jest.Mock; findMany: jest.Mock };
+      job: { findFirst: jest.Mock; findMany: jest.Mock };
+    }>(PrismaService);
+    const sairam = {
+      companyName: null,
+      contactPreference: 'SMS',
+      displayName: 'SaiRam',
+      email: null,
+      firstName: 'SaiRam',
+      id: 'customer-sairam',
+      lastName: null,
+      phone: '0414303354',
+      sites: [],
+    };
+    const createdJob = {
+      accessInstructions: null,
+      addressLine1: '1 Coffey Street',
+      addressLine2: null,
+      customer: { displayName: 'SaiRam', id: 'customer-sairam', sites: [] },
+      customerId: 'customer-sairam',
+      id: 'job-sairam',
+      jobNumber: 'JOB-2026-000777',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Fix Temple room',
+    };
+    prisma.customer.findMany.mockResolvedValueOnce([]);
+    prisma.customer.findFirst.mockResolvedValue(sairam);
+    prisma.job.findMany.mockResolvedValue([]);
+    prisma.job.findFirst.mockResolvedValue(null);
+    const customerCreate = jest
+      .spyOn(customersService, 'create')
+      .mockResolvedValue({ customer: sairam } as never);
+    const jobCreate = jest
+      .spyOn(jobsService, 'create')
+      .mockResolvedValue({ job: createdJob } as never);
+    const appointmentCreate = jest
+      .spyOn(appointmentsService, 'create')
+      .mockResolvedValue({
+        appointment: {
+          appointmentNumber: 'APT-2026-000777',
+          id: 'appointment-sairam',
+          jobId: 'job-sairam',
+          scheduledStart: new Date('2026-08-18T04:00:00.000Z'),
+        },
+      } as never);
+
+    const start = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Book appointment for SaiRam' })
+      .expect(201);
+    const startBody = start.body as ToriChatResponse;
+    expect(startBody.message.content).toContain(
+      "I couldn't find a customer named SaiRam",
+    );
+
+    const yes = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(startBody.context),
+        message: 'Yea',
+      })
+      .expect(201);
+    const yesBody = yes.body as ToriChatResponse;
+    expect(yesBody.context?.pendingQuestion?.type).toBe('CUSTOMER_CONTACT');
+
+    const contact = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(yesBody.context),
+        message: '0414303354',
+      })
+      .expect(201);
+    const contactBody = contact.body as ToriChatResponse;
+    const customerDraft = contactBody.message.actionDraft;
+    expect(customerDraft?.type).toBe('CREATE_CUSTOMER');
+
+    if (!customerDraft) throw new Error('Expected CREATE_CUSTOMER draft');
+    const confirmedCustomer = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${customerDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: customerDraft })
+      .expect(201);
+    const confirmedCustomerBody =
+      confirmedCustomer.body as ToriActionConfirmResponse;
+    expect(confirmedCustomerBody.context?.pendingQuestion).toMatchObject({
+      intent: 'DISPATCH_JOB',
+      type: 'JOB_TITLE',
+    });
+
+    const jobDescription = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(confirmedCustomerBody.context),
+        message: 'Fix Temple room',
+      })
+      .expect(201);
+    const jobDescriptionBody = jobDescription.body as ToriChatResponse;
+    expect(jobDescriptionBody.message.content).not.toBe('What is the job for?');
+    expect(jobDescriptionBody.context?.pendingDispatch).toMatchObject({
+      customer: { customerId: 'customer-sairam', name: 'SaiRam' },
+      job: { title: 'Fix Temple room' },
+    });
+    expect(jobDescriptionBody.context?.pendingQuestion?.type).toBe(
+      'JOB_ADDRESS',
+    );
+
+    const address = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(jobDescriptionBody.context),
+        message: '1 Coffey Street, Tarneit, VIC 3029',
+      })
+      .expect(201);
+    const addressBody = address.body as ToriChatResponse;
+    expect(addressBody.context?.pendingDispatch?.job).toMatchObject({
+      addressLine1: '1 Coffey Street',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+    });
+    expect(addressBody.context?.pendingQuestion?.type).toBe('APPOINTMENT_DATE');
+
+    const date = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(addressBody.context),
+        message: 'tomorrow at 2pm',
+      })
+      .expect(201);
+    const dateBody = date.body as ToriChatResponse;
+    const jobDraft = dateBody.message.actionDraft;
+    expect(jobDraft?.type).toBe('CREATE_JOB');
+
+    if (!jobDraft) throw new Error('Expected CREATE_JOB draft');
+    const confirmedJob = await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${jobDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: jobDraft })
+      .expect(201);
+    const confirmedJobBody = confirmedJob.body as ToriActionConfirmResponse;
+    expect(confirmedJobBody.context?.pendingQuestion?.type).toBe(
+      'APPOINTMENT_DURATION',
+    );
+
+    const duration = await request(app.getHttpServer())
+      .post('/api/ai/tori/chat')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        context: serializedToriContext(confirmedJobBody.context),
+        message: '60 mins',
+      })
+      .expect(201);
+    const durationBody = duration.body as ToriChatResponse;
+    const appointmentDraft = durationBody.message.actionDraft;
+    expect(appointmentDraft?.type).toBe('CREATE_APPOINTMENT');
+
+    if (!appointmentDraft) {
+      throw new Error('Expected CREATE_APPOINTMENT draft');
+    }
+    await request(app.getHttpServer())
+      .post(`/api/ai/tori/actions/${appointmentDraft.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ draft: appointmentDraft })
+      .expect(201);
+
+    expect(customerCreate).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledTimes(1);
+    expect(appointmentCreate).toHaveBeenCalledTimes(1);
+    expect(appointmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ businessId: 'business-1' }),
+      expect.objectContaining({
+        estimatedDurationMinutes: 60,
+        jobId: 'job-sairam',
+      }),
+    );
+
+    customerCreate.mockRestore();
+    jobCreate.mockRestore();
+    appointmentCreate.mockRestore();
   });
 
   it('POST /api/ai/tori/chat lets explicit Ranjan request override stale Ben HTTP context', async () => {

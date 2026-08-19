@@ -95,13 +95,32 @@ export interface ToriContext {
       | 'APPOINTMENT_DURATION'
       | 'CUSTOMER_NAME'
       | 'CUSTOMER_CONTACT'
+      | 'CREATE_MISSING_CUSTOMER'
+      | 'SERVICE_LOCATION_CONFIRMATION'
+      | 'SERVICE_LOCATION_SELECTION'
+      | 'JOB_SELECTION'
+      | 'NO_AVAILABILITY_CHOICE'
       | 'JOB_TITLE'
-      | 'JOB_ADDRESS';
+      | 'JOB_ADDRESS'
+      | 'QUOTE_LINE_ITEMS';
     intent:
       | 'CREATE_APPOINTMENT_FOR_JOB'
       | 'CREATE_JOB'
       | 'CREATE_CUSTOMER'
-      | 'CREATE_CUSTOMER_AND_JOB';
+      | 'CREATE_CUSTOMER_AND_JOB'
+      | 'DISPATCH_JOB'
+      | 'CREATE_QUOTE';
+    workflowId?: string;
+    promptPurpose?: string;
+    subjectId?: string;
+    subjectName?: string;
+    customerName?: string;
+    proposedValue?: unknown;
+    options?: Array<{
+      id: string;
+      label: string;
+      value?: unknown;
+    }>;
   };
   pendingCustomer?: {
     firstName?: string;
@@ -137,6 +156,12 @@ export interface ToriContext {
     state?: string;
     postcode?: string;
     resumeAppointment?: ToriContext['pendingAppointment'];
+  };
+  pendingQuote?: {
+    customerId: string;
+    customerName: string;
+    jobId?: string;
+    lineItems?: QuotePayload['lineItems'];
   };
   pendingAppointment?: {
     customerId?: string;
@@ -199,6 +224,31 @@ export interface ToriContext {
       recommendedEnd?: string;
       reason?: string;
     };
+  };
+  workflow?: {
+    workflowId: string;
+    rootIntent:
+      | 'CREATE_CUSTOMER'
+      | 'CREATE_JOB'
+      | 'CREATE_APPOINTMENT'
+      | 'DISPATCH_JOB'
+      | 'CREATE_QUOTE'
+      | 'CREATE_INVOICE'
+      | 'READ'
+      | 'UNKNOWN';
+    customerId?: string;
+    customerName?: string;
+    jobId?: string;
+    appointmentId?: string;
+    state?: string;
+    awaitingSlot?: string;
+    status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'ABANDONED';
+  };
+  pendingChoice?: {
+    type: 'ALTERNATIVE_AVAILABILITY';
+    options: Array<
+      'TOMORROW_AFTERNOON' | 'ANOTHER_TIME_TOMORROW' | 'ANOTHER_DATE'
+    >;
   };
 }
 

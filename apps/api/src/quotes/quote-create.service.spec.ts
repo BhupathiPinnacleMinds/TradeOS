@@ -440,6 +440,29 @@ describe('QuotesService create', () => {
     );
   });
 
+  it('uses meaningful quote scope instead of generic quote title when converting to a job', async () => {
+    const { prisma, tx } = createPrismaMock({
+      acceptedAt: new Date('2026-08-10T00:00:00.000Z'),
+      description: 'Replace switchboard safety fuse',
+      job: null,
+      jobId: null,
+      relatedJob: null,
+      relatedJobId: null,
+      status: 'ACCEPTED',
+      title: 'Quote for Archer',
+    });
+    const service = createService(prisma);
+
+    await service.convertToJob(user, 'quote-1');
+
+    const jobCreateCalls = tx.job.create.mock.calls as unknown as Array<
+      [{ data: { title: string } }]
+    >;
+    expect(jobCreateCalls[0]?.[0].data.title).toBe(
+      'Replace switchboard safety fuse',
+    );
+  });
+
   it('blocks technicians from creating quote drafts', async () => {
     const { prisma, tx } = createPrismaMock();
     const service = createService(prisma);

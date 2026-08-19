@@ -521,6 +521,12 @@ Important fields:
 - voidedAt
 - version
 
+When `jobId` points to a job that originated from an accepted/converted quote,
+`sourceQuoteId` preserves the quote traceability. Invoice draft initialization
+copies the source quote commercial snapshot into independent invoice line items
+and pricing fields; later invoice edits must not mutate historical quote line
+items.
+
 ### InvoiceItem / InvoiceLineItem
 
 Represents invoice line items.

@@ -108,6 +108,24 @@ export class AccountsReceivableQueryDto {
   dateTo?: string;
 }
 
+export class InvoiceDraftQueryDto {
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
+  @IsOptional()
+  @IsString()
+  customerSiteId?: string;
+
+  @IsOptional()
+  @IsString()
+  jobId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceQuoteId?: string;
+}
+
 export class InvoiceLineItemDto {
   @IsOptional()
   @IsString()

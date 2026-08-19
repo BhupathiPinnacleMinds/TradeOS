@@ -69,6 +69,33 @@ reuse `CustomersService.createSite()` to persist new customer service locations
 without duplicating existing sites, keeping customer profiles useful for future
 appointments.
 
+Tori conversational state is explicit and typed. The API returns structured
+`ToriContext` containing active workflow metadata, `pendingDispatch` slots and
+`pendingQuestion` prompts. The planner routes each turn in this order: strong
+new root command, structured pending-question answer, expected slot answer,
+read-only interruption, contextual continuation, generic intent detection, then
+unsupported response. This prevents short replies such as "Yes", "60 mins" or
+"the second one" from being reinterpreted as unrelated generic commands, while
+still allowing a strong new request such as "Create customer David" to clear an
+incompatible appointment workflow. Strong mutating root commands also protect
+quote, invoice, customer, job and appointment workflows from stale pending
+slots; for example, "Create invoice" must start invoice drafting rather than be
+parsed as quote line-item text from an old `QUOTE_LINE_ITEMS` prompt. Read-only
+interruptions preserve pending workflow context so the user can resume after
+the answer. The mobile Tori screen must store the latest context from every
+chat and confirmation response and send that serialized context with the next
+request. Confirmation responses for completed quote and invoice drafts must
+replace active pending context with completed workflow metadata.
+
+Expected-slot consumption is centralised in the server workflow layer rather
+than owned by mobile, SMS, voice or another channel. When `pendingQuestion`
+states that dispatch is waiting for a job description, contact detail, service
+address, appointment date/time, duration or selection, the next compatible user
+reply is parsed as that slot and merged into the same `pendingDispatch`
+workflow. The planner then immediately resumes from the next unresolved
+requirement and continues to use existing domain services for confirmed
+customer, job and appointment mutations.
+
 ## Customer communications and reminders
 
 Customer communications are implemented as a reusable domain owned by
@@ -259,6 +286,11 @@ Invoice architecture:
 - Invoice totals are calculated with integer cents in shared helpers and
   recalculated server-side on every write. The mobile form uses the same helpers
   for preview only; the API remains authoritative.
+- Invoice draft initialization is API-driven. `GET /api/invoices/draft` prefers
+  the accepted/converted `Job.sourceQuoteId` commercial snapshot, then falls
+  back to existing job/default invoice entry behavior for jobs without quotes.
+  Source quote line items are copied into the invoice draft as an editable
+  snapshot; later invoice edits must not mutate the accepted quote.
 - `OVERDUE` is a derived display state based on due date and positive balance,
   not a scheduled background mutation.
 - Local invoice send uses an invoice email-provider seam. Development sends

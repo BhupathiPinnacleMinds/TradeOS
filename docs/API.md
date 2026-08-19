@@ -324,6 +324,7 @@ Protected staff APIs:
 GET /api/invoices
 POST /api/invoices
 GET /api/invoices/accounts-receivable
+GET /api/invoices/draft
 GET /api/invoices/:id
 PATCH /api/invoices/:id
 POST /api/invoices/:id/send
@@ -332,6 +333,15 @@ GET /api/invoices/:id/payments/:paymentId/receipt
 POST /api/invoices/:id/void
 GET /api/invoices/:id/pdf
 ```
+
+`GET /api/invoices/draft` is a read-only initializer for mobile invoice forms.
+It accepts optional `customerId`, `customerSiteId`, `jobId` and
+`sourceQuoteId`. When a job originated from an accepted or converted quote, the
+draft is initialized from that source quote's commercial snapshot: line-item
+descriptions, decimal quantities, units, unit prices, taxable flags, pricing
+mode, GST rate and discount settings are copied into an editable invoice payload.
+The endpoint validates every customer, job and quote through the authenticated
+`businessId`; source quote/job/customer mismatches are rejected server-side.
 
 Accounts Receivable returns real invoice/payment data, not cached dashboard
 values. It accepts optional `search`, `customerId`, `status`, `dateFrom` and

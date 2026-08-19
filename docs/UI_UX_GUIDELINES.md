@@ -51,6 +51,10 @@
 - Invoice creation entry points are More -> Invoices, Customer Details and Job
   Details. Creating from Job Details pre-populates customer, job and source quote
   context where available.
+- When opened from Job Details, the invoice Scope step should show the selected
+  customer, job and source quote as an explicit scoped summary instead of a broad
+  all-customer/all-job picker. This reduces accidental customer/job switching
+  that would break quote/job/invoice traceability.
 - The invoice form is split into Scope, Items, Terms and Review steps. It keeps
   numeric input as safe strings while editing and converts to integer cents only
   when calculating or saving.

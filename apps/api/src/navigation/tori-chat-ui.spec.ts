@@ -53,6 +53,12 @@ describe('Tori chat mobile/API contracts', () => {
     const screen = readWorkspaceFile(
       'apps/mobile/src/screens/ToriChatScreen.tsx',
     );
+    const confirmationContextIndex = screen.indexOf(
+      'if (result.context) setToriContext(result.context);',
+    );
+    const nextMessageIndex = screen.indexOf(
+      '...(result.nextMessage ? [result.nextMessage] : [])',
+    );
 
     expect(screen).toContain(
       'const [toriContext, setToriContext] = useState<ToriContext>({});',
@@ -64,6 +70,9 @@ describe('Tori chat mobile/API contracts', () => {
     expect(screen).toContain(
       'if (result.context) setToriContext(result.context);',
     );
+    expect(confirmationContextIndex).toBeGreaterThan(-1);
+    expect(nextMessageIndex).toBeGreaterThan(-1);
+    expect(confirmationContextIndex).toBeLessThan(nextMessageIndex);
   });
 
   it('labels action drafts with the action type and specific confirm text', () => {

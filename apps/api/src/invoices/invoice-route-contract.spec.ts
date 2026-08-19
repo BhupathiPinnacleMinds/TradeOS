@@ -14,6 +14,7 @@ describe('invoice route contract', () => {
     expect(controller).toContain('@Get()');
     expect(controller).toContain('@Post()');
     expect(controller).toContain("@Get('accounts-receivable')");
+    expect(controller).toContain("@Get('draft')");
     expect(controller).toContain("@Get(':id')");
     expect(controller).toContain("@Patch(':id')");
     expect(controller).toContain("@Post(':id/send')");

@@ -400,6 +400,34 @@ export interface InvoicePayload {
   lineItems: InvoiceLineItemPayload[];
 }
 
+export interface InvoiceDraftQuery {
+  customerId?: string;
+  customerSiteId?: string;
+  jobId?: string;
+  sourceQuoteId?: string;
+}
+
+export interface InvoiceDraftSourceQuote {
+  id: string;
+  quoteNumber: string;
+  status: string;
+  title: string;
+  totalCents: number;
+}
+
+export interface InvoiceDraftSourceJob {
+  id: string;
+  jobNumber: string;
+  title: string;
+}
+
+export interface InvoiceDraftResponse {
+  draft: InvoicePayload;
+  source: 'SOURCE_QUOTE' | 'JOB_DEFAULT' | 'EMPTY_DEFAULT';
+  sourceQuote: InvoiceDraftSourceQuote | null;
+  job: InvoiceDraftSourceJob | null;
+}
+
 export interface InvoiceListQuery {
   page?: number;
   pageSize?: number;
