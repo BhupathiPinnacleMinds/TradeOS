@@ -20,6 +20,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { ReportsModule } from './reports/reports.module';
+import { validateEnvironment } from './config/app-config';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ReportsModule } from './reports/reports.module';
       cache: true,
       envFilePath: ['apps/api/.env', '.env'],
       isGlobal: true,
+      validate: validateEnvironment,
     }),
     PrismaModule,
     AuthModule,

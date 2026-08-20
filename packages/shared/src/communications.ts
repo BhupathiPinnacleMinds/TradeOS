@@ -5,6 +5,7 @@ export const CUSTOMER_COMMUNICATION_CHANNELS = ['EMAIL', 'SMS'] as const;
 export const CUSTOMER_COMMUNICATION_STATUSES = [
   'DRAFT',
   'SCHEDULED',
+  'PROCESSING',
   'SENT',
   'FAILED',
   'CANCELLED',
@@ -52,9 +53,13 @@ export interface CustomerCommunication {
   relatedPaymentId: string | null;
   idempotencyKey: string;
   scheduledFor: string | null;
+  processingStartedAt: string | null;
+  processingExpiresAt: string | null;
   sentAt: string | null;
   failedAt: string | null;
   failureReason: string | null;
+  provider: string | null;
+  providerMessageId: string | null;
   cancelledAt: string | null;
   createdBy: string | null;
   createdAt: string;

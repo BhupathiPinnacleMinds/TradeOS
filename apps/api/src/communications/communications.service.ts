@@ -13,12 +13,12 @@ import {
   getBusinessDateParts,
   zonedTimeToUtc,
 } from '@tradieos/shared';
-import type { Prisma } from '../generated/prisma/client';
+import type {
+  CustomerCommunication as PrismaCustomerCommunication,
+  Prisma,
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  CustomerCommunicationProvider,
-  LocalCustomerCommunicationProvider,
-} from './customer-communication.provider';
+import { CustomerCommunicationProvider } from './customer-communication.provider';
 import {
   appointmentCancelledTemplate,
   appointmentConfirmationTemplate,
@@ -61,6 +61,8 @@ type BusinessContact = {
 
 type InvoiceReminderType = 'INVOICE_DUE_SOON' | 'INVOICE_OVERDUE';
 
+type ProcessableCommunicationRecord = PrismaCustomerCommunication;
+
 type CommunicationEntityRefs = {
   relatedAppointmentId?: string | null;
   relatedInvoiceId?: string | null;
@@ -81,6 +83,7 @@ type UpsertCommunicationInput = CommunicationEntityRefs & {
 };
 
 const DEFAULT_PROCESS_LIMIT = 50;
+const DEFAULT_PROCESSING_LOCK_SECONDS = 10 * 60;
 
 @Injectable()
 export class CustomerCommunicationsService {
@@ -218,29 +221,23 @@ export class CustomerCommunicationsService {
     if (currentUser) {
       this.assertRole(currentUser, ['OWNER', 'ADMIN', 'OFFICE_MANAGER']);
     }
-    const due = await this.prisma.customerCommunication.findMany({
-      where: {
-        scheduledFor: { lte: new Date() },
-        status: 'SCHEDULED',
-      },
-      orderBy: { scheduledFor: 'asc' },
-      take: limit,
-    });
+    const startedAt = Date.now();
+    const due = await this.findDueCommunications(limit);
     let sent = 0;
     let failed = 0;
+    let claimed = 0;
+    let skipped = 0;
     for (const record of due) {
-      let current = await this.prisma.customerCommunication.findUnique({
-        where: {
-          businessId_idempotencyKey: {
-            businessId: record.businessId,
-            idempotencyKey: record.idempotencyKey,
-          },
-        },
-      });
-      if (!current || current.status !== 'SCHEDULED') continue;
-      if (this.isInvoiceReminderType(current.type)) {
-        current = await this.prepareInvoiceReminderForDelivery(current);
-        if (!current || current.status !== 'SCHEDULED') continue;
+      let current = await this.claimDueCommunication(record);
+      if (!current) {
+        skipped += 1;
+        continue;
+      }
+      claimed += 1;
+      current = await this.prepareScheduledCommunicationForDelivery(current);
+      if (!current || current.status !== 'PROCESSING') {
+        skipped += 1;
+        continue;
       }
       const delivery = await this.provider.send({
         businessId: current.businessId,
@@ -255,7 +252,16 @@ export class CustomerCommunicationsService {
       if (delivery.status === 'SENT') {
         await this.prisma.customerCommunication.update({
           where: { id: current.id },
-          data: { sentAt: new Date(), status: 'SENT' },
+          data: {
+            failedAt: null,
+            failureReason: null,
+            processingExpiresAt: null,
+            processingStartedAt: null,
+            provider: delivery.provider ?? null,
+            providerMessageId: delivery.providerMessageId ?? null,
+            sentAt: new Date(),
+            status: 'SENT',
+          },
         });
         sent += 1;
       } else {
@@ -264,6 +270,10 @@ export class CustomerCommunicationsService {
           data: {
             failedAt: new Date(),
             failureReason: this.safeFailure(delivery.failureReason),
+            processingExpiresAt: null,
+            processingStartedAt: null,
+            provider: delivery.provider ?? null,
+            providerMessageId: delivery.providerMessageId ?? null,
             status: 'FAILED',
           },
         });
@@ -271,7 +281,17 @@ export class CustomerCommunicationsService {
         failed += 1;
       }
     }
-    return { failed, processed: due.length, sent };
+    const result = {
+      claimed,
+      durationMs: Date.now() - startedAt,
+      due: due.length,
+      failed,
+      processed: claimed,
+      sent,
+      skipped,
+    };
+    console.info('[TradieOS communications worker]', result);
+    return result;
   }
 
   async appointmentCreated(
@@ -758,7 +778,12 @@ export class CustomerCommunicationsService {
     if (delivery.status === 'SENT') {
       return tx.customerCommunication.update({
         where: { id: draft.id },
-        data: { sentAt: new Date(), status: 'SENT' },
+        data: {
+          provider: delivery.provider ?? null,
+          providerMessageId: delivery.providerMessageId ?? null,
+          sentAt: new Date(),
+          status: 'SENT',
+        },
       });
     }
     return tx.customerCommunication.update({
@@ -766,6 +791,8 @@ export class CustomerCommunicationsService {
       data: {
         failedAt: new Date(),
         failureReason: this.safeFailure(delivery.failureReason),
+        provider: delivery.provider ?? null,
+        providerMessageId: delivery.providerMessageId ?? null,
         status: 'FAILED',
       },
     });
@@ -804,6 +831,10 @@ export class CustomerCommunicationsService {
       idempotencyKey: input.idempotencyKey,
       message: input.template.message,
       preview: input.template.message.replace(/\s+/g, ' ').slice(0, 160),
+      processingExpiresAt: null,
+      processingStartedAt: null,
+      provider: null,
+      providerMessageId: null,
       recipient: recipient ?? 'missing-recipient',
       relatedAppointmentId: input.relatedAppointmentId ?? null,
       relatedInvoiceId: input.relatedInvoiceId ?? null,
@@ -823,6 +854,8 @@ export class CustomerCommunicationsService {
         createdBy: undefined,
         customerId: undefined,
         idempotencyKey: undefined,
+        provider: undefined,
+        providerMessageId: undefined,
       },
       where: {
         businessId_idempotencyKey: {
@@ -865,6 +898,148 @@ export class CustomerCommunicationsService {
     });
   }
 
+  private async findDueCommunications(limit: number) {
+    const now = new Date();
+    return this.prisma.customerCommunication.findMany({
+      where: {
+        OR: [
+          {
+            scheduledFor: { lte: now },
+            status: 'SCHEDULED',
+          },
+          {
+            processingExpiresAt: { lte: now },
+            status: 'PROCESSING',
+          },
+        ],
+      },
+      orderBy: [{ scheduledFor: 'asc' }, { createdAt: 'asc' }],
+      take: limit,
+    });
+  }
+
+  private async claimDueCommunication(record: ProcessableCommunicationRecord) {
+    const now = new Date();
+    const expiresAt = new Date(
+      now.getTime() + DEFAULT_PROCESSING_LOCK_SECONDS * 1000,
+    );
+    const claimed = await this.prisma.customerCommunication.updateMany({
+      where: {
+        id: record.id,
+        OR: [
+          {
+            scheduledFor: { lte: now },
+            status: 'SCHEDULED',
+          },
+          {
+            processingExpiresAt: { lte: now },
+            status: 'PROCESSING',
+          },
+        ],
+      },
+      data: {
+        processingExpiresAt: expiresAt,
+        processingStartedAt: now,
+        status: 'PROCESSING',
+      },
+    });
+    if (claimed.count !== 1) return null;
+    return this.prisma.customerCommunication.findUnique({
+      where: { id: record.id },
+    });
+  }
+
+  private async prepareScheduledCommunicationForDelivery(
+    record: ProcessableCommunicationRecord,
+  ) {
+    if (record.type === 'APPOINTMENT_REMINDER') {
+      return this.prepareAppointmentReminderForDelivery(record);
+    }
+    if (record.type === 'QUOTE_FOLLOW_UP') {
+      return this.prepareQuoteFollowUpForDelivery(record);
+    }
+    if (this.isInvoiceReminderType(record.type)) {
+      return this.prepareInvoiceReminderForDelivery(record);
+    }
+    return record;
+  }
+
+  private async prepareAppointmentReminderForDelivery(
+    record: ProcessableCommunicationRecord,
+  ) {
+    if (!record.relatedAppointmentId) {
+      return this.cancelClaimedCommunication(
+        record.id,
+        'COMMUNICATION_APPOINTMENT_MISSING',
+      );
+    }
+    const appointment = await this.prisma.appointment.findFirst({
+      where: {
+        businessId: record.businessId,
+        id: record.relatedAppointmentId,
+      },
+      select: { scheduledStart: true, status: true },
+    });
+    if (
+      !appointment ||
+      !['SCHEDULED', 'CONFIRMED'].includes(appointment.status) ||
+      appointment.scheduledStart.getTime() <= Date.now()
+    ) {
+      return this.cancelClaimedCommunication(
+        record.id,
+        'COMMUNICATION_APPOINTMENT_NOT_ELIGIBLE',
+      );
+    }
+    return record;
+  }
+
+  private async prepareQuoteFollowUpForDelivery(
+    record: ProcessableCommunicationRecord,
+  ) {
+    if (!record.relatedQuoteId) {
+      return this.cancelClaimedCommunication(
+        record.id,
+        'COMMUNICATION_QUOTE_MISSING',
+      );
+    }
+    const quote = await this.prisma.quote.findFirst({
+      where: {
+        businessId: record.businessId,
+        id: record.relatedQuoteId,
+      },
+      select: {
+        acceptedAt: true,
+        archivedAt: true,
+        cancelledAt: true,
+        declinedAt: true,
+        expiredAt: true,
+        expiryDate: true,
+        status: true,
+      },
+    });
+    if (!quote || !this.quoteCanBeFollowedUp(quote)) {
+      return this.cancelClaimedCommunication(
+        record.id,
+        'COMMUNICATION_QUOTE_NOT_ELIGIBLE',
+      );
+    }
+    return record;
+  }
+
+  private async cancelClaimedCommunication(id: string, reason: string) {
+    await this.prisma.customerCommunication.update({
+      where: { id },
+      data: {
+        cancelledAt: new Date(),
+        failureReason: reason,
+        processingExpiresAt: null,
+        processingStartedAt: null,
+        status: 'CANCELLED',
+      },
+    });
+    return null;
+  }
+
   private isInvoiceReminderType(type: string): type is InvoiceReminderType {
     return type === 'INVOICE_DUE_SOON' || type === 'INVOICE_OVERDUE';
   }
@@ -889,13 +1064,29 @@ export class CustomerCommunicationsService {
         where: { id: record.id },
         data: {
           cancelledAt: new Date(),
+          failureReason: 'COMMUNICATION_INVOICE_NOT_ELIGIBLE',
+          processingExpiresAt: null,
+          processingStartedAt: null,
           status: 'CANCELLED',
         },
       });
     }
+    const next =
+      refreshed.status === 'SCHEDULED'
+        ? ({
+            ...refreshed,
+            processingExpiresAt: undefined,
+            processingStartedAt: undefined,
+            status: 'PROCESSING',
+          } as const)
+        : ({
+            ...refreshed,
+            processingExpiresAt: null,
+            processingStartedAt: null,
+          } as const);
     return this.prisma.customerCommunication.update({
       where: { id: record.id },
-      data: refreshed,
+      data: next,
     });
   }
 
@@ -989,6 +1180,8 @@ export class CustomerCommunicationsService {
       failureReason,
       message: template.message,
       preview: template.message.replace(/\s+/g, ' ').slice(0, 160),
+      provider: null,
+      providerMessageId: null,
       recipient: recipient ?? 'missing-recipient',
       status: failureReason ? 'FAILED' : 'SCHEDULED',
       subject: template.subject,
@@ -1296,6 +1489,10 @@ export class CustomerCommunicationsService {
     idempotencyKey: string;
     message: string;
     preview: string | null;
+    processingExpiresAt: Date | null;
+    processingStartedAt: Date | null;
+    provider: string | null;
+    providerMessageId: string | null;
     recipient: string;
     relatedAppointmentId: string | null;
     relatedInvoiceId: string | null;
@@ -1314,6 +1511,8 @@ export class CustomerCommunicationsService {
       cancelledAt: record.cancelledAt?.toISOString() ?? null,
       createdAt: record.createdAt.toISOString(),
       failedAt: record.failedAt?.toISOString() ?? null,
+      processingExpiresAt: record.processingExpiresAt?.toISOString() ?? null,
+      processingStartedAt: record.processingStartedAt?.toISOString() ?? null,
       scheduledFor: record.scheduledFor?.toISOString() ?? null,
       sentAt: record.sentAt?.toISOString() ?? null,
       updatedAt: record.updatedAt.toISOString(),
@@ -1339,8 +1538,3 @@ export class CustomerCommunicationsService {
     return new HttpException({ code, details, message }, status);
   }
 }
-
-export const customerCommunicationProvider = {
-  provide: CustomerCommunicationProvider,
-  useClass: LocalCustomerCommunicationProvider,
-};

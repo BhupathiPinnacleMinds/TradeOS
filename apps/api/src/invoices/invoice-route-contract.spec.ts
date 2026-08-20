@@ -35,4 +35,13 @@ describe('invoice route contract', () => {
     expect(controller).toContain("@Get(':token')");
     expect(controller).toContain("@Post(':token/view')");
   });
+
+  it('uses the documented public app URL setting for invoice links', () => {
+    const service = readFileSync(
+      join(root, 'src', 'invoices', 'invoices.service.ts'),
+      'utf8',
+    );
+
+    expect(service).toContain("this.config.get<string>('APP_PUBLIC_URL')");
+  });
 });

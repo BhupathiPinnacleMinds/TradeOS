@@ -63,9 +63,18 @@ function appointment(overrides: Record<string, unknown> = {}) {
     scheduledEnd: makeDate('2026-08-13T06:07:00.000Z'),
     scheduledStart: makeDate('2026-08-13T04:07:00.000Z'),
     state: 'VIC',
+    status: 'SCHEDULED',
     suburb: 'Tarneit',
     ...overrides,
   };
+}
+
+function futureAppointment(overrides: Record<string, unknown> = {}) {
+  return appointment({
+    scheduledEnd: makeDate('2026-08-25T06:00:00.000Z'),
+    scheduledStart: makeDate('2026-08-25T04:00:00.000Z'),
+    ...overrides,
+  });
 }
 
 function quote(overrides: Record<string, unknown> = {}) {
@@ -126,6 +135,10 @@ type CommunicationRecord = Record<string, unknown> & {
   createdAt: Date;
   id: string;
   idempotencyKey: string;
+  provider?: string | null;
+  providerMessageId?: string | null;
+  processingExpiresAt?: Date | null;
+  processingStartedAt?: Date | null;
   relatedAppointmentId?: string | null;
   relatedInvoiceId?: string | null;
   relatedQuoteId?: string | null;
@@ -138,6 +151,7 @@ type ListArgs = {
   orderBy?: Array<Record<string, string>>;
   take?: number;
   where?: {
+    OR?: Array<Record<string, unknown>>;
     businessId?: string;
     customerId?: string;
     relatedAppointmentId?: string;
@@ -170,12 +184,17 @@ type UpdateArgs = {
 type UpdateManyArgs = {
   data: Record<string, unknown>;
   where: {
-    businessId: string;
+    OR?: Array<Record<string, unknown>>;
+    businessId?: string;
+    id?: string;
+    processingExpiresAt?: {
+      lte: Date;
+    };
     relatedAppointmentId?: string;
     relatedInvoiceId?: string;
     relatedQuoteId?: string;
     status: string;
-    type: {
+    type?: {
       in: string[];
     };
   };
@@ -202,11 +221,18 @@ function createHarness(
   settingsOverrides: Partial<Record<string, boolean | number | string>> = {},
 ) {
   const records: CommunicationRecord[] = [];
-  const provider = { send: jest.fn().mockResolvedValue({ status: 'SENT' }) };
+  const provider = {
+    send: jest.fn().mockResolvedValue({
+      provider: 'test-provider',
+      providerMessageId: 'message-1',
+      status: 'SENT',
+    }),
+  };
   const now = makeDate('2026-08-12T00:00:00.000Z');
   let currentQuote = quote();
   let currentInvoice = invoice();
   let currentPayment = payment();
+  let currentAppointment = futureAppointment();
   let nextId = 1;
   const prisma = {
     business: {
@@ -241,6 +267,7 @@ function createHarness(
           records
             .filter(
               (record) =>
+                matchesWhere(record, args?.where) &&
                 (!args?.where?.businessId ||
                   record.businessId === args.where.businessId) &&
                 (!args?.where?.customerId ||
@@ -255,8 +282,7 @@ function createHarness(
                 (!args?.where?.scheduledFor?.lte ||
                   (record.scheduledFor instanceof Date &&
                     record.scheduledFor.getTime() <=
-                      args.where.scheduledFor.lte.getTime())) &&
-                (!args?.where?.status || record.status === args.where.status),
+                      args.where.scheduledFor.lte.getTime())),
             )
             .filter(
               (record) =>
@@ -266,15 +292,31 @@ function createHarness(
                   : args.where.type.in.includes(record.type)),
             )
             .sort((left, right) => {
+              const leftTime =
+                left.scheduledFor instanceof Date
+                  ? left.scheduledFor.getTime()
+                  : Number.MAX_SAFE_INTEGER;
+              const rightTime =
+                right.scheduledFor instanceof Date
+                  ? right.scheduledFor.getTime()
+                  : Number.MAX_SAFE_INTEGER;
+              const scheduledDelta = leftTime - rightTime;
+              if (scheduledDelta !== 0) return scheduledDelta;
               const createdAtDelta =
-                Number(right.createdAt) - Number(left.createdAt);
+                Number(left.createdAt) - Number(right.createdAt);
               if (createdAtDelta !== 0) return createdAtDelta;
               return String(right.id).localeCompare(String(left.id));
             })
             .slice(0, args?.take ?? 25),
         ),
       ),
-      findUnique: jest.fn((args: UniqueArgs) => {
+      findUnique: jest.fn((args: UniqueArgs | { where: { id: string } }) => {
+        if ('id' in args.where) {
+          const id = args.where.id;
+          return Promise.resolve(
+            records.find((record) => record.id === id) ?? null,
+          );
+        }
         const key = args.where.businessId_idempotencyKey;
         return Promise.resolve(
           records.find(
@@ -293,9 +335,11 @@ function createHarness(
         let count = 0;
         records.forEach((record) => {
           if (
-            record.businessId === args.where.businessId &&
-            record.status === args.where.status &&
-            args.where.type.in.includes(record.type) &&
+            matchesWhere(record, args.where) &&
+            (!args.where.businessId ||
+              record.businessId === args.where.businessId) &&
+            (!args.where.id || record.id === args.where.id) &&
+            (!args.where.type || args.where.type.in.includes(record.type)) &&
             (!args.where.relatedAppointmentId ||
               record.relatedAppointmentId ===
                 args.where.relatedAppointmentId) &&
@@ -330,6 +374,10 @@ function createHarness(
           createdAt: now,
           failedAt: args.create.failedAt ?? null,
           id: `communication-${nextId++}`,
+          processingExpiresAt: args.create.processingExpiresAt ?? null,
+          processingStartedAt: args.create.processingStartedAt ?? null,
+          provider: args.create.provider ?? null,
+          providerMessageId: args.create.providerMessageId ?? null,
           sentAt: null,
           updatedAt: now,
         } as CommunicationRecord;
@@ -347,6 +395,11 @@ function createHarness(
     },
     notification: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    appointment: {
+      findFirst: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve(currentAppointment)),
     },
     quote: {
       findFirst: jest
@@ -378,7 +431,50 @@ function createHarness(
     setPayment: (next: Record<string, unknown>) => {
       currentPayment = payment(next);
     },
+    setAppointment: (next: Record<string, unknown>) => {
+      currentAppointment = appointment(next);
+    },
   };
+}
+
+function matchesWhere(
+  record: CommunicationRecord,
+  where?: Record<string, unknown>,
+): boolean {
+  if (!where) return true;
+  const or = where.OR;
+  if (Array.isArray(or)) {
+    return or.some(
+      (condition) =>
+        isWhereCondition(condition) && matchesWhere(record, condition),
+    );
+  }
+  if (typeof where.id === 'string' && record.id !== where.id) return false;
+  if (typeof where.status === 'string' && record.status !== where.status) {
+    return false;
+  }
+  const scheduledFor = where.scheduledFor as { lte?: Date } | undefined;
+  if (
+    scheduledFor?.lte &&
+    (!(record.scheduledFor instanceof Date) ||
+      record.scheduledFor.getTime() > scheduledFor.lte.getTime())
+  ) {
+    return false;
+  }
+  const processingExpiresAt = where.processingExpiresAt as
+    { lte?: Date } | undefined;
+  if (
+    processingExpiresAt?.lte &&
+    (!(record.processingExpiresAt instanceof Date) ||
+      record.processingExpiresAt.getTime() > processingExpiresAt.lte.getTime())
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isWhereCondition(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 describe('CustomerCommunicationsService', () => {
@@ -399,6 +495,88 @@ describe('CustomerCommunicationsService', () => {
     expect(records[0].status).toBe('SENT');
     expect(records[1].status).toBe('SCHEDULED');
     expect(provider.send).toHaveBeenCalledTimes(1);
+    expect(records[0]).toMatchObject({
+      provider: 'test-provider',
+      providerMessageId: 'message-1',
+    });
+  });
+
+  it('records provider failures without marking the communication as sent', async () => {
+    const { provider, records, service } = createHarness();
+    provider.send.mockResolvedValueOnce({
+      failureReason: 'provider says no',
+      provider: 'test-provider',
+      status: 'FAILED',
+    });
+
+    await service.quoteSent({
+      businessId: owner.businessId,
+      createdBy: owner.id,
+      publicUrl: 'http://localhost:3000/public/quotes/demo-token',
+      quoteId: 'quote-1',
+    });
+
+    expect(records[0].failedAt).toBeInstanceOf(Date);
+    expect(records[0]).toMatchObject({
+      failureReason: 'provider says no',
+      provider: 'test-provider',
+      sentAt: null,
+      status: 'FAILED',
+      type: 'QUOTE_SENT',
+    });
+  });
+
+  it('respects disabled email preferences without calling the provider', async () => {
+    const { provider, records, service } = createHarness();
+    await service.sendManual(owner, {
+      channel: 'EMAIL',
+      customerId: 'customer-1',
+      message: 'Hello',
+    });
+    expect(records[0].status).toBe('SENT');
+
+    const disabled = customer({
+      communicationPreference: { emailEnabled: false, smsEnabled: true },
+    });
+    const {
+      provider: disabledProvider,
+      records: disabledRecords,
+      service: disabledService,
+      prisma,
+    } = createHarness();
+    prisma.customer.findFirst.mockResolvedValueOnce(disabled);
+    await disabledService.sendManual(owner, {
+      channel: 'EMAIL',
+      customerId: 'customer-1',
+      message: 'Hello',
+    });
+    expect(disabledRecords[0]).toMatchObject({
+      failureReason: 'COMMUNICATION_EMAIL_DISABLED',
+      status: 'FAILED',
+    });
+    expect(disabledProvider.send).not.toHaveBeenCalled();
+    expect(provider.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('respects disabled SMS preferences without calling the provider', async () => {
+    const { provider, records, service, prisma } = createHarness();
+    prisma.customer.findFirst.mockResolvedValueOnce(
+      customer({
+        communicationPreference: { emailEnabled: true, smsEnabled: false },
+      }),
+    );
+
+    await service.sendManual(owner, {
+      channel: 'SMS',
+      customerId: 'customer-1',
+      message: 'Hello',
+    });
+
+    expect(records[0]).toMatchObject({
+      failureReason: 'COMMUNICATION_SMS_DISABLED',
+      status: 'FAILED',
+    });
+    expect(provider.send).not.toHaveBeenCalled();
   });
 
   it('uses SMS for a phone-only customer with default ANY preferences', async () => {
@@ -1053,7 +1231,11 @@ describe('CustomerCommunicationsService', () => {
 
   it('processes due scheduled communications once', async () => {
     const { provider, records, service, prisma } = createHarness();
-    await service.appointmentCreated(prisma as never, owner, appointment());
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
     );
@@ -1070,6 +1252,208 @@ describe('CustomerCommunicationsService', () => {
       records.filter((record) => record.type === 'APPOINTMENT_REMINDER')[0]
         .status,
     ).toBe('SENT');
+  });
+
+  it('does not process future scheduled communications', async () => {
+    const { provider, records, service, prisma } = createHarness();
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    provider.send.mockClear();
+
+    const result = await service.processDueCustomerCommunications(owner);
+
+    expect(result).toMatchObject({ claimed: 0, due: 0, sent: 0 });
+    expect(
+      records.find((record) => record.type === 'APPOINTMENT_REMINDER')?.status,
+    ).toBe('SCHEDULED');
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('does not process cancelled or already sent scheduled communications again', async () => {
+    const { provider, records, service, prisma } = createHarness();
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) {
+      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+      reminder.status = 'CANCELLED';
+    }
+    records.push({
+      ...records[0],
+      id: 'already-sent',
+      idempotencyKey: 'business-1:already-sent',
+      scheduledFor: makeDate('2026-08-11T00:00:00.000Z'),
+      status: 'SENT',
+      type: 'APPOINTMENT_REMINDER',
+    });
+    provider.send.mockClear();
+
+    const result = await service.processDueCustomerCommunications(owner);
+
+    expect(result).toMatchObject({ claimed: 0, due: 0, sent: 0 });
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('prevents two concurrent worker executions from double-sending one communication', async () => {
+    const { provider, records, service, prisma } = createHarness();
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) {
+      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+    }
+    provider.send.mockClear();
+
+    const [first, second] = await Promise.all([
+      service.processDueCustomerCommunications(undefined),
+      service.processDueCustomerCommunications(undefined),
+    ]);
+
+    expect(first.claimed + second.claimed).toBe(1);
+    expect(provider.send).toHaveBeenCalledTimes(1);
+    expect(reminder?.status).toBe('SENT');
+  });
+
+  it('records provider failure safely and continues the batch', async () => {
+    const { provider, records, service, prisma, setQuote } = createHarness();
+    setQuote({ sentAt: makeDate('2026-08-08T04:00:00.000Z') });
+    await service.quoteSent({
+      businessId: owner.businessId,
+      createdBy: owner.id,
+      publicUrl: 'http://localhost:3000/public/quotes/demo-token',
+      quoteId: 'quote-1',
+    });
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) {
+      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+    }
+    provider.send
+      .mockReset()
+      .mockResolvedValueOnce({
+        failureReason: 'temporary outage with token abc',
+        provider: 'test-provider',
+        status: 'FAILED',
+      })
+      .mockResolvedValueOnce({
+        provider: 'test-provider',
+        providerMessageId: 'message-2',
+        status: 'SENT',
+      });
+
+    const result = await service.processDueCustomerCommunications(undefined);
+
+    expect(result).toMatchObject({ claimed: 2, failed: 1, sent: 1 });
+    expect(provider.send).toHaveBeenCalledTimes(2);
+    expect(
+      records.filter(
+        (record) =>
+          ['QUOTE_FOLLOW_UP', 'APPOINTMENT_REMINDER'].includes(record.type) &&
+          record.status === 'FAILED',
+      ),
+    ).toHaveLength(1);
+    expect(
+      records.filter(
+        (record) =>
+          ['QUOTE_FOLLOW_UP', 'APPOINTMENT_REMINDER'].includes(record.type) &&
+          record.status === 'SENT',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('cancels an appointment reminder if the appointment is cancelled before processing', async () => {
+    const { provider, records, service, prisma, setAppointment } =
+      createHarness();
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) {
+      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+    }
+    setAppointment({ status: 'CANCELLED' });
+    provider.send.mockClear();
+
+    const result = await service.processDueCustomerCommunications(undefined);
+
+    expect(result).toMatchObject({ claimed: 1, skipped: 1, sent: 0 });
+    expect(reminder?.status).toBe('CANCELLED');
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('cancels a quote follow-up if the quote was accepted before processing', async () => {
+    const { provider, records, service, setQuote } = createHarness();
+    setQuote({ sentAt: makeDate('2026-08-08T04:00:00.000Z') });
+    await service.quoteSent({
+      businessId: owner.businessId,
+      createdBy: owner.id,
+      publicUrl: 'http://localhost:3000/public/quotes/demo-token',
+      quoteId: 'quote-1',
+    });
+    setQuote({
+      acceptedAt: makeDate('2026-08-12T00:00:00.000Z'),
+      status: 'ACCEPTED',
+    });
+    provider.send.mockClear();
+
+    const result = await service.processDueCustomerCommunications(undefined);
+
+    expect(result).toMatchObject({ claimed: 1, skipped: 1, sent: 0 });
+    expect(
+      records.find((record) => record.type === 'QUOTE_FOLLOW_UP')?.status,
+    ).toBe('CANCELLED');
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('respects worker batch size', async () => {
+    const { provider, records, service, prisma, setQuote } = createHarness();
+    setQuote({ sentAt: makeDate('2026-08-08T04:00:00.000Z') });
+    await service.quoteSent({
+      businessId: owner.businessId,
+      createdBy: owner.id,
+      publicUrl: 'http://localhost:3000/public/quotes/demo-token',
+      quoteId: 'quote-1',
+    });
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) {
+      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+    }
+    provider.send.mockClear();
+
+    const result = await service.processDueCustomerCommunications(undefined, 1);
+
+    expect(result).toMatchObject({ claimed: 1, due: 1 });
+    expect(provider.send).toHaveBeenCalledTimes(1);
   });
 
   it('lists scheduled customer communications with business and customer scope', async () => {

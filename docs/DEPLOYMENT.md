@@ -132,9 +132,29 @@ API:
 - CORS_ORIGINS
 - APP_PUBLIC_URL
 - EMAIL_PROVIDER
+- CUSTOMER_COMMUNICATIONS_ENABLED
+- CUSTOMER_EMAIL_PROVIDER
+- CUSTOMER_SMS_PROVIDER
+- CUSTOMER_COMMUNICATION_WORKER_ENABLED
+- CUSTOMER_COMMUNICATION_WORKER_INTERVAL_SECONDS
+- CUSTOMER_COMMUNICATION_WORKER_BATCH_SIZE
 - EMAIL_FROM_NAME
 - EMAIL_FROM_ADDRESS
 - RESEND_API_KEY
+- TWILIO_ACCOUNT_SID
+- TWILIO_AUTH_TOKEN
+- TWILIO_MESSAGING_FROM
+- STORAGE_PROVIDER
+- STORAGE_LOCAL_PATH
+- S3_BUCKET
+- S3_REGION
+- S3_ENDPOINT
+- S3_ACCESS_KEY_ID
+- S3_SECRET_ACCESS_KEY
+- S3_FORCE_PATH_STYLE
+- S3_SIGNED_URL_TTL_SECONDS
+- AI_PROVIDER
+- OPENAI_API_KEY
 
 Mobile:
 
@@ -147,6 +167,66 @@ Invitation email defaults:
 - If Resend is selected but not fully configured, the API falls back to the console provider so local invitation creation does not fail during setup.
 - Set `APP_PUBLIC_URL` to the web/mobile URL used in invitation links, for example `http://localhost:8081` locally.
 
+Production fail-fast configuration:
+
+- `NODE_ENV=production` requires `DATABASE_URL`, a strong non-placeholder
+  `JWT_SECRET`, production `CORS_ORIGINS`, and an HTTPS `APP_PUBLIC_URL`.
+- `EMAIL_PROVIDER=resend`, `RESEND_API_KEY` and `EMAIL_FROM_ADDRESS` are
+  required in production so team invitations do not silently become local-only.
+- `CUSTOMER_EMAIL_PROVIDER=resend` and `CUSTOMER_SMS_PROVIDER=twilio` are
+  required in production when `CUSTOMER_COMMUNICATIONS_ENABLED` is not `false`.
+  Configure `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `TWILIO_ACCOUNT_SID`,
+  `TWILIO_AUTH_TOKEN` and `TWILIO_MESSAGING_FROM`.
+- `CUSTOMER_COMMUNICATION_WORKER_ENABLED=true` is required in production when
+  customer communications are enabled. Use
+  `CUSTOMER_COMMUNICATION_WORKER_INTERVAL_SECONDS=300` for the default 5-minute
+  cadence and `CUSTOMER_COMMUNICATION_WORKER_BATCH_SIZE=50` for the default
+  bounded batch.
+- `AI_PROVIDER=openai` requires `OPENAI_API_KEY`; leave `AI_PROVIDER=local` for
+  deterministic Tori behaviour.
+- `STORAGE_PROVIDER=s3` is required in production. Configure `S3_BUCKET`,
+  `S3_REGION`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. Set
+  `S3_ENDPOINT` and `S3_FORCE_PATH_STYLE=true` for Cloudflare R2, MinIO or other
+  compatible providers when required.
+- Do not include localhost, `127.0.0.1` or `0.0.0.0` in production CORS or
+  public URLs.
+
+Storage:
+
+- Local development can use `STORAGE_PROVIDER=local` and `STORAGE_LOCAL_PATH`.
+- Production must use a private S3-compatible bucket. Do not make the bucket
+  publicly readable.
+- Media previews/downloads use authenticated API authorization and short-lived
+  signed URLs.
+- Quote and invoice customer access remains controlled by secure public tokens;
+  PDF objects stay private in storage.
+- Object keys are tenant-scoped under `businesses/{businessId}/...`.
+
+Customer communications:
+
+- Local development can use `CUSTOMER_EMAIL_PROVIDER=local` and
+  `CUSTOMER_SMS_PROVIDER=local`; these log safe previews and do not contact real
+  providers.
+- Production customer email uses Resend.
+- Production customer SMS uses Twilio and accepts Australian mobile numbers in
+  common local or `+61` formats.
+- Provider message IDs are stored on `CustomerCommunication.providerMessageId`
+  with a safe `provider` name.
+- Provider failures are recorded as `FAILED`; raw credentials, Authorization
+  headers and full provider payloads must not be logged.
+- Scheduled reminders run through `CustomerCommunicationWorker` when
+  `CUSTOMER_COMMUNICATION_WORKER_ENABLED=true`. The worker invokes the same
+  communication delivery service used by manual/API flows, so EMAIL routes to
+  Resend and SMS routes to Twilio in production.
+- The worker is horizontally safe: due rows are atomically claimed as
+  `PROCESSING` with processing timestamps before provider delivery. Multiple API
+  replicas may tick at the same time without double-sending the same
+  communication.
+- The worker logs summary counters only: due, claimed, sent, failed, skipped and
+  duration. It does not log message bodies, provider credentials, JWTs or token
+  hashes.
+- Inbound SMS -> Tori is not implemented yet.
+
 ## Production requirements before launch
 
 - Strong JWT secret.
@@ -157,3 +237,6 @@ Invitation email defaults:
 - Integration credential encryption.
 - Production CORS allowlist.
 - Disable development-only demo-token endpoint.
+- Private durable object storage for photos, documents, quote PDFs, invoice PDFs
+  and receipt PDFs.
+- Rate limiting on auth, public-token and Tori endpoints.

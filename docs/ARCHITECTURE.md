@@ -102,18 +102,40 @@ Customer communications are implemented as a reusable domain owned by
 `CustomerCommunicationsModule`, not as ad hoc send logic inside appointments,
 quotes or invoices. Appointment, quote and invoice services call this module at
 their lifecycle boundaries; the module owns templates, channel selection,
-preferences, scheduling, idempotency and local-safe provider delivery.
+preferences, scheduling, idempotency and provider delivery.
 
-Phase 1 provider behaviour is development-safe. `CustomerCommunicationProvider`
-logs intended EMAIL/SMS delivery with recipient, type, subject, safe preview and
-entity reference, and never logs public-token hashes, auth headers, storage keys
-or internal audit metadata.
+`CustomerCommunicationProvider` routes EMAIL and SMS through configured channel
+providers:
 
-Scheduled reminders are persisted with `scheduledFor` and processed by
-`processDueCustomerCommunications()`. The service is safe to rerun because every
-record uses a deterministic idempotency key protected by a database unique
-constraint. Production can later invoke the same service from a cron/worker or
-queue consumer without redesigning the module.
+- Local development uses safe local providers that log recipient, type, subject,
+  safe preview and entity reference without logging public-token hashes, auth
+  headers, storage keys or internal audit metadata.
+- Production customer email uses Resend.
+- Production customer SMS uses Twilio, normalising Australian mobile numbers to
+  E.164 format before delivery.
+
+Provider success records `provider`, `providerMessageId`, `sentAt` and `SENT`.
+Provider failure records `provider`, `failedAt`, `failureReason` and `FAILED`.
+Failed provider calls are not silently marked as sent.
+
+Scheduled reminders are persisted with `scheduledFor` as absolute UTC
+timestamps and processed by `processDueCustomerCommunications()`. The production
+API registers `CustomerCommunicationWorker`, disabled by default and enabled
+with `CUSTOMER_COMMUNICATION_WORKER_ENABLED=true`. The worker runs on a bounded
+interval, defaults to every 5 minutes, and uses bounded batches.
+
+Horizontal safety is database-backed. Due records are atomically claimed by
+moving `SCHEDULED` to `PROCESSING` with `processingStartedAt` and
+`processingExpiresAt`; a second API replica or cron invocation cannot claim the
+same row once the first claim succeeds. Stale `PROCESSING` rows can be reclaimed
+after the processing lock expires. Before delivery, the service rechecks domain
+eligibility so cancelled appointments, accepted quotes and paid invoices do not
+send stale reminders. Provider success records `SENT`; provider failure records
+`FAILED` and the worker continues the batch.
+
+Inbound SMS -> Tori is intentionally not implemented yet. Twilio was selected
+for outbound SMS so a future inbound webhook can plug into the existing
+conversation engine without replacing the transport provider.
 
 Communication settings are business-scoped. Customer preferences are
 customer-scoped. API guards remain authoritative: UI hiding is convenience only.
@@ -136,8 +158,16 @@ Storage is abstracted behind `StorageProvider`:
 
 - `LocalDevelopmentStorageProvider` writes files to `STORAGE_LOCAL_PATH` and
   serves them through authenticated API routes.
-- `S3CompatibleStorageProvider` is the production adapter seam for AWS S3,
-  Cloudflare R2, MinIO or compatible object stores.
+- `S3CompatibleStorageProvider` stores private objects in AWS S3, Cloudflare
+  R2, MinIO or compatible object stores and returns short-lived signed URLs for
+  upload, preview and download operations.
+
+Object keys are tenant-prefixed and entity-scoped, for example
+`businesses/{businessId}/appointments/{appointmentId}/image/...`,
+`businesses/{businessId}/quotes/{quoteId}/pdf/...` and
+`businesses/{businessId}/invoices/{invoiceId}/pdf/...`. Buckets must remain
+private; customer quote/invoice access continues to be controlled by secure
+public tokens and API/domain checks, not by making the bucket public.
 
 Mobile screens consume the API through shared types and role-aware navigation:
 Job Details, Appointment Details, Customer Details and My Day can show or add

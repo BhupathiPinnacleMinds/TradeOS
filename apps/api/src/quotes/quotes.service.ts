@@ -1518,6 +1518,8 @@ export class QuotesService {
     });
     const objectKey = this.storage.createObjectKey({
       businessId: currentUser.businessId,
+      entityId: quote.id,
+      entityType: 'quotes',
       mediaType: 'PDF',
       originalFileName: generated.fileName,
     });
@@ -1768,6 +1770,7 @@ export class QuotesService {
 
   private publicQuoteUrl(token: string) {
     const base =
+      this.config.get<string>('APP_PUBLIC_URL') ??
       this.config.get<string>('PUBLIC_APP_URL') ??
       this.config.get<string>('EXPO_PUBLIC_APP_URL') ??
       'http://localhost:8081';

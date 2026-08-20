@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type {
   AppointmentTransitionAction,
@@ -199,8 +200,9 @@ describe('Health endpoint (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
+    const config = app.get(ConfigService);
     token = new JwtService({
-      secret: process.env.JWT_SECRET,
+      secret: config.getOrThrow<string>('JWT_SECRET'),
     }).sign({ businessId: 'business-1', sub: 'user-1' });
   });
 

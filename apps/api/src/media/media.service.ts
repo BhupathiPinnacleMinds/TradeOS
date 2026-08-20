@@ -75,6 +75,15 @@ export class MediaService {
 
     const objectKey = this.storage.createObjectKey({
       businessId: currentUser.businessId,
+      entityId:
+        context.appointmentId ?? context.jobId ?? context.customerId ?? null,
+      entityType: context.appointmentId
+        ? 'appointments'
+        : context.jobId
+          ? 'jobs'
+          : context.customerId
+            ? 'customers'
+            : 'media',
       mediaType: dto.mediaType,
       originalFileName: dto.originalFileName,
     });
@@ -127,12 +136,21 @@ export class MediaService {
       return created;
     });
 
-    const upload = await this.storage.createUploadTarget({
-      fileSizeBytes: dto.fileSizeBytes,
-      mediaId: media.id,
-      mimeType: dto.mimeType,
-      objectKey,
-    });
+    const upload = await this.storage
+      .createUploadTarget({
+        fileSizeBytes: dto.fileSizeBytes,
+        mediaId: media.id,
+        mimeType: dto.mimeType,
+        objectKey,
+      })
+      .catch(async (error: unknown) => {
+        await this.markFailed(currentUser, media, this.storageFailure(error));
+        throw this.domainError(
+          'STORAGE_UNAVAILABLE',
+          "We couldn't prepare storage for this upload. Please try again.",
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      });
 
     return { media: this.toMedia(media), upload };
   }
@@ -157,11 +175,20 @@ export class MediaService {
         'Uploaded file size does not match the requested upload target.',
       );
     }
-    await this.storage.uploadFile({
-      content,
-      mimeType: media.mimeType,
-      objectKey: media.objectKey,
-    });
+    await this.storage
+      .uploadFile({
+        content,
+        mimeType: media.mimeType,
+        objectKey: media.objectKey,
+      })
+      .catch(async (error: unknown) => {
+        await this.markFailed(currentUser, media, this.storageFailure(error));
+        throw this.domainError(
+          'STORAGE_UNAVAILABLE',
+          "We couldn't upload this file. Please try again.",
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      });
     return this.complete(currentUser, id, { checksum: dto.checksum });
   }
 
@@ -207,11 +234,20 @@ export class MediaService {
         'This file type is not supported yet.',
       );
     }
-    await this.storage.uploadFile({
-      content: file.buffer,
-      mimeType: media.mimeType,
-      objectKey: media.objectKey,
-    });
+    await this.storage
+      .uploadFile({
+        content: file.buffer,
+        mimeType: media.mimeType,
+        objectKey: media.objectKey,
+      })
+      .catch(async (error: unknown) => {
+        await this.markFailed(currentUser, media, this.storageFailure(error));
+        throw this.domainError(
+          'STORAGE_UNAVAILABLE',
+          "We couldn't upload this file. Please try again.",
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      });
     return this.complete(currentUser, id, {});
   }
 
@@ -989,6 +1025,10 @@ export class MediaService {
       include: this.mediaInclude(),
     });
     await this.log(currentUser, failed, 'MEDIA_UPLOAD_FAILED', { reason });
+  }
+
+  private storageFailure(error: unknown) {
+    return error instanceof Error ? error.message : 'Storage operation failed.';
   }
 
   private async log(

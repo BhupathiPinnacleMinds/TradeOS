@@ -141,6 +141,7 @@ describe('quotes route contract', () => {
     expect(service).toContain('QUOTE_EMAIL_REQUIRED');
     expect(service).toContain('QUOTE_PUBLIC_TOKEN_INVALID');
     expect(service).toContain('QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED');
+    expect(service).toContain("this.config.get<string>('APP_PUBLIC_URL')");
   });
 
   it('keeps quote PDF opening authenticated and document-driven in mobile', () => {

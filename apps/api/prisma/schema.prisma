@@ -182,6 +182,7 @@ enum CustomerCommunicationChannel {
 enum CustomerCommunicationStatus {
   DRAFT
   SCHEDULED
+  PROCESSING
   SENT
   FAILED
   CANCELLED
@@ -1087,9 +1088,13 @@ model CustomerCommunication {
   relatedPaymentId     String?
   idempotencyKey       String
   scheduledFor         DateTime?
+  processingStartedAt  DateTime?
+  processingExpiresAt  DateTime?
   sentAt               DateTime?
   failedAt             DateTime?
   failureReason        String?
+  provider             String?
+  providerMessageId    String?
   cancelledAt          DateTime?
   createdBy            String?
   createdAt            DateTime                     @default(now())
@@ -1106,10 +1111,12 @@ model CustomerCommunication {
   @@unique([businessId, idempotencyKey])
   @@index([businessId, customerId, createdAt])
   @@index([businessId, status, scheduledFor])
+  @@index([businessId, status, processingExpiresAt])
   @@index([businessId, relatedAppointmentId])
   @@index([businessId, relatedQuoteId])
   @@index([businessId, relatedInvoiceId])
   @@index([businessId, relatedPaymentId])
+  @@index([businessId, provider, providerMessageId])
 }
 
 model Message {

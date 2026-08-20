@@ -262,6 +262,30 @@ describe('MediaService', () => {
     ).rejects.toBeInstanceOf(HttpException);
   });
 
+  it('returns a controlled error when storage cannot prepare an upload target', async () => {
+    const { prisma, service, storage } = createHarness();
+    (storage.createUploadTarget as jest.Mock).mockRejectedValueOnce(
+      new Error('S3 unavailable'),
+    );
+
+    await expect(
+      service.createUploadTarget(owner, {
+        customerId: 'customer-1',
+        category: 'GENERAL_DOCUMENT',
+        fileSizeBytes: 4,
+        mediaType: 'PDF',
+        mimeType: 'application/pdf',
+        originalFileName: 'scope.pdf',
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'STORAGE_UNAVAILABLE' }),
+      status: 503,
+    });
+    expect(prisma.mediaAsset.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { uploadStatus: 'FAILED' } }),
+    );
+  });
+
   it('returns an authorised file endpoint without exposing object keys', async () => {
     const { prisma, service } = createHarness();
     prisma.mediaAsset.findFirst.mockResolvedValue(

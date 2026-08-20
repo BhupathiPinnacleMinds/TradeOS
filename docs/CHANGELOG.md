@@ -4,6 +4,26 @@
 
 ### Added
 
+- Implemented durable S3-compatible storage for production media, quote PDFs,
+  invoice PDFs and receipt PDFs through the existing `StorageProvider`
+  abstraction, with tenant-scoped object keys and private signed URL access for
+  AWS S3, Cloudflare R2, MinIO or compatible providers.
+- Implemented real customer outbound EMAIL/SMS delivery providers behind the
+  existing `CustomerCommunicationProvider` abstraction. Customer email now
+  supports Resend, customer SMS supports Twilio with Australian mobile
+  normalisation, provider message IDs are persisted and failed provider calls
+  remain `FAILED` instead of being marked sent.
+- Added the production scheduled customer communications worker. Due reminders
+  are now processed automatically when explicitly enabled, with bounded batches,
+  summary-only logs, stale-domain eligibility checks and atomic
+  `SCHEDULED -> PROCESSING` database claims to prevent duplicate sends across
+  overlapping workers/API replicas.
+- Added the Phase 1 production-readiness audit covering deployment blockers,
+  beta risks, security, tenancy, storage, communications, scheduler, Tori and
+  mobile production configuration.
+- Added fail-fast production API configuration validation for strong secrets,
+  public HTTPS URLs, CORS origins, real invitation email delivery configuration
+  and optional OpenAI provider credentials.
 - Added Tori AI Workflow Assistant Phase 1 with server-side Tori API routes,
   local deterministic provider mode, operational snapshot cards, targeted
   tenant-scoped read tools, mobile chat UI and explicit confirmation Action
@@ -76,6 +96,9 @@
 
 ### Fixed
 
+- Fixed generated public quote and invoice links to prefer `APP_PUBLIC_URL`, so
+  customer-facing URLs use the documented production app host instead of
+  development fallbacks.
 - Fixed Quote -> Job -> Invoice commercial-data inheritance. Creating an invoice
   from a converted quote job now loads the accepted/converted source quote's
   decimal line items, material lines, GST pricing mode and discount settings as

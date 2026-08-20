@@ -1333,6 +1333,8 @@ export class InvoicesService {
     });
     const objectKey = this.storage.createObjectKey({
       businessId: currentUser.businessId,
+      entityId: invoice.id,
+      entityType: 'invoices',
       mediaType: 'PDF',
       originalFileName: generated.fileName,
     });
@@ -1421,6 +1423,8 @@ export class InvoicesService {
     });
     const objectKey = this.storage.createObjectKey({
       businessId: currentUser.businessId,
+      entityId: payment.id,
+      entityType: 'payments',
       mediaType: 'PDF',
       originalFileName: generated.fileName,
     });
@@ -1895,6 +1899,7 @@ export class InvoicesService {
 
   private publicInvoiceUrl(token: string) {
     const base =
+      this.config.get<string>('APP_PUBLIC_URL') ??
       this.config.get<string>('PUBLIC_APP_URL') ??
       this.config.get<string>('EXPO_PUBLIC_APP_URL') ??
       'http://localhost:8081';
