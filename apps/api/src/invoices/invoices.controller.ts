@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -11,6 +12,7 @@ import {
 import type { Response } from 'express';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import {
   AccountsReceivableQueryDto,
   InvoiceDraftQueryDto,
@@ -23,7 +25,10 @@ import { InvoicesService } from './invoices.service';
 
 @Controller('invoices')
 export class InvoicesController {
-  constructor(private readonly invoices: InvoicesService) {}
+  constructor(
+    private readonly invoices: InvoicesService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get()
   findAll(
@@ -53,8 +58,18 @@ export class InvoicesController {
   create(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: UpsertInvoiceDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.invoices.create(currentUser, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.create',
+        request: dto,
+        userId: currentUser.id,
+      },
+      () => this.invoices.create(currentUser, dto),
+    );
   }
 
   @Get(':id')
@@ -79,8 +94,18 @@ export class InvoicesController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto?: SendInvoiceDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.invoices.send(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.send',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.invoices.send(currentUser, id, dto),
+    );
   }
 
   @Post(':id/payments')
@@ -88,8 +113,18 @@ export class InvoicesController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: RecordInvoicePaymentDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.invoices.recordPayment(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.recordPayment',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.invoices.recordPayment(currentUser, id, dto),
+    );
   }
 
   @Get(':id/payments/:paymentId/receipt')
@@ -109,8 +144,21 @@ export class InvoicesController {
   }
 
   @Post(':id/void')
-  void(@CurrentUser() currentUser: AuthenticatedUser, @Param('id') id: string) {
-    return this.invoices.void(currentUser, id);
+  void(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.void',
+        request: { id },
+        userId: currentUser.id,
+      },
+      () => this.invoices.void(currentUser, id),
+    );
   }
 
   @Get(':id/pdf')

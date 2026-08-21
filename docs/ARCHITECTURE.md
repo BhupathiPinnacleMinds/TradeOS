@@ -34,6 +34,11 @@ Confirmed actions reuse existing domain services instead of duplicating
 business logic. Reschedule/reassign/cancel use `AppointmentsService`, quote
 draft creation uses `QuotesService`, invoice draft creation uses
 `InvoicesService`, and message drafts use `CustomerCommunicationsService`.
+Tori action confirmation is protected by durable idempotency. The API uses the
+confirmed draft id as a fallback idempotency key and still honours a supplied
+`Idempotency-Key` header. Re-confirming the same draft/operation/payload after
+an API restart returns the original successful response instead of executing the
+mutation again.
 
 Appointment action drafts include the target appointment `updatedAt` timestamp.
 Confirmation reloads the appointment and rejects stale drafts before mutation.
@@ -139,6 +144,80 @@ conversation engine without replacing the transport provider.
 
 Communication settings are business-scoped. Customer preferences are
 customer-scoped. API guards remain authoritative: UI hiding is convenience only.
+
+## API rate limiting and abuse protection
+
+TradieOS uses a global Nest guard for production API abuse protection. The
+guard runs after JWT authentication, so authenticated requests are bucketed by
+`businessId` and user id; public requests are bucketed by source IP and policy.
+Auth routes also include a hashed email/account hint when present so login
+brute-force attempts are limited without revealing whether the account exists.
+
+Rate-limit policies are metadata-driven:
+
+- `global` for ordinary authenticated API traffic.
+- `auth` for login, registration, demo-token and invitation acceptance flows.
+- `publicRead` for public invitation, quote and invoice preview routes.
+- `publicMutation` for customer-facing public quote/invoice mutations and
+  manual communication sends.
+- `toriChat` for Tori summary/chat traffic.
+- `toriAction` for Tori action confirmation.
+- `media` for authenticated media upload, preview and download APIs.
+- `internal` for authorised manual processor endpoints such as
+  communications `process-due`.
+
+The limiter returns HTTP `429` with `RATE_LIMIT_EXCEEDED`, a friendly message
+and a `Retry-After` header. Safe logs include the policy, route pattern and a
+short identity hash only; raw JWTs, public tokens, passwords, Tori messages and
+provider secrets must never be logged.
+
+Client IP handling is conservative. Direct clients use the socket remote
+address and arbitrary `X-Forwarded-For` headers are ignored. Deployments behind
+a trusted reverse proxy or load balancer must explicitly set `TRUST_PROXY=true`,
+which enables a single trusted proxy hop in Express and allows the limiter to
+use the forwarded client IP.
+
+The first beta implementation stores buckets in process memory. This is
+adequate only for an intentionally single-instance API deployment. Multiple API
+replicas would each have independent counters, so a shared limiter store such
+as Redis or a managed gateway limit should be added before horizontal API scale.
+
+## Idempotency and double-submit protection
+
+High-risk mutations are protected by `IdempotencyModule`. Controllers stay thin:
+they derive the authenticated `businessId`/user id or a hash-only public scope,
+name the operation, pass the request payload and delegate the actual mutation to
+the existing domain service.
+
+```text
+Mobile/Public/Tori client
+  -> Idempotency-Key header or durable route fallback
+  -> IdempotencyService claim/replay/conflict check
+  -> existing Quotes / Invoices / Appointments / Communications / Tori service
+```
+
+The `IdempotencyRecord` table stores:
+
+- hashed key
+- operation name
+- authenticated business/user scope or hashed public scope
+- request hash
+- status (`IN_PROGRESS`, `SUCCESS`, `FAILED`)
+- cached successful JSON response
+- completion and expiry timestamps
+
+Same key + same scope + same operation + same request returns the original
+successful response. Same key + different request returns
+`IDEMPOTENCY_KEY_REUSED`. Concurrent duplicates rely on the database unique
+constraint to claim one executor; other callers wait briefly and replay the
+successful result when the first request completes.
+
+Public customer routes never store raw public tokens as idempotency scope.
+Public quote accept/decline uses a hashed public scope and fallback action key
+so customer double taps are protected even when the public client does not send
+its own header. Manual communications and financial mutations should always
+reuse one stable client key for retries to avoid duplicate provider sends,
+payments, invoices or quotes.
 
 ## Media & document management
 
@@ -361,8 +440,9 @@ Core business lifecycle:
   must all render API-calculated totals.
 - Mutation screens should refresh their current record after successful writes
   and on focus where stale data is likely. Duplicate taps must be blocked in the
-  UI, and backend services remain the source of truth for idempotent or rejected
-  repeated transitions.
+  UI, high-risk client calls must send a stable `Idempotency-Key`, and backend
+  services remain the source of truth for idempotent or rejected repeated
+  transitions.
 
 Dispatcher navigation:
 

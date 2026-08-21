@@ -20,6 +20,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { RateLimitPolicy } from '../rate-limit/rate-limit.decorator';
 import {
   CompleteUploadDto,
   CreateUploadTargetDto,
@@ -88,6 +89,7 @@ class MediaUploadExceptionFilter implements ExceptionFilter {
 }
 
 @Controller('media')
+@RateLimitPolicy('media')
 export class MediaController {
   constructor(private readonly media: MediaService) {}
 

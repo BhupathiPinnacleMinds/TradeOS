@@ -125,6 +125,46 @@ export function buildAuthenticatedHeaders(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+export function createIdempotencyKey(operation: string) {
+  const cryptoApi = globalThis.crypto as
+    { randomUUID?: () => string } | undefined;
+  const random =
+    typeof cryptoApi?.randomUUID === 'function'
+      ? cryptoApi.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${operation}:${random}`;
+}
+
+const activeIdempotencyKeys = new Map<string, string>();
+
+function defaultIdempotencyKey(operation: string, fingerprint = '') {
+  const cacheKey = `${operation}:${fingerprint}`;
+  const existing = activeIdempotencyKeys.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const key = createIdempotencyKey(operation);
+  activeIdempotencyKeys.set(cacheKey, key);
+  setTimeout(() => {
+    if (activeIdempotencyKeys.get(cacheKey) === key) {
+      activeIdempotencyKeys.delete(cacheKey);
+    }
+  }, 120_000);
+  return key;
+}
+
+function idempotencyHeaders(
+  operation: string,
+  idempotencyKey?: string,
+  fingerprint?: string,
+) {
+  return {
+    'Idempotency-Key':
+      idempotencyKey ?? defaultIdempotencyKey(operation, fingerprint),
+  };
+}
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,
@@ -304,7 +344,10 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    let message = `Request failed with ${response.status}`;
+    let message =
+      response.status === 429
+        ? 'Too many requests. Please try again shortly.'
+        : `Request failed with ${response.status}`;
     let code = statusCodeToErrorCode(response.status);
     let details: Record<string, unknown> = {};
 
@@ -346,7 +389,7 @@ function statusCodeToErrorCode(status: number) {
   if (status === 404) return 'NOT_FOUND';
   if (status === 409) return 'CONFLICT';
   if (status === 413) return 'FILE_TOO_LARGE';
-  if (status === 429) return 'TOO_MANY_REQUESTS';
+  if (status === 429) return 'RATE_LIMIT_EXCEEDED';
   if (status >= 500) return 'SERVICE_UNAVAILABLE';
   return 'REQUEST_FAILED';
 }
@@ -534,11 +577,17 @@ export function sendManualCustomerCommunicationRequest(
     subject?: string;
     message: string;
   },
+  idempotencyKey?: string,
 ) {
   return apiRequest<{
     communication: CustomerCommunicationListResponse['records'][number];
   }>('/communications/manual', {
     body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'communications-manual',
+      idempotencyKey,
+      JSON.stringify(input),
+    ),
     method: 'POST',
     token,
   });
@@ -754,9 +803,18 @@ export function quoteDetailRequest(token: string, quoteId: string) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}`, { token });
 }
 
-export function createQuoteRequest(token: string, input: QuotePayload) {
+export function createQuoteRequest(
+  token: string,
+  input: QuotePayload,
+  idempotencyKey?: string,
+) {
   return apiRequest<QuoteDetailResponse>('/quotes', {
     body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'quote-create',
+      idempotencyKey,
+      JSON.stringify(input),
+    ),
     method: 'POST',
     token,
   });
@@ -782,9 +840,15 @@ export function sendQuoteRequest(
   token: string,
   quoteId: string,
   input?: { message: string; subject: string; to: string },
+  idempotencyKey?: string,
 ) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/send`, {
     body: input ? JSON.stringify(input) : undefined,
+    headers: idempotencyHeaders(
+      'quote-send',
+      idempotencyKey,
+      `${quoteId}:${JSON.stringify(input ?? null)}`,
+    ),
     method: 'POST',
     token,
   });
@@ -804,11 +868,17 @@ export function publicQuoteAcceptRequest(
     acceptedTerms: boolean;
     note?: string;
   },
+  idempotencyKey?: string,
 ) {
   return apiRequest<PublicQuoteResponse>(
     `/public/quotes/${encodeURIComponent(publicToken)}/accept`,
     {
       body: JSON.stringify(input),
+      headers: idempotencyHeaders(
+        'public-quote-accept',
+        idempotencyKey,
+        `${publicToken}:${JSON.stringify(input)}`,
+      ),
       method: 'POST',
     },
   );
@@ -820,11 +890,17 @@ export function publicQuoteDeclineRequest(
     comment?: string;
     reason?: 'PRICE' | 'TIMING' | 'SCOPE' | 'OTHER_PROVIDER' | 'OTHER';
   },
+  idempotencyKey?: string,
 ) {
   return apiRequest<PublicQuoteResponse>(
     `/public/quotes/${encodeURIComponent(publicToken)}/decline`,
     {
       body: JSON.stringify(input),
+      headers: idempotencyHeaders(
+        'public-quote-decline',
+        idempotencyKey,
+        `${publicToken}:${JSON.stringify(input)}`,
+      ),
       method: 'POST',
     },
   );
@@ -835,9 +911,15 @@ export function acceptQuoteRequest(
   quoteId: string,
   acceptedByName: string,
   acceptedByEmail?: string,
+  idempotencyKey?: string,
 ) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/accept`, {
     body: JSON.stringify({ acceptedByEmail, acceptedByName }),
+    headers: idempotencyHeaders(
+      'quote-accept',
+      idempotencyKey,
+      `${quoteId}:${acceptedByName}:${acceptedByEmail ?? ''}`,
+    ),
     method: 'POST',
     token,
   });
@@ -847,9 +929,15 @@ export function declineQuoteRequest(
   token: string,
   quoteId: string,
   reason?: string,
+  idempotencyKey?: string,
 ) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/decline`, {
     body: JSON.stringify({ reason }),
+    headers: idempotencyHeaders(
+      'quote-decline',
+      idempotencyKey,
+      `${quoteId}:${reason ?? ''}`,
+    ),
     method: 'POST',
     token,
   });
@@ -867,17 +955,31 @@ export function cancelQuoteRequest(
   });
 }
 
-export function convertQuoteToJobRequest(token: string, quoteId: string) {
+export function convertQuoteToJobRequest(
+  token: string,
+  quoteId: string,
+  idempotencyKey?: string,
+) {
   return apiRequest<
     QuoteDetailResponse & { jobId: string; nextAction: string }
   >(`/quotes/${quoteId}/convert-to-job`, {
+    headers: idempotencyHeaders(
+      'quote-convert-to-job',
+      idempotencyKey,
+      quoteId,
+    ),
     method: 'POST',
     token,
   });
 }
 
-export function duplicateQuoteRequest(token: string, quoteId: string) {
+export function duplicateQuoteRequest(
+  token: string,
+  quoteId: string,
+  idempotencyKey?: string,
+) {
   return apiRequest<QuoteDetailResponse>(`/quotes/${quoteId}/duplicate`, {
+    headers: idempotencyHeaders('quote-duplicate', idempotencyKey, quoteId),
     method: 'POST',
     token,
   });
@@ -922,9 +1024,18 @@ export function invoiceDraftRequest(
   );
 }
 
-export function createInvoiceRequest(token: string, input: InvoicePayload) {
+export function createInvoiceRequest(
+  token: string,
+  input: InvoicePayload,
+  idempotencyKey?: string,
+) {
   return apiRequest<InvoiceDetailResponse>('/invoices', {
     body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'invoice-create',
+      idempotencyKey,
+      JSON.stringify(input),
+    ),
     method: 'POST',
     token,
   });
@@ -956,9 +1067,15 @@ export function sendInvoiceRequest(
   token: string,
   invoiceId: string,
   input?: { message: string; subject: string; to: string },
+  idempotencyKey?: string,
 ) {
   return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/send`, {
     body: input ? JSON.stringify(input) : undefined,
+    headers: idempotencyHeaders(
+      'invoice-send',
+      idempotencyKey,
+      `${invoiceId}:${JSON.stringify(input ?? null)}`,
+    ),
     method: 'POST',
     token,
   });
@@ -974,16 +1091,27 @@ export function recordInvoicePaymentRequest(
     receivedAt: string;
     reference?: string;
   },
+  idempotencyKey?: string,
 ) {
   return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/payments`, {
     body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'invoice-record-payment',
+      idempotencyKey,
+      `${invoiceId}:${JSON.stringify(input)}`,
+    ),
     method: 'POST',
     token,
   });
 }
 
-export function voidInvoiceRequest(token: string, invoiceId: string) {
+export function voidInvoiceRequest(
+  token: string,
+  invoiceId: string,
+  idempotencyKey?: string,
+) {
   return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/void`, {
+    headers: idempotencyHeaders('invoice-void', idempotencyKey, invoiceId),
     method: 'POST',
     token,
   });
@@ -1040,9 +1168,15 @@ export function appointmentDetailRequest(token: string, appointmentId: string) {
 export function createAppointmentRequest(
   token: string,
   input: AppointmentPayload,
+  idempotencyKey?: string,
 ) {
   return apiRequest<AppointmentDetailResponse>('/appointments', {
     body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'appointment-create',
+      idempotencyKey,
+      JSON.stringify(input),
+    ),
     method: 'POST',
     token,
   });
@@ -1077,11 +1211,17 @@ export function reassignAppointmentRequest(
   token: string,
   appointmentId: string,
   input: AppointmentReassignmentPayload,
+  idempotencyKey?: string,
 ) {
   return apiRequest<AppointmentDetailResponse>(
     `/appointments/${appointmentId}/reassign`,
     {
       body: JSON.stringify(input),
+      headers: idempotencyHeaders(
+        'appointment-reassign',
+        idempotencyKey,
+        `${appointmentId}:${JSON.stringify(input)}`,
+      ),
       method: 'PATCH',
       token,
     },
@@ -1121,11 +1261,17 @@ export function transitionAppointmentRequest(
   appointmentId: string,
   action: AppointmentTransitionAction,
   input?: CompleteAppointmentPayload,
+  idempotencyKey?: string,
 ) {
   return apiRequest<AppointmentDetailResponse>(
     buildAppointmentTransitionPath(appointmentId, action),
     {
       body: input ? JSON.stringify(input) : undefined,
+      headers: idempotencyHeaders(
+        `appointment-transition-${action}`,
+        idempotencyKey,
+        `${appointmentId}:${JSON.stringify(input ?? null)}`,
+      ),
       method: 'POST',
       token,
     },
@@ -1210,11 +1356,17 @@ export function confirmToriActionRequest(
   token: string,
   draftId: string,
   input: ConfirmToriActionRequest,
+  idempotencyKey?: string,
 ) {
   return apiRequest<ToriActionConfirmResponse>(
     `/ai/tori/actions/${draftId}/confirm`,
     {
       body: JSON.stringify(input),
+      headers: idempotencyHeaders(
+        `tori-confirm-${draftId}`,
+        idempotencyKey,
+        JSON.stringify(input),
+      ),
       method: 'POST',
       token,
     },
@@ -1281,9 +1433,11 @@ export async function uploadLocalMediaFileRequest(
 
   if (!response.ok) {
     let message =
-      response.status === 413
-        ? 'This file could not be uploaded. It may exceed the allowed size.'
-        : `Request failed with ${response.status}`;
+      response.status === 429
+        ? 'Too many requests. Please try again shortly.'
+        : response.status === 413
+          ? 'This file could not be uploaded. It may exceed the allowed size.'
+          : `Request failed with ${response.status}`;
     let code = statusCodeToErrorCode(response.status);
     let details: Record<string, unknown> = {};
 

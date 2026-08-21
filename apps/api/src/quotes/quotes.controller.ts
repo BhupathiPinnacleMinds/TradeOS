@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -12,6 +13,7 @@ import {
 import type { Response } from 'express';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import {
   ListQuotesQueryDto,
   QuoteAcceptanceDto,
@@ -25,7 +27,10 @@ import { QuotesService } from './quotes.service';
 
 @Controller('quotes')
 export class QuotesController {
-  constructor(private readonly quotes: QuotesService) {}
+  constructor(
+    private readonly quotes: QuotesService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get()
   findAll(
@@ -39,8 +44,18 @@ export class QuotesController {
   create(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: UpsertQuoteDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.create(currentUser, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.create',
+        request: dto,
+        userId: currentUser.id,
+      },
+      () => this.quotes.create(currentUser, dto),
+    );
   }
 
   @Get(':id')
@@ -102,8 +117,18 @@ export class QuotesController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto?: SendQuoteDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.send(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.send',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.quotes.send(currentUser, id, dto),
+    );
   }
 
   @Post(':id/revise')
@@ -120,8 +145,18 @@ export class QuotesController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: QuoteAcceptanceDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.accept(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.accept',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.quotes.accept(currentUser, id, dto),
+    );
   }
 
   @Post(':id/decline')
@@ -129,8 +164,18 @@ export class QuotesController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: QuoteReasonDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.decline(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.decline',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.quotes.decline(currentUser, id, dto),
+    );
   }
 
   @Post(':id/cancel')
@@ -146,8 +191,18 @@ export class QuotesController {
   convertToJob(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.convertToJob(currentUser, id);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.convertToJob',
+        request: { id },
+        userId: currentUser.id,
+      },
+      () => this.quotes.convertToJob(currentUser, id),
+    );
   }
 
   @Get(':id/preview')
@@ -177,7 +232,17 @@ export class QuotesController {
   duplicate(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.quotes.duplicate(currentUser, id);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'quote.duplicate',
+        request: { id },
+        userId: currentUser.id,
+      },
+      () => this.quotes.duplicate(currentUser, id),
+    );
   }
 }

@@ -8,6 +8,58 @@ TradieOS uses a REST API built with NestJS. API routes are prefixed with:
 /api
 ```
 
+## Idempotency
+
+High-risk mutating endpoints accept the standard `Idempotency-Key` header.
+Clients should generate one stable key per user action and reuse that same key
+for retries of the same request.
+
+Protected behaviour:
+
+- same key + same authenticated business/user + same operation + same payload
+  returns the original successful JSON response;
+- same key + same operation + different payload returns `409
+IDEMPOTENCY_KEY_REUSED`;
+- an original request that is still processing returns the successful response
+  after it completes, or `409 IDEMPOTENCY_REQUEST_IN_PROGRESS` if it remains
+  active too long;
+- production rejects protected authenticated mutations without an idempotency
+  key unless the route has a durable fallback key.
+
+Protected routes include:
+
+```http
+POST /api/quotes
+POST /api/quotes/:id/send
+POST /api/quotes/:id/accept
+POST /api/quotes/:id/decline
+POST /api/quotes/:id/convert-to-job
+POST /api/quotes/:id/duplicate
+POST /api/public/quotes/:token/accept
+POST /api/public/quotes/:token/decline
+POST /api/invoices
+POST /api/invoices/:id/send
+POST /api/invoices/:id/payments
+POST /api/invoices/:id/void
+POST /api/appointments
+PATCH /api/appointments/:id/reassign
+POST /api/appointments/:id/confirm
+POST /api/appointments/:id/start-travel
+POST /api/appointments/:id/arrive
+POST /api/appointments/:id/start
+POST /api/appointments/:id/pause
+POST /api/appointments/:id/resume
+POST /api/appointments/:id/complete
+POST /api/appointments/:id/cancel
+POST /api/communications/manual
+POST /api/ai/tori/actions/:draftId/confirm
+```
+
+Public quote accept/decline and Tori confirmation also use durable fallback
+keys so customer double taps and repeated draft confirmations remain protected
+even when a public or future channel client omits the header. Raw public tokens
+and raw idempotency keys are never stored; only hashes are persisted.
+
 ## Current implemented endpoints
 
 ### Tori AI Workflow Assistant

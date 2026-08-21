@@ -9,6 +9,7 @@ import { CustomerCommunicationsModule } from './communications/communications.mo
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DocumentsModule } from './documents/documents.module';
 import { HealthModule } from './health/health.module';
+import { IdempotencyModule } from './idempotency/idempotency.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -31,6 +32,7 @@ import { validateEnvironment } from './config/app-config';
       validate: validateEnvironment,
     }),
     PrismaModule,
+    IdempotencyModule,
     AuthModule,
     HealthModule,
     BusinessesModule,

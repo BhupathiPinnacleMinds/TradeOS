@@ -9,8 +9,13 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 ## P0 blockers before production
 
 - Production configuration must fail fast. `NODE_ENV=production` now requires a strong `JWT_SECRET`, `DATABASE_URL`, strict `CORS_ORIGINS`, a public HTTPS app URL and a real invitation email provider.
-- Public mutation/read endpoints need production rate limiting. This includes login/register, invitation validation/acceptance, public quote view/accept/decline, public invoice view and Tori chat/confirmation.
-- Idempotency needs to be completed for high-risk financial and customer-facing actions such as payment recording, quote-to-job conversion, customer-message sends and Tori confirmations across API restarts.
+- Public mutation/read endpoints now have production rate limiting. This
+  includes login/register, invitation validation/acceptance, public quote
+  view/accept/decline, public invoice view and Tori chat/confirmation.
+- Durable idempotency is implemented for high-risk financial, public and Tori
+  mutations. Protected routes persist request hashes and successful responses in
+  `IdempotencyRecord`, scoped by business/user/operation/key or hashed public
+  scope/operation/key. Production config requires idempotency to stay enabled.
 
 ## P1 issues before beta
 
@@ -38,7 +43,17 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - JWT authentication and service-level role checks are present across the app. UI hiding is treated as convenience; API guards/services remain the authority.
 - Public quote/invoice links use random tokens and store only token hashes in the database.
 - Invitation tokens are hashed and single-use with expiry/cancel/accept fields.
-- Production gaps: global rate limiting, account recovery, token/session revocation, request auditing for all sensitive financial mutations and secret-management runbook.
+- Production gaps: account recovery, token/session revocation, request auditing
+  for all sensitive financial mutations and secret-management runbook.
+- Global and endpoint-specific API rate limiting is implemented with structured
+  `429 RATE_LIMIT_EXCEEDED` responses, `Retry-After`, authenticated
+  user/business buckets, public IP buckets and explicit trusted-proxy handling.
+  The current store is in-memory per API process and is suitable only for a
+  single-instance private beta.
+- High-risk double-submit protection uses hash-only idempotency records.
+  Reusing the same `Idempotency-Key` with the same operation and payload replays
+  the original successful response; reusing it with a different payload returns
+  `409 IDEMPOTENCY_KEY_REUSED`.
 
 ## Multi-tenant findings
 
@@ -52,6 +67,10 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - Prisma is the source of truth, with committed migrations for the current schema.
 - Business-level sequences exist for human-readable numbers.
 - Public tokens, communication idempotency keys and core entity identifiers have useful indexes/unique constraints.
+- Generic idempotency records are stored in `IdempotencyRecord` with hashed
+  keys, hashed public scopes, request hashes, operation names, status, cached
+  successful JSON responses and expiry timestamps. Raw customer tokens and raw
+  `Idempotency-Key` header values are not stored.
 - Before production, run the current migrations against staging from a clean database and from a backup restore to prove both paths.
 - Do not use local seed/reset commands in production.
 
@@ -60,7 +79,11 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - Tori’s Phase 1 behaviour remains confirmation-first: it can prepare drafts and recommendations, but user confirmation is required before creating customers, jobs, appointments, quotes, invoices or communications.
 - Recent hardening prevents stale workflows from overriding strong new root commands and preserves explicit current-turn entities.
 - Tori currently uses local/deterministic logic unless `AI_PROVIDER=openai` is intentionally configured.
-- Production requirements: keep `TORI_DEBUG` disabled by default, rate-limit chat and confirm endpoints, add persistent idempotency for confirmations and verify OpenAI key handling before enabling the OpenAI provider.
+- Production requirements: keep `TORI_DEBUG` disabled by default and verify
+  OpenAI key handling before enabling the OpenAI provider. Tori confirmations
+  are now protected by durable idempotency keyed by the confirmed draft id plus
+  any supplied `Idempotency-Key`; Tori chat and confirm endpoints are also
+  protected by dedicated API rate-limit policies.
 
 ## Mobile production configuration findings
 
@@ -136,6 +159,20 @@ API:
 - `DATABASE_URL`
 - `JWT_SECRET` with at least 32 non-placeholder characters
 - `CORS_ORIGINS` with deployed HTTPS origins only
+- `TRUST_PROXY=true` only behind a trusted reverse proxy/load balancer
+- `RATE_LIMIT_ENABLED=true`
+- `RATE_LIMIT_WINDOW_SECONDS=60`
+- `RATE_LIMIT_MAX_REQUESTS=120`
+- `RATE_LIMIT_AUTH_MAX_REQUESTS=10`
+- `RATE_LIMIT_PUBLIC_READ_MAX_REQUESTS=60`
+- `RATE_LIMIT_PUBLIC_MUTATION_MAX_REQUESTS=10`
+- `RATE_LIMIT_TORI_CHAT_MAX_REQUESTS=60`
+- `RATE_LIMIT_TORI_ACTION_MAX_REQUESTS=20`
+- `RATE_LIMIT_MEDIA_MAX_REQUESTS=120`
+- `RATE_LIMIT_INTERNAL_MAX_REQUESTS=10`
+- `IDEMPOTENCY_ENABLED=true`
+- `IDEMPOTENCY_IN_PROGRESS_TTL_SECONDS=120`
+- `IDEMPOTENCY_RETENTION_HOURS=48`
 - `APP_PUBLIC_URL` with the customer-facing HTTPS app URL
 - `EMAIL_PROVIDER=resend`
 - `CUSTOMER_COMMUNICATIONS_ENABLED=true`
@@ -169,10 +206,8 @@ Mobile:
 
 Implement the next production readiness slice:
 
-1. Add global rate limiting and idempotency keys for public and financial
-   mutations.
-2. Provision a staging S3/R2 bucket and run the storage smoke test with real
+1. Provision a staging S3/R2 bucket and run the storage smoke test with real
    credentials held outside the repository.
-3. Run Resend and Twilio staging smoke tests with real credentials held outside
+2. Run Resend and Twilio staging smoke tests with real credentials held outside
    the repository.
-4. Run the full validation suite and a staging smoke test.
+3. Run the full validation suite and a staging smoke test.

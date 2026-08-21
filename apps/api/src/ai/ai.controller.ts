@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpException,
   HttpStatus,
   Param,
@@ -10,19 +11,26 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { IdempotencyService } from '../idempotency/idempotency.service';
+import { RateLimitPolicy } from '../rate-limit/rate-limit.decorator';
 import { AiService } from './ai.service';
 import { ConfirmToriActionDto, ToriChatDto } from './dto/ai.dto';
 
 @Controller('ai/tori')
 export class AiController {
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get('summary')
+  @RateLimitPolicy('toriChat')
   summary(@CurrentUser() currentUser: AuthenticatedUser) {
     return this.ai.summary(currentUser);
   }
 
   @Post('chat')
+  @RateLimitPolicy('toriChat')
   chat(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: ToriChatDto,
@@ -31,12 +39,23 @@ export class AiController {
   }
 
   @Post('actions/:draftId/confirm')
+  @RateLimitPolicy('toriAction')
   confirm(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('draftId') draftId: string,
     @Body() dto: ConfirmToriActionDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.ai.confirm(currentUser, draftId, dto.draft);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey: idempotencyKey ?? draftId,
+        operation: 'tori.action.confirm',
+        request: { draft: dto.draft, draftId },
+        userId: currentUser.id,
+      },
+      () => this.ai.confirm(currentUser, draftId, dto.draft),
+    );
   }
 
   @All('*path')

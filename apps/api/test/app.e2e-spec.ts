@@ -151,6 +151,51 @@ describe('Health endpoint (e2e)', () => {
             .mockResolvedValue({ _sum: { balanceDueCents: 0 } }),
           findMany: jest.fn().mockResolvedValue([]),
         },
+        idempotencyRecord: {
+          create: jest.fn(
+            ({
+              data,
+            }: {
+              data: {
+                expiresAt: Date;
+                keyHash: string;
+                operation: string;
+                requestHash: string;
+                status: 'IN_PROGRESS';
+                businessId?: string;
+                publicScopeHash?: string;
+                userId?: string;
+              };
+            }) =>
+              Promise.resolve({
+                ...data,
+                completedAt: null,
+                errorCode: null,
+                id: `idem-${data.operation}`,
+                responseBody: null,
+                responseStatus: null,
+                updatedAt: new Date(),
+              }),
+          ),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findFirstOrThrow: jest.fn().mockResolvedValue({
+            id: 'idem-existing',
+            requestHash: 'request-hash',
+            responseBody: null,
+            status: 'IN_PROGRESS',
+            updatedAt: new Date(),
+          }),
+          update: jest.fn(
+            ({
+              data,
+              where,
+            }: {
+              data: Record<string, unknown>;
+              where: { id: string };
+            }) => Promise.resolve({ ...data, id: where.id }),
+          ),
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
         job: {
           findFirst: jest.fn().mockResolvedValue({
             addressLine1: '27 Coffey Street',

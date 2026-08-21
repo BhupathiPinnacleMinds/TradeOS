@@ -4,6 +4,10 @@ import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
+interface ProxyAwareExpressApp {
+  set(setting: string, value: unknown): void;
+}
+
 function isAllowedDevOrigin(origin: string) {
   try {
     const url = new URL(origin);
@@ -25,6 +29,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
   const isProduction = config.get<string>('NODE_ENV') === 'production';
+  const trustProxy = config.get<string>('TRUST_PROXY', 'false') === 'true';
   const allowedOrigins = config
     .get<string>('CORS_ORIGINS', 'http://localhost:8081')
     .split(',')
@@ -32,6 +37,12 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.setGlobalPrefix('api');
+  if (trustProxy) {
+    const expressApp = app
+      .getHttpAdapter()
+      .getInstance() as ProxyAwareExpressApp;
+    expressApp.set('trust proxy', 1);
+  }
   app.use(helmet());
   app.enableCors({
     origin: (

@@ -196,7 +196,16 @@ function dispatchCustomer(
   };
 }
 
+function freezeToriClock(isoTimestamp = '2026-08-18T09:00:00.000+10:00') {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date(isoTimestamp));
+}
+
 describe('AiService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('answers read questions with tenant-scoped appointment queries', async () => {
     const prisma = createPrisma();
     const { service: ai } = service(prisma);
@@ -4183,6 +4192,7 @@ describe('AiService', () => {
   });
 
   it('continues an existing appointment workflow when combined natural date and time are provided', async () => {
+    freezeToriClock();
     const prisma = createPrisma();
     prisma.job.findFirst.mockResolvedValue({
       addressLine1: '27 Coffey Street',
@@ -4281,6 +4291,7 @@ describe('AiService', () => {
   });
 
   it('collects fresh appointment customer, job, natural date/time and duration across serialized requests', async () => {
+    freezeToriClock();
     const prisma = createPrisma();
     prisma.customer.findMany.mockResolvedValueOnce([
       {
@@ -4996,6 +5007,7 @@ describe('AiService', () => {
   );
 
   it('supports appointment date and time supplied separately', async () => {
+    freezeToriClock();
     const prisma = createPrisma();
     prisma.job.findFirst.mockResolvedValue({
       addressLine1: '27 Coffey Street',
@@ -5040,7 +5052,49 @@ describe('AiService', () => {
     expect(timeResponse.context?.pendingAppointment?.time).toBe('09:00');
   });
 
+  it('rolls ambiguous month/day appointment dates to the next future occurrence after that date has passed', async () => {
+    freezeToriClock('2026-08-21T09:00:00.000+10:00');
+    const prisma = createPrisma();
+    prisma.job.findFirst.mockResolvedValue({
+      addressLine1: '27 Coffey Street',
+      addressLine2: null,
+      customer: { displayName: 'Ranjee', sites: [] },
+      customerId: 'customer-1',
+      id: 'job-1',
+      jobNumber: 'JOB-2026-000028',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Fix the leak',
+    });
+    const { service: ai } = service(prisma);
+
+    const response = await ai.chat(owner, {
+      context: {
+        pendingAppointment: {
+          customerId: 'customer-1',
+          customerName: 'Ranjee',
+          jobId: 'job-1',
+          jobNumber: 'JOB-2026-000028',
+          jobTitle: 'Fix the leak',
+        },
+        pendingQuestion: {
+          intent: 'CREATE_APPOINTMENT_FOR_JOB',
+          type: 'APPOINTMENT_DATE',
+        },
+      },
+      message: 'Aug 20 9:00am',
+    });
+
+    expect(response.message.content).toContain('How long');
+    expect(response.context?.pendingAppointment).toMatchObject({
+      date: '2027-08-20',
+      time: '09:00',
+    });
+  });
+
   it('preserves appointment workflow context after invalid date/time input', async () => {
+    freezeToriClock();
     const prisma = createPrisma();
     prisma.job.findFirst.mockResolvedValue({
       addressLine1: '27 Coffey Street',

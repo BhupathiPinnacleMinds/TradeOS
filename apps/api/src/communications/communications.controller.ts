@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -9,6 +10,8 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { IdempotencyService } from '../idempotency/idempotency.service';
+import { RateLimitPolicy } from '../rate-limit/rate-limit.decorator';
 import { CustomerCommunicationsService } from './communications.service';
 import {
   ListCommunicationsQueryDto,
@@ -19,7 +22,10 @@ import {
 
 @Controller('communications')
 export class CustomerCommunicationsController {
-  constructor(private readonly communications: CustomerCommunicationsService) {}
+  constructor(
+    private readonly communications: CustomerCommunicationsService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get()
   findAll(
@@ -60,14 +66,26 @@ export class CustomerCommunicationsController {
   }
 
   @Post('manual')
+  @RateLimitPolicy('publicMutation')
   sendManual(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: ManualCustomerCommunicationDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.communications.sendManual(currentUser, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'communications.manualSend',
+        request: dto,
+        userId: currentUser.id,
+      },
+      () => this.communications.sendManual(currentUser, dto),
+    );
   }
 
   @Post('process-due')
+  @RateLimitPolicy('internal')
   processDue(@CurrentUser() currentUser: AuthenticatedUser) {
     return this.communications.processDueCustomerCommunications(currentUser);
   }

@@ -11,6 +11,7 @@ import {
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
+import { RateLimitPolicy } from '../rate-limit/rate-limit.decorator';
 import {
   AcceptInvitationDto,
   InviteMemberDto,
@@ -29,12 +30,14 @@ export class MembersController {
   }
 
   @Public()
+  @RateLimitPolicy('publicRead')
   @Get('invitations/:token')
   previewInvitation(@Param('token') token: string) {
     return this.members.previewInvitation(token);
   }
 
   @Public()
+  @RateLimitPolicy('auth')
   @Post('invitations/:token/accept')
   acceptInvitation(
     @Param('token') token: string,
@@ -52,6 +55,7 @@ export class MembersController {
   }
 
   @Post('invite')
+  @RateLimitPolicy('auth')
   invite(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: InviteMemberDto,
@@ -78,6 +82,7 @@ export class MembersController {
   }
 
   @Post(':id/resend-invite')
+  @RateLimitPolicy('auth')
   resendInvite(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,

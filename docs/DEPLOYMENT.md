@@ -130,6 +130,20 @@ API:
 - JWT_SECRET
 - JWT_EXPIRES_IN
 - CORS_ORIGINS
+- TRUST_PROXY
+- RATE_LIMIT_ENABLED
+- RATE_LIMIT_WINDOW_SECONDS
+- RATE_LIMIT_MAX_REQUESTS
+- RATE_LIMIT_AUTH_MAX_REQUESTS
+- RATE_LIMIT_PUBLIC_READ_MAX_REQUESTS
+- RATE_LIMIT_PUBLIC_MUTATION_MAX_REQUESTS
+- RATE_LIMIT_TORI_CHAT_MAX_REQUESTS
+- RATE_LIMIT_TORI_ACTION_MAX_REQUESTS
+- RATE_LIMIT_MEDIA_MAX_REQUESTS
+- RATE_LIMIT_INTERNAL_MAX_REQUESTS
+- IDEMPOTENCY_ENABLED
+- IDEMPOTENCY_IN_PROGRESS_TTL_SECONDS
+- IDEMPOTENCY_RETENTION_HOURS
 - APP_PUBLIC_URL
 - EMAIL_PROVIDER
 - CUSTOMER_COMMUNICATIONS_ENABLED
@@ -188,8 +202,58 @@ Production fail-fast configuration:
   `S3_REGION`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. Set
   `S3_ENDPOINT` and `S3_FORCE_PATH_STYLE=true` for Cloudflare R2, MinIO or other
   compatible providers when required.
+- `RATE_LIMIT_ENABLED=true` is required in production. Defaults are
+  `RATE_LIMIT_WINDOW_SECONDS=60`, `RATE_LIMIT_MAX_REQUESTS=120`,
+  `RATE_LIMIT_AUTH_MAX_REQUESTS=10`,
+  `RATE_LIMIT_PUBLIC_READ_MAX_REQUESTS=60`,
+  `RATE_LIMIT_PUBLIC_MUTATION_MAX_REQUESTS=10`,
+  `RATE_LIMIT_TORI_CHAT_MAX_REQUESTS=60`,
+  `RATE_LIMIT_TORI_ACTION_MAX_REQUESTS=20`,
+  `RATE_LIMIT_MEDIA_MAX_REQUESTS=120` and
+  `RATE_LIMIT_INTERNAL_MAX_REQUESTS=10`. Production validation rejects
+  disabled rate limiting and zero/negative configured windows or limits.
+- `IDEMPOTENCY_ENABLED=true` is required in production. Defaults are
+  `IDEMPOTENCY_IN_PROGRESS_TTL_SECONDS=120` and
+  `IDEMPOTENCY_RETENTION_HOURS=48`. Protected high-risk mutation routes require
+  a stable `Idempotency-Key` header in production unless the route has an
+  internal durable fallback key, such as public quote accept/decline and Tori
+  draft confirmation.
+- Set `TRUST_PROXY=true` only when the API is behind the deployment platform's
+  trusted reverse proxy/load balancer. Leave it `false` for direct local/API
+  access so arbitrary client `X-Forwarded-For` headers cannot spoof limiter
+  identity.
 - Do not include localhost, `127.0.0.1` or `0.0.0.0` in production CORS or
   public URLs.
+
+Rate limiting:
+
+- The API applies a configurable global baseline plus stricter endpoint
+  policies for auth/login, invitation acceptance, public quote/invoice links,
+  Tori chat/action confirmation, media APIs and manual communication processing.
+- Health checks are exempt so infrastructure monitoring is not blocked by
+  ordinary user traffic.
+- Rate-limited responses use HTTP `429`, code `RATE_LIMIT_EXCEEDED`, a
+  user-safe message and `Retry-After`.
+- The current limiter is in-memory per API process. Run the private beta as one
+  API instance, or add a shared store/gateway limiter before horizontal API
+  scaling.
+
+Idempotency:
+
+- High-risk mutating APIs use the standard `Idempotency-Key` request header.
+  Generate one stable key per user action and reuse it for retries of the same
+  action. Do not generate a fresh key for automatic HTTP retries.
+- The API stores only SHA-256 hashes of idempotency keys and public scopes. It
+  never stores raw public quote tokens or raw header values.
+- Same key + same authenticated business/user + same operation + same payload
+  returns the original successful JSON response.
+- Same key + different payload returns `409 IDEMPOTENCY_KEY_REUSED`.
+- In-progress duplicate requests wait briefly for the original request to
+  finish, then replay success or return `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`.
+- Protected routes include quote creation/send/accept/decline/duplicate,
+  quote-to-job conversion, invoice creation/send/payment/void, appointment
+  creation/reassignment/status completion, public quote accept/decline, Tori
+  draft confirmation and manual customer communications.
 
 Storage:
 

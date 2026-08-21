@@ -166,4 +166,34 @@ describe('validateEnvironment', () => {
       }),
     ).toThrow(/CUSTOMER_COMMUNICATION_WORKER_INTERVAL_SECONDS/);
   });
+
+  it('requires production rate limiting to stay enabled with positive limits', () => {
+    expect(() =>
+      validateEnvironment({
+        APP_PUBLIC_URL: 'https://app.tradieos.example',
+        CORS_ORIGINS: 'https://app.tradieos.example',
+        CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'true',
+        CUSTOMER_EMAIL_PROVIDER: 'resend',
+        CUSTOMER_SMS_PROVIDER: 'twilio',
+        DATABASE_URL: 'postgresql://prod-host/tradieos',
+        EMAIL_FROM_ADDRESS: 'hello@tradieos.example',
+        EMAIL_PROVIDER: 'resend',
+        JWT_SECRET: 'production-secret-value-with-at-least-32-chars',
+        NODE_ENV: 'production',
+        RATE_LIMIT_ENABLED: 'false',
+        RATE_LIMIT_MAX_REQUESTS: '0',
+        RATE_LIMIT_WINDOW_SECONDS: '-1',
+        RESEND_API_KEY: 're_test_key',
+        S3_ACCESS_KEY_ID: 'access-key',
+        S3_BUCKET: 'tradieos-prod',
+        S3_REGION: 'ap-southeast-2',
+        S3_SECRET_ACCESS_KEY: 'secret-key',
+        STORAGE_PROVIDER: 's3',
+        TRUST_PROXY: 'sometimes',
+        TWILIO_ACCOUNT_SID: 'AC123456789',
+        TWILIO_AUTH_TOKEN: 'twilio-secret',
+        TWILIO_MESSAGING_FROM: '+61400000000',
+      }),
+    ).toThrow(/RATE_LIMIT_ENABLED/);
+  });
 });

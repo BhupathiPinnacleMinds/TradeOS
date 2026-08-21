@@ -275,6 +275,12 @@ enum ProcessingStatus {
   FAILED
 }
 
+enum IdempotencyStatus {
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+}
+
 model Business {
   id                       String                            @id @default(cuid())
   name                     String
@@ -315,6 +321,7 @@ model Business {
   communicationSettings    BusinessCommunicationSettings?
   customerCommunications   CustomerCommunication[]
   communicationPreferences CustomerCommunicationPreference[]
+  idempotencyRecords       IdempotencyRecord[]
   messages                 Message[]
   notifications            Notification[]
   aiConversations          AiConversation[]
@@ -324,6 +331,30 @@ model Business {
   mediaAssets              MediaAsset[]
   integrations             Integration[]
   auditLogs                AuditLog[]
+}
+
+model IdempotencyRecord {
+  id              String            @id @default(cuid())
+  businessId      String?
+  userId          String?
+  publicScopeHash String?
+  keyHash         String
+  operation       String
+  requestHash     String
+  status          IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus  Int?
+  responseBody    Json?
+  errorCode       String?
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+  expiresAt       DateTime
+  updatedAt       DateTime          @updatedAt
+  business        Business?         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId, operation, keyHash])
+  @@unique([publicScopeHash, operation, keyHash])
+  @@index([status, expiresAt])
+  @@index([businessId, operation, createdAt])
 }
 
 model User {

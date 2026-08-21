@@ -18,6 +18,16 @@
   summary-only logs, stale-domain eligibility checks and atomic
   `SCHEDULED -> PROCESSING` database claims to prevent duplicate sends across
   overlapping workers/API replicas.
+- Added production API rate limiting and abuse protection with a global
+  baseline, stricter auth/public-token/Tori/media/internal endpoint policies,
+  structured `429 RATE_LIMIT_EXCEEDED` responses, safe trusted-proxy handling
+  and production fail-fast environment validation.
+- Added durable idempotency/double-submit protection for high-risk quote,
+  invoice, payment, appointment, public quote, manual communication and Tori
+  confirmation mutations. The API stores only hashed idempotency keys/public
+  scopes, replays same-key/same-payload successes, rejects same-key/different
+  payload reuse with `IDEMPOTENCY_KEY_REUSED`, and production validation keeps
+  the protection enabled.
 - Added the Phase 1 production-readiness audit covering deployment blockers,
   beta risks, security, tenancy, storage, communications, scheduler, Tori and
   mobile production configuration.

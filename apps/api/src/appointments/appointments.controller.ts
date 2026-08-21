@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { AppointmentsService } from './appointments.service';
 import {
   AppointmentAvailabilityDto,
@@ -25,7 +27,10 @@ import {
 
 @Controller('appointments')
 export class AppointmentsController {
-  constructor(private readonly appointments: AppointmentsService) {}
+  constructor(
+    private readonly appointments: AppointmentsService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get()
   findAll(
@@ -84,8 +89,18 @@ export class AppointmentsController {
   create(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: UpsertAppointmentDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.create(currentUser, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'appointment.create',
+        request: dto,
+        userId: currentUser.id,
+      },
+      () => this.appointments.create(currentUser, dto),
+    );
   }
 
   @Patch(':id')
@@ -102,40 +117,54 @@ export class AppointmentsController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: ReassignAppointmentDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.reassign(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'appointment.reassign',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.appointments.reassign(currentUser, id, dto),
+    );
   }
 
   @Post(':id/start')
   start(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'IN_PROGRESS');
+    return this.transition(currentUser, id, 'IN_PROGRESS', idempotencyKey);
   }
 
   @Post(':id/confirm')
   confirm(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'CONFIRMED');
+    return this.transition(currentUser, id, 'CONFIRMED', idempotencyKey);
   }
 
   @Post(':id/start-travel')
   startTravel(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'ON_THE_WAY');
+    return this.transition(currentUser, id, 'ON_THE_WAY', idempotencyKey);
   }
 
   @Post(':id/arrive')
   arrive(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'ARRIVED');
+    return this.transition(currentUser, id, 'ARRIVED', idempotencyKey);
   }
 
   @Post(':id/complete')
@@ -143,24 +172,36 @@ export class AppointmentsController {
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: CompleteAppointmentDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.completeWithWorkLog(currentUser, id, dto);
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'appointment.complete',
+        request: { dto, id },
+        userId: currentUser.id,
+      },
+      () => this.appointments.completeWithWorkLog(currentUser, id, dto),
+    );
   }
 
   @Post(':id/pause')
   pause(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'PAUSED');
+    return this.transition(currentUser, id, 'PAUSED', idempotencyKey);
   }
 
   @Post(':id/resume')
   resume(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'IN_PROGRESS');
+    return this.transition(currentUser, id, 'IN_PROGRESS', idempotencyKey);
   }
 
   @Post(':id/signature')
@@ -194,7 +235,32 @@ export class AppointmentsController {
   cancel(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.appointments.transition(currentUser, id, 'CANCELLED');
+    return this.transition(currentUser, id, 'CANCELLED', idempotencyKey);
+  }
+
+  private transition(
+    currentUser: AuthenticatedUser,
+    id: string,
+    status:
+      | 'ARRIVED'
+      | 'CANCELLED'
+      | 'CONFIRMED'
+      | 'IN_PROGRESS'
+      | 'ON_THE_WAY'
+      | 'PAUSED',
+    idempotencyKey?: string,
+  ) {
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: `appointment.transition.${status}`,
+        request: { id, status },
+        userId: currentUser.id,
+      },
+      () => this.appointments.transition(currentUser, id, status),
+    );
   }
 }

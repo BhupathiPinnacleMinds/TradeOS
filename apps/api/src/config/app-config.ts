@@ -35,6 +35,8 @@ export function validateEnvironment(
   const customerCommunicationWorkerBatchSize = optionalInteger(
     config.CUSTOMER_COMMUNICATION_WORKER_BATCH_SIZE,
   );
+  const rateLimitEnabled = stringValue(config.RATE_LIMIT_ENABLED) ?? 'true';
+  const idempotencyEnabled = stringValue(config.IDEMPOTENCY_ENABLED) ?? 'true';
 
   if (!appPublicUrl) {
     failures.push('APP_PUBLIC_URL is required in production.');
@@ -80,6 +82,47 @@ export function validateEnvironment(
     requiredString(config, 'S3_ACCESS_KEY_ID', failures);
     requiredString(config, 'S3_SECRET_ACCESS_KEY', failures);
   }
+
+  if (rateLimitEnabled !== 'true') {
+    failures.push('RATE_LIMIT_ENABLED must be true in production.');
+  }
+
+  if (idempotencyEnabled !== 'true') {
+    failures.push('IDEMPOTENCY_ENABLED must be true in production.');
+  }
+
+  validatePositiveInteger(config, 'RATE_LIMIT_WINDOW_SECONDS', failures);
+  validatePositiveInteger(config, 'RATE_LIMIT_MAX_REQUESTS', failures);
+  validatePositiveInteger(config, 'RATE_LIMIT_AUTH_MAX_REQUESTS', failures);
+  validatePositiveInteger(
+    config,
+    'RATE_LIMIT_PUBLIC_READ_MAX_REQUESTS',
+    failures,
+  );
+  validatePositiveInteger(
+    config,
+    'RATE_LIMIT_PUBLIC_MUTATION_MAX_REQUESTS',
+    failures,
+  );
+  validatePositiveInteger(
+    config,
+    'RATE_LIMIT_TORI_CHAT_MAX_REQUESTS',
+    failures,
+  );
+  validatePositiveInteger(
+    config,
+    'RATE_LIMIT_TORI_ACTION_MAX_REQUESTS',
+    failures,
+  );
+  validatePositiveInteger(config, 'RATE_LIMIT_MEDIA_MAX_REQUESTS', failures);
+  validatePositiveInteger(config, 'RATE_LIMIT_INTERNAL_MAX_REQUESTS', failures);
+  validatePositiveInteger(
+    config,
+    'IDEMPOTENCY_IN_PROGRESS_TTL_SECONDS',
+    failures,
+  );
+  validatePositiveInteger(config, 'IDEMPOTENCY_RETENTION_HOURS', failures);
+  validateBoolean(config, 'TRUST_PROXY', failures);
 
   if (customerCommunicationsEnabled) {
     if (customerCommunicationWorkerEnabled !== 'true') {
@@ -159,6 +202,31 @@ function optionalInteger(value: unknown) {
   if (!stringified) return undefined;
   const parsed = Number(stringified);
   return Number.isInteger(parsed) ? parsed : Number.NaN;
+}
+
+function validatePositiveInteger(
+  config: Record<string, unknown>,
+  key: string,
+  failures: string[],
+) {
+  const value = stringValue(config[key]);
+  if (!value) return;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    failures.push(`${key} must be a positive integer in production.`);
+  }
+}
+
+function validateBoolean(
+  config: Record<string, unknown>,
+  key: string,
+  failures: string[],
+) {
+  const value = stringValue(config[key]);
+  if (!value) return;
+  if (!['true', 'false'].includes(value)) {
+    failures.push(`${key} must be true or false in production.`);
+  }
 }
 
 function containsLocalhost(value: string) {
