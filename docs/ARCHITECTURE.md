@@ -182,6 +182,44 @@ adequate only for an intentionally single-instance API deployment. Multiple API
 replicas would each have independent counters, so a shared limiter store such
 as Redis or a managed gateway limit should be added before horizontal API scale.
 
+## Health and readiness
+
+TradieOS separates liveness from readiness:
+
+- `GET /api/health` is the liveness endpoint. It is public, rate-limit exempt
+  and checks only that the API process can respond.
+- `GET /api/ready` is the readiness endpoint. It is public, rate-limit exempt
+  and verifies PostgreSQL connectivity through the existing `PrismaService`
+  dependency with a tiny `SELECT 1`.
+
+Readiness responses are intentionally minimal: `200 { "status": "ready" }` or
+`503 { "status": "not_ready" }`. The endpoint does not expose database
+credentials, hostnames, raw Prisma errors, stack traces, tenant data, storage
+bucket names or communications-provider state.
+
+Readiness does not run migrations. Migration deployment remains an explicit
+deployment operation so health probes cannot change schema or data.
+
+## Backup and recovery
+
+PostgreSQL remains the authoritative application data store and production
+media/PDF bytes live in private S3-compatible object storage. Backup and
+restore operations must account for both systems plus scheduled communications
+worker safety. The operational procedure, restore rehearsal steps, migration
+rollback guidance, S3/R2 retention expectations and RPO/RTO targets are
+documented in [Backup and Recovery](BACKUP_AND_RECOVERY.md).
+
+## Mobile environment profiles
+
+The Expo mobile app centralises public runtime configuration in
+`apps/mobile/src/config/mobileConfig.ts`, backed by shared validation in
+`packages/shared/src/mobile-config.ts`. Development may use local HTTP API URLs,
+but staging and production builds require an explicit HTTPS
+`EXPO_PUBLIC_API_URL` ending in `/api` and reject localhost, loopback and
+private LAN hosts. EAS profiles live in root `eas.json`; staging uses a
+separate app name/scheme/package identifier so internal testers do not confuse
+it with production.
+
 ## Idempotency and double-submit protection
 
 High-risk mutations are protected by `IdempotencyModule`. Controllers stay thin:

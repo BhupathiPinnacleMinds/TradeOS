@@ -43,6 +43,7 @@ describe('Health endpoint (e2e)', () => {
     })
       .overrideProvider(PrismaService)
       .useValue({
+        $queryRaw: jest.fn().mockResolvedValue([{ '?column?': 1 }]),
         $transaction: jest.fn(
           (input: unknown[] | ((tx: unknown) => unknown)) =>
             Array.isArray(input)
@@ -263,6 +264,19 @@ describe('Health endpoint (e2e)', () => {
     const body = response.body as HealthResponse;
     expect(body.status).toBe('ok');
     expect(body.service).toBe('tradieos-api');
+  });
+
+  it('GET /api/ready is public and returns DB-backed readiness', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/ready')
+      .expect(200);
+
+    expect(response.type).toContain('json');
+    expect(response.body).toEqual({ status: 'ready' });
+    expect(response.text).not.toContain('DATABASE_URL');
+    expect(response.text).not.toContain('postgresql://');
+    expect(response.text).not.toContain('JWT_SECRET');
+    expect(response.text).not.toContain('password');
   });
 
   it('GET /api/media is registered and returns an authorised empty list', async () => {

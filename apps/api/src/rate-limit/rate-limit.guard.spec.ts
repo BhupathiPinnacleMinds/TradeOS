@@ -175,7 +175,7 @@ describe('RateLimitGuard', () => {
     ).toBe(true);
   });
 
-  it('keeps health checks exempt from request buckets', () => {
+  it('keeps health and readiness checks exempt from request buckets', () => {
     const guard = createGuard({ RATE_LIMIT_MAX_REQUESTS: '1' });
 
     expect(guard.canActivate(contextFor({ skip: true }))).toBe(true);

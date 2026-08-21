@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "1",
       "bundleIdentifier": "au.com.tradieos.mobile",
       "infoPlist": {
         "NSCameraUsageDescription": "TradieOS uses the camera so tradies can capture job evidence photos after confirmation.",
@@ -18,6 +19,8 @@
     },
     "android": {
       "package": "au.com.tradieos.mobile",
+      "versionCode": 1,
+      "blockedPermissions": ["android.permission.RECORD_AUDIO"],
       "permissions": ["CAMERA", "READ_MEDIA_IMAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#F8FAFC",

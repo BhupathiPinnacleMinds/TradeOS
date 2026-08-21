@@ -19,11 +19,17 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 
 ## P1 issues before beta
 
-- Add a production DB readiness endpoint or deployment health check that verifies database connectivity, not only process health.
+- DB-backed readiness is implemented through `GET /api/ready`. Continue adding
+  structured logging, request IDs, error tracking and alerting before broader
+  beta.
+- PostgreSQL and S3/R2 backup/restore operations are documented in
+  [Backup and Recovery](BACKUP_AND_RECOVERY.md). Complete a staging restore
+  rehearsal before inviting private-beta users.
+- Production/staging mobile EAS profiles and API URL validation are documented
+  in [Mobile Release](MOBILE_RELEASE.md). Staging and production builds now
+  require explicit HTTPS API URLs and do not silently fall back to localhost.
 - Configure structured logging, request IDs, error tracking and alerting.
 - Clean or explicitly document Prisma relation warnings around `SetNull`/required relation fields before running destructive delete workflows in production.
-- Add production mobile/EAS environment profiles and prevent production mobile builds from silently falling back to `http://localhost:3000/api`.
-- Add backup/restore runbooks for PostgreSQL and uploaded files.
 - Add account recovery/password reset and session revocation strategy.
 - Add production CORS origin review for deployed web/mobile hosts.
 - Add regression coverage for production config validation, public customer links, public-token throttling and scheduled-worker idempotency.
@@ -142,6 +148,9 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 ## Recommended production infrastructure
 
 - API: hosted Node/Nest service with HTTPS, request logging, health checks and error monitoring.
+- Use `GET /api/health` as process liveness and `GET /api/ready` as
+  load-balancer readiness. Readiness checks PostgreSQL through Prisma and
+  returns `503` without raw database details when the dependency is unavailable.
 - Database: managed PostgreSQL with PITR backups, migration job, staging environment and restore drills.
 - Storage: S3-compatible object storage with private buckets, signed URLs, retention policy and backup/lifecycle rules.
 - Email: Resend or equivalent transactional email provider for invitations and customer email.

@@ -28,6 +28,16 @@
   scopes, replays same-key/same-payload successes, rejects same-key/different
   payload reuse with `IDEMPOTENCY_KEY_REUSED`, and production validation keeps
   the protection enabled.
+- Added database-backed private-beta readiness checks. `GET /api/health`
+  remains lightweight liveness, while `GET /api/ready` verifies PostgreSQL
+  connectivity through Prisma and returns minimal `ready`/`not_ready`
+  responses for infrastructure routing.
+- Added the private-beta Backup and Recovery runbook covering PostgreSQL
+  backups/PITR, staging restore rehearsal, Prisma migration rollback, private
+  S3/R2 media/PDF recovery, scheduled communication safety and RPO/RTO targets.
+- Added production/staging Expo EAS mobile profiles with centralised mobile API
+  URL validation, HTTPS-only staging/production configuration, separate staging
+  app identity and a mobile release runbook.
 - Added the Phase 1 production-readiness audit covering deployment blockers,
   beta risks, security, tenancy, storage, communications, scheduler, Tori and
   mobile production configuration.

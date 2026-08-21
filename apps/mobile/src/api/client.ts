@@ -60,15 +60,7 @@ import type {
   ToriProviderStatus,
 } from '@tradieos/shared';
 import { buildAppointmentTransitionPath } from '@tradieos/shared';
-
-declare const process: {
-  env?: {
-    EXPO_PUBLIC_API_URL?: string;
-  };
-};
-
-export const apiUrl =
-  process.env?.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api';
+import { apiUrl } from '../config/mobileConfig';
 
 export function buildApiUrl(path: string, baseUrl = apiUrl) {
   const base = baseUrl.replace(/\/+$/, '');
@@ -382,7 +374,7 @@ export async function apiRequest<T>(
   return (await response.json()) as T;
 }
 
-function statusCodeToErrorCode(status: number) {
+export function statusCodeToErrorCode(status: number) {
   if (status === 400) return 'VALIDATION_ERROR';
   if (status === 401) return 'SESSION_EXPIRED';
   if (status === 403) return 'INSUFFICIENT_PERMISSION';

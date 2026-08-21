@@ -100,6 +100,12 @@ handling on the media upload route or direct object-storage upload path.
 
 Future production mobile builds should use EAS.
 
+Mobile EAS profiles, API URL safety rules, app identifiers, versioning and
+mobile-safe environment variables are documented in
+[Mobile Release](MOBILE_RELEASE.md). Staging and production builds must provide
+an explicit HTTPS `EXPO_PUBLIC_API_URL`; they must not fall back to localhost,
+LAN IPs or Expo development URLs.
+
 ## Future CI/CD
 
 CI should run:
@@ -119,6 +125,36 @@ Deployment should include:
 - API deploy
 - smoke test
 - mobile build if applicable
+
+Before high-risk deployments or migrations, confirm the PostgreSQL backup/PITR
+state described in [Backup and Recovery](BACKUP_AND_RECOVERY.md). Migration
+rollback may require restoring the database backup and redeploying the previous
+compatible API version.
+
+## Health checks
+
+Production hosting and load balancers should use separate liveness and
+readiness checks:
+
+- Liveness: `GET /api/health`
+  - Expected healthy code: `200`
+  - Purpose: verifies the API process is alive.
+  - Does not depend on PostgreSQL or other external providers.
+- Readiness: `GET /api/ready`
+  - Expected ready code: `200`
+  - Expected not-ready code: `503`
+  - Purpose: verifies the API instance can serve normal application traffic.
+  - Currently checks PostgreSQL connectivity through the existing Prisma
+    application dependency using a tiny `SELECT 1`.
+
+Use `/api/ready` for load-balancer traffic routing. Use `/api/health` for
+process liveness/restart decisions. Neither endpoint requires a JWT, and both
+are excluded from normal API rate limiting so infrastructure probes are not
+blocked by tenant/user throttles.
+
+Readiness does not run migrations and must not be used as a migration
+deployment mechanism. Apply migrations separately before or during deployment
+with the repository migration command.
 
 ## Environment variables
 
@@ -172,6 +208,7 @@ API:
 
 Mobile:
 
+- EXPO_PUBLIC_APP_ENV
 - EXPO_PUBLIC_API_URL
 
 Invitation email defaults:
@@ -296,6 +333,8 @@ Customer communications:
 - Strong JWT secret.
 - HTTPS API.
 - Production database backups.
+- Backup/restore rehearsal using the
+  [Backup and Recovery](BACKUP_AND_RECOVERY.md) runbook.
 - Error monitoring.
 - Audit logs for sensitive actions.
 - Integration credential encryption.

@@ -4,6 +4,10 @@ export interface HealthResponse {
   timestamp: string;
 }
 
+export interface ReadinessResponse {
+  status: 'ready' | 'not_ready';
+}
+
 export interface DashboardSummaryResponse {
   business: {
     id: string;

@@ -449,9 +449,22 @@ local console provider.
 
 ```http
 GET /api/health
+GET /api/ready
 ```
 
-Returns service health.
+`GET /api/health` is public, rate-limit exempt liveness and verifies only that
+the API process is alive.
+
+`GET /api/ready` is public, rate-limit exempt readiness. It verifies
+PostgreSQL connectivity through Prisma using a tiny `SELECT 1`.
+
+Readiness responses:
+
+- `200 { "status": "ready" }`
+- `503 { "status": "not_ready" }`
+
+Readiness does not run migrations and never returns raw database errors,
+credentials, tenant data or provider configuration.
 
 ### Register
 
