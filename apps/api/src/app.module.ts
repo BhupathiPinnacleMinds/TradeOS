@@ -17,6 +17,7 @@ import { MembersModule } from './members/members.module';
 import { MediaModule } from './media/media.module';
 import { MessagesModule } from './messages/messages.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QuotesModule } from './quotes/quotes.module';
@@ -31,6 +32,7 @@ import { validateEnvironment } from './config/app-config';
       isGlobal: true,
       validate: validateEnvironment,
     }),
+    ObservabilityModule,
     PrismaModule,
     IdempotencyModule,
     AuthModule,

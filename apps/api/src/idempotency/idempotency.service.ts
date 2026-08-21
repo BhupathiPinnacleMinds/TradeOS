@@ -8,6 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { StructuredLogger } from '../observability/structured-logger';
 import { PrismaService } from '../prisma/prisma.service';
 
 type JsonLike = unknown;
@@ -50,6 +51,7 @@ export class IdempotencyService {
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    private readonly logger: StructuredLogger,
   ) {
     this.enabled = config.get<string>('IDEMPOTENCY_ENABLED') !== 'false';
     this.production = config.get<string>('NODE_ENV') === 'production';
@@ -116,6 +118,7 @@ export class IdempotencyService {
     if (!claimed.ownsExecution) {
       return this.resolveExisting<T>(claimed.record, requestHash, scope);
     }
+    this.log('info', 'idempotency_new', scope, claimed.record.id);
 
     try {
       const response = await handler();
@@ -185,6 +188,7 @@ export class IdempotencyService {
         throw error;
       }
       if (existing.requestHash !== requestHash) {
+        this.log('warn', 'idempotency_conflict', scope, existing.id);
         throw reusedKeyConflict();
       }
       if (
@@ -258,10 +262,12 @@ export class IdempotencyService {
     scope: IdempotencyScope,
   ): Promise<T> {
     if (record.requestHash !== requestHash) {
+      this.log('warn', 'idempotency_conflict', scope, record.id);
       throw reusedKeyConflict();
     }
 
     if (record.status === 'SUCCESS') {
+      this.log('info', 'idempotency_replay', scope, record.id);
       return record.responseBody as T;
     }
 
@@ -297,6 +303,22 @@ export class IdempotencyService {
   private findById(id: string) {
     return this.prisma.idempotencyRecord.findFirst({
       where: { id },
+    });
+  }
+
+  private log(
+    level: 'info' | 'warn',
+    event: string,
+    scope: IdempotencyScope,
+    recordId: string,
+  ) {
+    this.logger[level](event, {
+      businessId: scope.type === 'authenticated' ? scope.businessId : undefined,
+      category: 'idempotency',
+      event,
+      idempotencyRecordId: recordId,
+      operation: scope.operation,
+      userId: scope.type === 'authenticated' ? scope.userId : undefined,
     });
   }
 }

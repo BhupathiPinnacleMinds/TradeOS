@@ -31,10 +31,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         businessId: true,
         email: true,
         role: true,
+        authVersion: true,
       },
     });
 
-    if (!user) {
+    if (!user || payload.authVersion !== user.authVersion) {
       throw new UnauthorizedException();
     }
 

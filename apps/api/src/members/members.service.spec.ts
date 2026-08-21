@@ -193,6 +193,7 @@ function authUser(overrides: Partial<Record<string, unknown>> = {}) {
     lastName: 'Scheduler',
     role: 'SCHEDULER',
     isActive: true,
+    authVersion: 0,
     business: {
       id: 'business-1',
       name: 'Demo Tradie Co',

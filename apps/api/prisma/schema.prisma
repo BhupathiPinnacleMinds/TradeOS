@@ -366,6 +366,7 @@ model User {
   lastName                       String
   role                           Role                     @default(STAFF)
   isActive                       Boolean                  @default(true)
+  authVersion                    Int                      @default(0)
   createdAt                      DateTime                 @default(now())
   updatedAt                      DateTime                 @updatedAt
   business                       Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -392,10 +393,25 @@ model User {
   auditLogs                      AuditLog[]               @relation("AuditActor")
   notifications                  Notification[]
   aiConversations                AiConversation[]
+  passwordResetTokens            PasswordResetToken[]
 
   @@unique([businessId, email])
   @@unique([id, businessId])
   @@index([businessId, role])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }
 
 model BusinessMember {
@@ -560,13 +576,13 @@ model Job {
   updatedAt                DateTime                @updatedAt
   business                 Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer                 Customer                @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  assignedTo               User?                   @relation("JobAssignee", fields: [assignedToUserId, businessId], references: [id, businessId], onDelete: SetNull)
+  assignedTo               User?                   @relation("JobAssignee", fields: [assignedToUserId, businessId], references: [id, businessId], onDelete: Restrict)
   creator                  User?                   @relation("JobCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater                  User?                   @relation("JobUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   legacyQuotes             Quote[]                 @relation("QuoteLegacyJob")
   relatedQuotes            Quote[]                 @relation("QuoteRelatedJob")
   convertedQuotes          Quote[]                 @relation("QuoteConvertedJob")
-  sourceQuote              Quote?                  @relation("JobSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: SetNull)
+  sourceQuote              Quote?                  @relation("JobSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
   invoices                 Invoice[]
   messages                 Message[]
   documents                Document[]
@@ -633,7 +649,7 @@ model Appointment {
   business                 Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   job                      Job                       @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Cascade)
   customerSite             CustomerSite?             @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: NoAction)
-  assignedUser             User?                     @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: SetNull)
+  assignedUser             User?                     @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: Restrict)
   creator                  User?                     @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater                  User?                     @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   workLogs                 AppointmentWorkLog[]
@@ -758,13 +774,13 @@ model Quote {
   updatedAt            DateTime                 @updatedAt
   business             Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer             Customer                 @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  customerSite         CustomerSite?            @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: SetNull)
-  job                  Job?                     @relation("QuoteLegacyJob", fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
-  relatedJob           Job?                     @relation("QuoteRelatedJob", fields: [relatedJobId, businessId], references: [id, businessId], onDelete: SetNull)
-  convertedJob         Job?                     @relation("QuoteConvertedJob", fields: [convertedJobId, businessId], references: [id, businessId], onDelete: SetNull)
+  customerSite         CustomerSite?            @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: Restrict)
+  job                  Job?                     @relation("QuoteLegacyJob", fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
+  relatedJob           Job?                     @relation("QuoteRelatedJob", fields: [relatedJobId, businessId], references: [id, businessId], onDelete: Restrict)
+  convertedJob         Job?                     @relation("QuoteConvertedJob", fields: [convertedJobId, businessId], references: [id, businessId], onDelete: Restrict)
   sourceJobs           Job[]                    @relation("JobSourceQuote")
   sourceInvoices       Invoice[]                @relation("InvoiceSourceQuote")
-  sourceAppointment    Appointment?             @relation("QuoteSourceAppointment", fields: [sourceAppointmentId, businessId], references: [id, businessId], onDelete: SetNull)
+  sourceAppointment    Appointment?             @relation("QuoteSourceAppointment", fields: [sourceAppointmentId, businessId], references: [id, businessId], onDelete: Restrict)
   creator              User?                    @relation("QuoteCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater              User?                    @relation("QuoteUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   lineItems            QuoteLineItem[]
@@ -921,9 +937,9 @@ model Invoice {
   updatedAt          DateTime                   @updatedAt
   business           Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer           Customer                   @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  customerSite       CustomerSite?              @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: SetNull)
-  job                Job?                       @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
-  sourceQuote        Quote?                     @relation("InvoiceSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: SetNull)
+  customerSite       CustomerSite?              @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: Restrict)
+  job                Job?                       @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
+  sourceQuote        Quote?                     @relation("InvoiceSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
   creator            User?                      @relation("InvoiceCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater            User?                      @relation("InvoiceUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   lineItems          InvoiceLineItem[]
@@ -1132,11 +1148,11 @@ model CustomerCommunication {
   updatedAt            DateTime                     @updatedAt
   business             Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer             Customer                     @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  job                  Job?                         @relation(fields: [relatedJobId, businessId], references: [id, businessId], onDelete: SetNull)
-  appointment          Appointment?                 @relation(fields: [relatedAppointmentId, businessId], references: [id, businessId], onDelete: SetNull)
-  quote                Quote?                       @relation(fields: [relatedQuoteId, businessId], references: [id, businessId], onDelete: SetNull)
-  invoice              Invoice?                     @relation(fields: [relatedInvoiceId, businessId], references: [id, businessId], onDelete: SetNull)
-  payment              InvoicePayment?              @relation(fields: [relatedPaymentId, businessId], references: [id, businessId], onDelete: SetNull)
+  job                  Job?                         @relation(fields: [relatedJobId, businessId], references: [id, businessId], onDelete: Restrict)
+  appointment          Appointment?                 @relation(fields: [relatedAppointmentId, businessId], references: [id, businessId], onDelete: Restrict)
+  quote                Quote?                       @relation(fields: [relatedQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
+  invoice              Invoice?                     @relation(fields: [relatedInvoiceId, businessId], references: [id, businessId], onDelete: Restrict)
+  payment              InvoicePayment?              @relation(fields: [relatedPaymentId, businessId], references: [id, businessId], onDelete: Restrict)
   creator              User?                        @relation("CustomerCommunicationCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([businessId, idempotencyKey])
@@ -1167,8 +1183,8 @@ model Message {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer    Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: SetNull)
-  job         Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  customer    Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  job         Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@index([businessId, status, createdAt])
   @@index([businessId, customerId])
@@ -1247,7 +1263,7 @@ model Document {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  job        Job?     @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
+  job        Job?     @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([businessId, storageKey])
   @@index([businessId, jobId])
@@ -1281,9 +1297,9 @@ model MediaAsset {
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   business           Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer           Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: SetNull)
-  job                Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: SetNull)
-  appointment        Appointment?     @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: SetNull)
+  customer           Customer?        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  job                Job?             @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
+  appointment        Appointment?     @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: Restrict)
   uploadedBy         User             @relation("MediaAssetUploader", fields: [uploadedByUserId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([businessId, objectKey])

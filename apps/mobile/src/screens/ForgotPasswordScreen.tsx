@@ -11,28 +11,31 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../auth/AuthContext';
-import { colours } from '../theme';
+import { forgotPasswordRequest } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
+import { colours } from '../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
+type Props = NativeStackScreenProps<RootStackParamList, 'ForgotPassword'>;
 
-export function LoginScreen({ navigation }: Props) {
-  const { login } = useAuth();
-  const [email, setEmail] = useState('owner@demo-tradieos.com');
-  const [password, setPassword] = useState('password123');
+export function ForgotPasswordScreen({ navigation }: Props) {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit() {
     setIsSubmitting(true);
     setError(null);
+    setMessage(null);
 
     try {
-      await login({ email, password });
+      const response = await forgotPasswordRequest({ email });
+      setMessage(response.message);
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : 'Login failed',
+        submitError instanceof Error
+          ? submitError.message
+          : 'Password reset request failed',
       );
     } finally {
       setIsSubmitting(false);
@@ -45,11 +48,11 @@ export function LoginScreen({ navigation }: Props) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.container}
       >
-        <Text style={styles.kicker}>TRADIEOS</Text>
-        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.kicker}>ACCOUNT RECOVERY</Text>
+        <Text style={styles.title}>Reset your password</Text>
         <Text style={styles.subtitle}>
-          Log in to your business workspace and let Tori help with the office
-          work.
+          Enter your email and we’ll send reset instructions if an account
+          exists.
         </Text>
 
         <View style={styles.form}>
@@ -63,23 +66,7 @@ export function LoginScreen({ navigation }: Props) {
             value={email}
           />
 
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setPassword}
-            secureTextEntry
-            style={styles.input}
-            value={password}
-          />
-
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => navigation.navigate('ForgotPassword')}
-            style={styles.forgotButton}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </Pressable>
-
+          {message ? <Text style={styles.success}>{message}</Text> : null}
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <Pressable
@@ -95,18 +82,16 @@ export function LoginScreen({ navigation }: Props) {
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.primaryText}>Log in</Text>
+              <Text style={styles.primaryText}>Send reset instructions</Text>
             )}
           </Pressable>
 
           <Pressable
             accessibilityRole="button"
-            onPress={() => navigation.navigate('Register')}
+            onPress={() => navigation.navigate('Login')}
             style={styles.secondaryButton}
           >
-            <Text style={styles.secondaryText}>
-              Create a business workspace
-            </Text>
+            <Text style={styles.secondaryText}>Back to login</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -123,7 +108,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1.2,
   },
-  title: { color: colours.ink, fontSize: 34, fontWeight: '900', marginTop: 10 },
+  title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 10 },
   subtitle: {
     color: colours.muted,
     fontSize: 16,
@@ -143,9 +128,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 13,
   },
+  success: { color: '#166534', lineHeight: 20, marginTop: 14 },
   error: { color: '#B00020', lineHeight: 20, marginTop: 14 },
-  forgotButton: { alignSelf: 'flex-end', marginTop: 10, paddingVertical: 8 },
-  forgotText: { color: colours.primary, fontSize: 14, fontWeight: '800' },
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colours.primary,

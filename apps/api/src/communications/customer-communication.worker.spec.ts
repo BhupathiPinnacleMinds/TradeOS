@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import type { StructuredLogger } from '../observability/structured-logger';
 import { CustomerCommunicationWorker } from './customer-communication.worker';
 import { CustomerCommunicationsService } from './communications.service';
 
@@ -10,6 +11,14 @@ function config(values: Record<string, string | undefined>) {
   return {
     get: jest.fn((key: string, fallback?: string) => values[key] ?? fallback),
   } as unknown as ConfigService;
+}
+
+function logger() {
+  return {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+  } as unknown as StructuredLogger;
 }
 
 describe('CustomerCommunicationWorker', () => {
@@ -24,6 +33,7 @@ describe('CustomerCommunicationWorker', () => {
     };
     const worker = new CustomerCommunicationWorker(
       service as unknown as CustomerCommunicationsService,
+      logger(),
       config({ CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'false' }),
     );
 
@@ -49,6 +59,7 @@ describe('CustomerCommunicationWorker', () => {
     };
     const worker = new CustomerCommunicationWorker(
       service as unknown as CustomerCommunicationsService,
+      logger(),
       config({
         CUSTOMER_COMMUNICATION_WORKER_BATCH_SIZE: '12',
         CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'true',
@@ -77,6 +88,7 @@ describe('CustomerCommunicationWorker', () => {
     };
     const worker = new CustomerCommunicationWorker(
       service as unknown as CustomerCommunicationsService,
+      logger(),
       config({ CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'true' }),
     );
 

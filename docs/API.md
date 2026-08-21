@@ -503,7 +503,60 @@ Optional business fields:
 POST /api/auth/login
 ```
 
-Returns JWT and user/business profile.
+Returns a 12-hour JWT and user/business profile. JWTs include an internal
+`authVersion` claim, and every authenticated request validates that claim
+against the current user record and active business membership.
+
+### Forgot password
+
+```http
+POST /api/auth/forgot-password
+```
+
+Public, auth-rate-limited endpoint. Accepts:
+
+```json
+{
+  "email": "owner@example.com"
+}
+```
+
+Always returns the same neutral response:
+
+```json
+{
+  "message": "If an account exists, password reset instructions have been sent."
+}
+```
+
+If a matching active account exists, the API creates a one-time reset token,
+stores only its SHA-256 hash, and sends reset instructions through the
+configured email provider. Unknown or inactive accounts do not receive email,
+but the response stays identical.
+
+### Reset password
+
+```http
+POST /api/auth/reset-password
+```
+
+Public, auth-rate-limited endpoint. Accepts:
+
+```json
+{
+  "token": "raw-reset-token-from-email",
+  "newPassword": "new-secure-password"
+}
+```
+
+Valid reset tokens are single-use and expire according to
+`PASSWORD_RESET_TOKEN_TTL_MINUTES` (default 60). Successful reset updates the
+password hash, marks the token used, revokes other outstanding reset tokens for
+that user and increments `User.authVersion` so previously issued JWTs stop
+authorizing access.
+
+Invalid, expired, reused or revoked tokens return a structured safe error and
+never expose raw database/provider details.
 
 ### Current user
 
@@ -512,6 +565,28 @@ GET /api/auth/me
 ```
 
 Requires JWT. Returns logged-in user and business.
+
+### Change password
+
+```http
+POST /api/auth/change-password
+```
+
+Requires JWT and auth-rate limiting. Accepts `currentPassword` and
+`newPassword`. The current password must verify against the stored scrypt hash.
+Successful changes increment `User.authVersion` and revoke outstanding password
+reset tokens.
+
+### Sign out all devices
+
+```http
+POST /api/auth/sign-out-all-devices
+```
+
+Requires JWT and auth-rate limiting. Increments `User.authVersion`, causing all
+previously issued JWTs for that user to fail validation. Normal mobile logout
+removes only the local SecureStore/localStorage token because TradieOS does not
+yet maintain per-device server-side sessions.
 
 ### Demo token
 

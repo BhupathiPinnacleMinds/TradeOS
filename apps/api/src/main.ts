@@ -3,6 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { GlobalExceptionFilter } from './observability/global-exception.filter';
+import { ErrorMonitoringService } from './observability/error-monitoring';
+import { createRequestLoggingMiddleware } from './observability/request-logging.middleware';
+import {
+  StructuredLogger,
+  safeErrorCode,
+} from './observability/structured-logger';
 
 interface ProxyAwareExpressApp {
   set(setting: string, value: unknown): void;
@@ -28,6 +35,8 @@ function isAllowedDevOrigin(origin: string) {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
+  const logger = app.get(StructuredLogger);
+  const monitoring = app.get(ErrorMonitoringService);
   const isProduction = config.get<string>('NODE_ENV') === 'production';
   const trustProxy = config.get<string>('TRUST_PROXY', 'false') === 'true';
   const allowedOrigins = config
@@ -37,6 +46,7 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.setGlobalPrefix('api');
+  app.use(createRequestLoggingMiddleware(logger));
   if (trustProxy) {
     const expressApp = app
       .getHttpAdapter()
@@ -73,6 +83,7 @@ async function bootstrap() {
       whitelist: true,
     }),
   );
+  app.useGlobalFilters(new GlobalExceptionFilter(logger, monitoring));
   app.enableShutdownHooks();
 
   await app.listen(
@@ -82,6 +93,13 @@ async function bootstrap() {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error('Failed to start TradieOS API', error);
+  console.error(
+    JSON.stringify({
+      errorCode: safeErrorCode(error),
+      level: 'error',
+      message: 'api_startup_failed',
+      timestamp: new Date().toISOString(),
+    }),
+  );
   process.exit(1);
 });

@@ -19,18 +19,27 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 
 ## P1 issues before beta
 
-- DB-backed readiness is implemented through `GET /api/ready`. Continue adding
-  structured logging, request IDs, error tracking and alerting before broader
-  beta.
+- DB-backed readiness is implemented through `GET /api/ready`.
+- Structured production logging and error-monitoring foundation is implemented:
+  API requests carry `X-Request-Id`, unexpected errors return sanitized
+  responses, sensitive fields are centrally redacted, and safe auth,
+  rate-limit, communications-worker and idempotency events are logged.
 - PostgreSQL and S3/R2 backup/restore operations are documented in
   [Backup and Recovery](BACKUP_AND_RECOVERY.md). Complete a staging restore
   rehearsal before inviting private-beta users.
 - Production/staging mobile EAS profiles and API URL validation are documented
   in [Mobile Release](MOBILE_RELEASE.md). Staging and production builds now
   require explicit HTTPS API URLs and do not silently fall back to localhost.
-- Configure structured logging, request IDs, error tracking and alerting.
-- Clean or explicitly document Prisma relation warnings around `SetNull`/required relation fields before running destructive delete workflows in production.
-- Add account recovery/password reset and session revocation strategy.
+- Existing Prisma `onDelete: SetNull` warnings for required compound
+  `businessId` relations are resolved. Historical tenant links now restrict
+  parent hard deletion while normal product flows continue to use
+  archive/deactivate semantics.
+- Account recovery and session revocation foundation is implemented. Password
+  reset tokens are one-time use, hash-only and expiring; JWTs include
+  `authVersion`; password reset/change, sign-out-all-devices and member
+  suspension/reactivation/removal revoke previously issued access tokens.
+- Connect a production error-monitoring vendor adapter and alert routing when
+  the private-beta hosting target is selected.
 - Add production CORS origin review for deployed web/mobile hosts.
 - Add regression coverage for production config validation, public customer links, public-token throttling and scheduled-worker idempotency.
 
@@ -49,8 +58,13 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - JWT authentication and service-level role checks are present across the app. UI hiding is treated as convenience; API guards/services remain the authority.
 - Public quote/invoice links use random tokens and store only token hashes in the database.
 - Invitation tokens are hashed and single-use with expiry/cancel/accept fields.
-- Production gaps: account recovery, token/session revocation, request auditing
-  for all sensitive financial mutations and secret-management runbook.
+- Password reset tokens are hashed, single-use and expiring. Reset requests are
+  neutral so they do not reveal whether an email exists.
+- User-level `authVersion` provides durable stateless-JWT revocation after
+  password reset, password change, sign-out-all-devices and team member
+  suspension/reactivation/removal.
+- Production gaps: request auditing for all sensitive financial mutations and
+  secret-management runbook.
 - Global and endpoint-specific API rate limiting is implemented with structured
   `429 RATE_LIMIT_EXCEEDED` responses, `Retry-After`, authenticated
   user/business buckets, public IP buckets and explicit trusted-proxy handling.
@@ -60,6 +74,10 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
   Reusing the same `Idempotency-Key` with the same operation and payload replays
   the original successful response; reusing it with a different payload returns
   `409 IDEMPOTENCY_KEY_REUSED`.
+- API observability uses structured logs and a central redaction policy. Logs
+  must not contain Authorization headers, JWTs, provider secrets, raw public
+  tokens, public-token hashes, signed URLs, idempotency request payloads, full
+  SMS/email bodies or full Tori conversation messages.
 
 ## Multi-tenant findings
 
@@ -77,6 +95,12 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
   keys, hashed public scopes, request hashes, operation names, status, cached
   successful JSON responses and expiry timestamps. Raw customer tokens and raw
   `Idempotency-Key` header values are not stored.
+- Compound optional relations that include `businessId` use `Restrict` for
+  parent hard deletes instead of invalid `SetNull` semantics. This preserves
+  tenant scoping and traceability for assignment, quote/job/invoice,
+  communication, document and media history.
+- `PasswordResetToken` stores only SHA-256 token hashes, expiry and lifecycle
+  timestamps. Raw reset tokens are not persisted.
 - Before production, run the current migrations against staging from a clean database and from a backup restore to prove both paths.
 - Do not use local seed/reset commands in production.
 
@@ -86,10 +110,11 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - Recent hardening prevents stale workflows from overriding strong new root commands and preserves explicit current-turn entities.
 - Tori currently uses local/deterministic logic unless `AI_PROVIDER=openai` is intentionally configured.
 - Production requirements: keep `TORI_DEBUG` disabled by default and verify
-  OpenAI key handling before enabling the OpenAI provider. Tori confirmations
-  are now protected by durable idempotency keyed by the confirmed draft id plus
-  any supplied `Idempotency-Key`; Tori chat and confirm endpoints are also
-  protected by dedicated API rate-limit policies.
+  OpenAI key handling before enabling the OpenAI provider. Production
+  configuration now fails fast if verbose Tori debugging is enabled. Tori
+  confirmations are now protected by durable idempotency keyed by the confirmed
+  draft id plus any supplied `Idempotency-Key`; Tori chat and confirm endpoints
+  are also protected by dedicated API rate-limit policies.
 
 ## Mobile production configuration findings
 
@@ -159,6 +184,8 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
 - Jobs: queue/worker or cron platform for reminders, follow-ups, PDF generation and retryable delivery.
 - Secrets: managed secret store; no production secrets in repository or local `.env` files.
 - Mobile: EAS builds with environment-specific API URLs and release-channel discipline.
+- Logs: structured JSON stdout/stderr collection with retention/search handled
+  by the hosting provider; see [Observability](OBSERVABILITY.md).
 
 ## Required production environment variables
 
@@ -169,6 +196,10 @@ API:
 - `JWT_SECRET` with at least 32 non-placeholder characters
 - `CORS_ORIGINS` with deployed HTTPS origins only
 - `TRUST_PROXY=true` only behind a trusted reverse proxy/load balancer
+- `LOG_LEVEL=info`
+- `LOG_FORMAT=json`
+- `ERROR_MONITORING_PROVIDER=none` until a production adapter is connected
+- `TORI_DEBUG=0`
 - `RATE_LIMIT_ENABLED=true`
 - `RATE_LIMIT_WINDOW_SECONDS=60`
 - `RATE_LIMIT_MAX_REQUESTS=120`
@@ -183,6 +214,9 @@ API:
 - `IDEMPOTENCY_IN_PROGRESS_TTL_SECONDS=120`
 - `IDEMPOTENCY_RETENTION_HOURS=48`
 - `APP_PUBLIC_URL` with the customer-facing HTTPS app URL
+- `APP_RESET_PASSWORD_URL` with the HTTPS password reset URL, or omit to use
+  `APP_PUBLIC_URL`
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES=60`
 - `EMAIL_PROVIDER=resend`
 - `CUSTOMER_COMMUNICATIONS_ENABLED=true`
 - `CUSTOMER_EMAIL_PROVIDER=resend`
@@ -215,8 +249,9 @@ Mobile:
 
 Implement the next production readiness slice:
 
-1. Provision a staging S3/R2 bucket and run the storage smoke test with real
-   credentials held outside the repository.
-2. Run Resend and Twilio staging smoke tests with real credentials held outside
-   the repository.
-3. Run the full validation suite and a staging smoke test.
+1. Select the private-beta hosting target and configure structured JSON log
+   collection/retention for API stdout/stderr.
+2. Connect an error-monitoring vendor adapter to `ErrorMonitoringService` if
+   real incident capture is required before beta.
+3. Run the observability staging verification checklist in
+   [Observability](OBSERVABILITY.md).

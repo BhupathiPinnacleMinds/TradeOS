@@ -751,6 +751,33 @@ Important fields:
 - AI conversation belongs to user and business.
 - Audit log belongs to business and may belong to an actor user.
 
+## Deletion and archival semantics
+
+TradieOS favours archive/restore for business records that carry customer,
+job, appointment, media, communication or financial history. Customers, jobs
+and media assets are archived through service methods rather than hard-deleted
+from normal product flows.
+
+Tenant-scoped optional links that use compound foreign keys with `businessId`
+must not use `onDelete: SetNull`, because `businessId` is required and must
+remain present on every tenant-owned row. These links restrict parent hard
+deletion while still allowing the optional entity id itself to be cleared by
+normal application updates when that is an explicit business action.
+
+This protects historical traceability for:
+
+- technician/user assignment links on jobs and appointments
+- quote links to sites, jobs and source appointments
+- invoice links to sites, jobs and source quotes
+- communication history links to jobs, appointments, quotes, invoices and
+  payments
+- legacy message links to customers and jobs
+- document and media links to customers, jobs and appointments
+
+Hard-deleting a referenced parent with dependent historical rows is restricted.
+Operators should use the existing archive/deactivate flows unless a future
+retention/purge process is explicitly designed and tested.
+
 ## Indexes
 
 Indexes should begin with `businessId` for tenant-owned access patterns.

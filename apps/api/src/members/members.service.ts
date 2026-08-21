@@ -389,6 +389,7 @@ export class MembersService {
               passwordHash,
               role: invitation.role,
               isActive: true,
+              authVersion: { increment: 1 },
             },
             select: this.userSelect(),
           })
@@ -704,7 +705,10 @@ export class MembersService {
       if (member.userId) {
         await tx.user.update({
           where: { id: member.userId },
-          data: { isActive: dto.status === 'ACTIVE' },
+          data: {
+            isActive: dto.status === 'ACTIVE',
+            authVersion: { increment: 1 },
+          },
         });
       }
 
@@ -757,7 +761,7 @@ export class MembersService {
       if (target.userId) {
         await tx.user.update({
           where: { id: target.userId },
-          data: { isActive: false },
+          data: { isActive: false, authVersion: { increment: 1 } },
         });
       }
 
@@ -980,10 +984,12 @@ export class MembersService {
   }
 
   private async authResponse(user: UserAuthPayload): Promise<AuthResponse> {
+    const { authVersion, ...authUser } = user;
     const accessToken = await this.jwt.signAsync(
       {
         sub: user.id,
         businessId: user.businessId,
+        authVersion,
       },
       {
         expiresIn: 12 * 60 * 60,
@@ -993,7 +999,7 @@ export class MembersService {
 
     return {
       accessToken,
-      user,
+      user: authUser,
     };
   }
 
@@ -1167,6 +1173,7 @@ export class MembersService {
       lastName: true,
       role: true,
       isActive: true,
+      authVersion: true,
       business: {
         select: {
           id: true,
@@ -1213,6 +1220,7 @@ type UserAuthPayload = {
   lastName: string;
   role: BusinessRole;
   isActive: boolean;
+  authVersion: number;
   business: {
     id: string;
     name: string;

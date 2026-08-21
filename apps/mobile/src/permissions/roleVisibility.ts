@@ -24,6 +24,8 @@ export interface MoreDestination {
 type ProtectedStackRoute = Exclude<
   keyof RootStackParamList,
   | 'Login'
+  | 'ForgotPassword'
+  | 'ResetPassword'
   | 'Register'
   | 'AcceptInvitation'
   | 'PublicQuote'

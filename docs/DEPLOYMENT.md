@@ -156,6 +156,55 @@ Readiness does not run migrations and must not be used as a migration
 deployment mechanism. Apply migrations separately before or during deployment
 with the repository migration command.
 
+## Account recovery and session revocation
+
+Production account recovery uses:
+
+- `POST /api/auth/forgot-password` for neutral reset requests.
+- `POST /api/auth/reset-password` for one-time reset token consumption.
+- `POST /api/auth/sign-out-all-devices` for user-triggered server-side session
+  revocation.
+
+Configure:
+
+- `APP_RESET_PASSWORD_URL` as an HTTPS reset-password URL. If omitted, the API
+  falls back to `APP_PUBLIC_URL`.
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES=60` unless a shorter beta window is chosen.
+- `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS` and
+  `EMAIL_FROM_NAME` for real password-reset email delivery.
+
+The reset endpoint does not run migrations, create accounts or reveal whether an
+email exists. Deployment must apply the Prisma migration that adds
+`User.authVersion` and `PasswordResetToken` before enabling the reset flow.
+
+## Observability
+
+Production API logs should use structured JSON output:
+
+```bash
+LOG_LEVEL=info
+LOG_FORMAT=json
+ERROR_MONITORING_PROVIDER=none
+TORI_DEBUG=0
+```
+
+Every response includes an `X-Request-Id` header. Capture that value in load
+balancer/application logs and ask testers to include it when reporting API
+failures. Unexpected 5xx responses are sanitized for clients and logged
+server-side with the request id and safe error category.
+
+Do not enable `TORI_DEBUG` in production. Production config rejects
+`TORI_DEBUG=1`/`true` because Tori debugging is intended only for local
+planner-state troubleshooting.
+
+`ERROR_MONITORING_PROVIDER=none` is the private-beta default. The
+`ErrorMonitoringService` seam is ready for a future Sentry or equivalent
+adapter; if such an adapter is added later, continue to scrub events through
+the central redaction policy before sending them externally.
+
+See [Observability](OBSERVABILITY.md) for redaction rules, request correlation,
+worker/idempotency events and staging verification steps.
+
 ## Environment variables
 
 API:
@@ -167,6 +216,12 @@ API:
 - JWT_EXPIRES_IN
 - CORS_ORIGINS
 - TRUST_PROXY
+- LOG_LEVEL
+- LOG_FORMAT
+- ERROR_MONITORING_PROVIDER
+- SENTRY_DSN
+- SENTRY_ENVIRONMENT
+- SENTRY_RELEASE
 - RATE_LIMIT_ENABLED
 - RATE_LIMIT_WINDOW_SECONDS
 - RATE_LIMIT_MAX_REQUESTS
@@ -235,6 +290,9 @@ Production fail-fast configuration:
   bounded batch.
 - `AI_PROVIDER=openai` requires `OPENAI_API_KEY`; leave `AI_PROVIDER=local` for
   deterministic Tori behaviour.
+- Use `LOG_FORMAT=json` and `LOG_LEVEL=info` for production collection.
+  `ERROR_MONITORING_PROVIDER=none` is the private-beta default until a vendor
+  adapter is connected. `TORI_DEBUG` must remain disabled in production.
 - `STORAGE_PROVIDER=s3` is required in production. Configure `S3_BUCKET`,
   `S3_REGION`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. Set
   `S3_ENDPOINT` and `S3_FORCE_PATH_STYLE=true` for Cloudflare R2, MinIO or other

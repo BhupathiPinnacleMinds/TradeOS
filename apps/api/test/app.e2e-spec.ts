@@ -238,6 +238,7 @@ describe('Health endpoint (e2e)', () => {
             email: 'owner@example.test',
             id: 'user-1',
             role: 'OWNER',
+            authVersion: 0,
           }),
         },
       })
@@ -249,7 +250,7 @@ describe('Health endpoint (e2e)', () => {
     const config = app.get(ConfigService);
     token = new JwtService({
       secret: config.getOrThrow<string>('JWT_SECRET'),
-    }).sign({ businessId: 'business-1', sub: 'user-1' });
+    }).sign({ businessId: 'business-1', sub: 'user-1', authVersion: 0 });
   });
 
   afterAll(async () => {

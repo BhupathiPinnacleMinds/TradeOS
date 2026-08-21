@@ -11,10 +11,11 @@ import { canViewBusinessSettings } from '../permissions/roleVisibility';
 import { colours } from '../theme';
 
 export function SettingsScreen() {
-  const { logout, token, user } = useAuth();
+  const { logout, signOutAllDevices, token, user } = useAuth();
   const [communicationSettings, setCommunicationSettings] =
     useState<CustomerCommunicationSettings | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const canAccessSettings = canViewBusinessSettings(user?.role);
 
   useEffect(() => {
@@ -36,6 +37,22 @@ export function SettingsScreen() {
         [key]: !current,
       });
       setCommunicationSettings(response.settings);
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
+  async function revokeSessions() {
+    setSessionError(null);
+    setSettingsBusy(true);
+    try {
+      await signOutAllDevices();
+    } catch (error) {
+      setSessionError(
+        error instanceof Error
+          ? error.message
+          : 'Could not sign out all devices.',
+      );
     } finally {
       setSettingsBusy(false);
     }
@@ -72,6 +89,22 @@ export function SettingsScreen() {
             >
               <Text style={styles.logoutText}>Log out</Text>
             </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={settingsBusy}
+              onPress={() => void revokeSessions()}
+              style={({ pressed }) => [
+                styles.revokeButton,
+                pressed && styles.buttonPressed,
+                settingsBusy && styles.buttonDisabled,
+              ]}
+            >
+              <Text style={styles.revokeText}>Sign out all devices</Text>
+            </Pressable>
+            {sessionError ? (
+              <Text style={styles.errorText}>{sessionError}</Text>
+            ) : null}
           </>
         ) : (
           <>
@@ -181,6 +214,22 @@ export function SettingsScreen() {
             >
               <Text style={styles.logoutText}>Log out</Text>
             </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={settingsBusy}
+              onPress={() => void revokeSessions()}
+              style={({ pressed }) => [
+                styles.revokeButton,
+                pressed && styles.buttonPressed,
+                settingsBusy && styles.buttonDisabled,
+              ]}
+            >
+              <Text style={styles.revokeText}>Sign out all devices</Text>
+            </Pressable>
+            {sessionError ? (
+              <Text style={styles.errorText}>{sessionError}</Text>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -260,6 +309,18 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingVertical: 15,
   },
+  revokeButton: {
+    alignItems: 'center',
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 12,
+    paddingVertical: 15,
+  },
+  buttonDisabled: { opacity: 0.6 },
   buttonPressed: { opacity: 0.75 },
   logoutText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  revokeText: { color: colours.ink, fontSize: 16, fontWeight: '800' },
+  errorText: { color: '#B00020', lineHeight: 20, marginTop: 12 },
 });

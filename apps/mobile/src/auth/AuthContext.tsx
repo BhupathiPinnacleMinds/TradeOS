@@ -14,6 +14,7 @@ import {
   loginRequest,
   meRequest,
   registerRequest,
+  signOutAllDevicesRequest,
 } from '../api/client';
 
 const TOKEN_KEY = 'tradieos.jwt';
@@ -29,6 +30,7 @@ interface AuthContextValue {
   register(input: RegisterInput): Promise<void>;
   acceptInvitation(token: string, input: AcceptInvitationInput): Promise<void>;
   logout(): Promise<void>;
+  signOutAllDevices(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -108,6 +110,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setUser(response.user);
       },
       async logout() {
+        await deleteStoredToken();
+        setToken(null);
+        setUser(null);
+      },
+      async signOutAllDevices() {
+        if (token) {
+          await signOutAllDevicesRequest(token);
+        }
         await deleteStoredToken();
         setToken(null);
         setUser(null);

@@ -196,4 +196,63 @@ describe('validateEnvironment', () => {
       }),
     ).toThrow(/RATE_LIMIT_ENABLED/);
   });
+
+  it('rejects unsafe production observability configuration', () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionConfig(),
+        ERROR_MONITORING_PROVIDER: 'unknown',
+        LOG_FORMAT: 'xml',
+        LOG_LEVEL: 'trace',
+        TORI_DEBUG: '1',
+      }),
+    ).toThrow(/LOG_LEVEL/);
+  });
+
+  it('allows safe production observability defaults', () => {
+    expect(
+      validateEnvironment({
+        ...validProductionConfig(),
+        ERROR_MONITORING_PROVIDER: 'none',
+        LOG_FORMAT: 'json',
+        LOG_LEVEL: 'info',
+        TORI_DEBUG: '0',
+      }),
+    ).toMatchObject({ NODE_ENV: 'production' });
+  });
+
+  it('rejects an unsafe production password reset URL', () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionConfig(),
+        APP_RESET_PASSWORD_URL: 'http://localhost:8081/reset-password',
+      }),
+    ).toThrow(/APP_RESET_PASSWORD_URL/);
+  });
 });
+
+function validProductionConfig() {
+  return {
+    APP_PUBLIC_URL: 'https://app.tradieos.example',
+    CORS_ORIGINS: 'https://app.tradieos.example',
+    CUSTOMER_COMMUNICATION_WORKER_BATCH_SIZE: '50',
+    CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'true',
+    CUSTOMER_COMMUNICATION_WORKER_INTERVAL_SECONDS: '300',
+    CUSTOMER_EMAIL_PROVIDER: 'resend',
+    CUSTOMER_SMS_PROVIDER: 'twilio',
+    DATABASE_URL: 'postgresql://prod-host/tradieos',
+    EMAIL_FROM_ADDRESS: 'hello@tradieos.example',
+    EMAIL_PROVIDER: 'resend',
+    JWT_SECRET: 'production-secret-value-with-at-least-32-chars',
+    NODE_ENV: 'production',
+    RESEND_API_KEY: 're_test_key',
+    S3_ACCESS_KEY_ID: 'access-key',
+    S3_BUCKET: 'tradieos-prod',
+    S3_REGION: 'ap-southeast-2',
+    S3_SECRET_ACCESS_KEY: 'secret-key',
+    STORAGE_PROVIDER: 's3',
+    TWILIO_ACCOUNT_SID: 'AC123456789',
+    TWILIO_AUTH_TOKEN: 'twilio-secret',
+    TWILIO_MESSAGING_FROM: '+61400000000',
+  };
+}

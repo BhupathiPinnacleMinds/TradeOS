@@ -1,10 +1,6 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { StructuredLogger } from '../observability/structured-logger';
 import { CustomerCommunicationsService } from './communications.service';
 
 const DEFAULT_INTERVAL_SECONDS = 300;
@@ -16,7 +12,6 @@ const MAX_BATCH_SIZE = 250;
 export class CustomerCommunicationWorker
   implements OnModuleInit, OnModuleDestroy
 {
-  private readonly logger = new Logger(CustomerCommunicationWorker.name);
   private readonly enabled: boolean;
   private readonly intervalSeconds: number;
   private readonly batchSize: number;
@@ -25,6 +20,7 @@ export class CustomerCommunicationWorker
 
   constructor(
     private readonly communications: CustomerCommunicationsService,
+    private readonly logger: StructuredLogger,
     config: ConfigService,
   ) {
     this.enabled =
@@ -47,12 +43,18 @@ export class CustomerCommunicationWorker
 
   onModuleInit() {
     if (!this.enabled) {
-      this.logger.log('Customer communication worker disabled.');
+      this.logger.info('communications_worker_disabled', {
+        category: 'communications_worker',
+        event: 'communications_worker_disabled',
+      });
       return;
     }
-    this.logger.log(
-      `Customer communication worker enabled. intervalSeconds=${this.intervalSeconds} batchSize=${this.batchSize}`,
-    );
+    this.logger.info('communications_worker_started', {
+      batchSize: this.batchSize,
+      category: 'communications_worker',
+      event: 'communications_worker_started',
+      intervalSeconds: this.intervalSeconds,
+    });
     this.interval = setInterval(() => {
       void this.tick();
     }, this.intervalSeconds * 1000);
@@ -72,7 +74,11 @@ export class CustomerCommunicationWorker
       return null;
     }
     if (this.running) {
-      this.logger.warn('Customer communication worker tick skipped: busy.');
+      this.logger.warn('communications_worker_skipped', {
+        category: 'communications_worker',
+        event: 'communications_worker_skipped',
+        reason: 'busy',
+      });
       return null;
     }
     this.running = true;
@@ -81,14 +87,23 @@ export class CustomerCommunicationWorker
         undefined,
         this.batchSize,
       );
-      this.logger.log(
-        `Customer communication worker tick complete. due=${result.due} claimed=${result.claimed} sent=${result.sent} failed=${result.failed} skipped=${result.skipped} durationMs=${result.durationMs}`,
-      );
+      this.logger.info('communications_worker_completed', {
+        category: 'communications_worker',
+        claimed: result.claimed,
+        due: result.due,
+        durationMs: result.durationMs,
+        event: 'communications_worker_completed',
+        failed: result.failed,
+        sent: result.sent,
+        skipped: result.skipped,
+      });
       return result;
     } catch (error) {
-      this.logger.error(
-        `Customer communication worker tick failed: ${safeError(error)}`,
-      );
+      this.logger.error('communications_worker_failed', {
+        category: 'communications_worker',
+        errorCode: safeError(error),
+        event: 'communications_worker_failed',
+      });
       return null;
     } finally {
       this.running = false;

@@ -1,6 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { ExecutionContext } from '@nestjs/common';
+import type { StructuredLogger } from '../observability/structured-logger';
 import {
   RATE_LIMIT_POLICY_KEY,
   type RateLimitPolicyName,
@@ -232,7 +233,11 @@ function createGuard(values: Record<string, string> = {}) {
     },
   };
 
-  return new RateLimitGuard(config, reflector as never);
+  const logger = {
+    warn: jest.fn(),
+  } as unknown as StructuredLogger;
+
+  return new RateLimitGuard(config, reflector as never, logger);
 }
 
 let metadata: {

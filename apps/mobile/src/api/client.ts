@@ -416,8 +416,43 @@ export function registerRequest(input: {
   });
 }
 
+export function forgotPasswordRequest(input: { email: string }) {
+  return apiRequest<{ message: string }>('/auth/forgot-password', {
+    body: JSON.stringify(input),
+    method: 'POST',
+  });
+}
+
+export function resetPasswordRequest(input: {
+  token: string;
+  newPassword: string;
+}) {
+  return apiRequest<{ message: string }>('/auth/reset-password', {
+    body: JSON.stringify(input),
+    method: 'POST',
+  });
+}
+
 export function meRequest(token: string) {
   return apiRequest<Pick<AuthResponse, 'user'>>('/auth/me', { token });
+}
+
+export function changePasswordRequest(
+  token: string,
+  input: { currentPassword: string; newPassword: string },
+) {
+  return apiRequest<{ message: string }>('/auth/change-password', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function signOutAllDevicesRequest(token: string) {
+  return apiRequest<{ message: string }>('/auth/sign-out-all-devices', {
+    method: 'POST',
+    token,
+  });
 }
 
 export function membersRequest(token: string) {

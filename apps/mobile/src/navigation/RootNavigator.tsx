@@ -15,6 +15,7 @@ import { DashboardScreen } from '../screens/DashboardScreen';
 import { InvoicesScreen } from '../screens/InvoicesScreen';
 import { InvoiceDetailsScreen } from '../screens/InvoiceDetailsScreen';
 import { InvoiceFormScreen } from '../screens/InvoiceFormScreen';
+import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { JobDetailsScreen } from '../screens/JobDetailsScreen';
 import { JobFormScreen } from '../screens/JobFormScreen';
 import { JobsScreen } from '../screens/JobsScreen';
@@ -30,6 +31,7 @@ import { QuotesScreen } from '../screens/QuotesScreen';
 import { PublicQuoteScreen } from '../screens/PublicQuoteScreen';
 import { PublicInvoiceScreen } from '../screens/PublicInvoiceScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
+import { ResetPasswordScreen } from '../screens/ResetPasswordScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TeamScreen } from '../screens/TeamScreen';
 import { TeamMemberProfileScreen } from '../screens/TeamMemberProfileScreen';
@@ -72,6 +74,23 @@ function getPublicInvoiceTokenFromLocation() {
       : globalThis.location.pathname;
   const match = pathname.match(/^\/invoice\/([^/]+)$/);
 
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function getResetPasswordTokenFromLocation() {
+  if (typeof globalThis.location === 'undefined') {
+    return null;
+  }
+
+  const pathname = globalThis.location.pathname;
+  const tokenFromQuery = new URLSearchParams(globalThis.location.search).get(
+    'token',
+  );
+  if (pathname === '/reset-password' && tokenFromQuery) {
+    return tokenFromQuery;
+  }
+
+  const match = pathname.match(/^\/reset-password\/([^/]+)$/);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
@@ -127,6 +146,7 @@ export function RootNavigator() {
   const inviteToken = getInviteTokenFromLocation();
   const publicQuoteToken = getPublicQuoteTokenFromLocation();
   const publicInvoiceToken = getPublicInvoiceTokenFromLocation();
+  const resetPasswordToken = getResetPasswordTokenFromLocation();
 
   if (isLoading) {
     return (
@@ -153,9 +173,11 @@ export function RootNavigator() {
           ? 'PublicQuote'
           : !token && publicInvoiceToken
             ? 'PublicInvoice'
-            : !token && inviteToken
-              ? 'AcceptInvitation'
-              : undefined
+            : !token && resetPasswordToken
+              ? 'ResetPassword'
+              : !token && inviteToken
+                ? 'AcceptInvitation'
+                : undefined
       }
       screenOptions={{
         headerShadowVisible: false,
@@ -299,6 +321,19 @@ export function RootNavigator() {
             name="Login"
             component={LoginScreen}
             options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ForgotPassword"
+            component={ForgotPasswordScreen}
+            options={{ title: 'Forgot password' }}
+          />
+          <Stack.Screen
+            name="ResetPassword"
+            component={ResetPasswordScreen}
+            initialParams={
+              resetPasswordToken ? { token: resetPasswordToken } : undefined
+            }
+            options={{ title: 'Reset password' }}
           />
           {inviteToken ? (
             <Stack.Screen

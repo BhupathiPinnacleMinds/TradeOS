@@ -9,6 +9,13 @@ export type TeamInvitationEmailInput = {
   expiresAt: Date;
 };
 
+export type PasswordResetEmailInput = {
+  to: string;
+  firstName: string;
+  resetUrl: string;
+  expiresAt: Date;
+};
+
 export type EmailDeliveryResult = {
   provider: 'console' | 'resend';
   status: 'SENT' | 'FAILED';
@@ -22,6 +29,9 @@ export interface EmailProvider {
   ): Promise<EmailDeliveryResult>;
   resendTeamInvitation(
     input: TeamInvitationEmailInput,
+  ): Promise<EmailDeliveryResult>;
+  sendPasswordReset(
+    input: PasswordResetEmailInput,
   ): Promise<EmailDeliveryResult>;
   sendWelcomeEmail(input: {
     to: string;
@@ -39,6 +49,21 @@ export class ConsoleEmailProvider implements EmailProvider {
 
   resendTeamInvitation(input: TeamInvitationEmailInput) {
     return this.logInvitation('RESEND_INVITE', input);
+  }
+
+  sendPasswordReset(input: PasswordResetEmailInput) {
+    console.info('[TradieOS email:PASSWORD_RESET]', {
+      expiresAt: input.expiresAt.toISOString(),
+      firstName: input.firstName,
+      resetUrl: this.exposeInviteUrlInLogs
+        ? redactResetToken(input.resetUrl)
+        : '[hidden outside development]',
+      to: input.to,
+    });
+    return Promise.resolve({
+      provider: 'console' as const,
+      status: 'SENT' as const,
+    });
   }
 
   sendWelcomeEmail(input: {
@@ -85,6 +110,22 @@ export class ResendEmailProvider implements EmailProvider {
 
   resendTeamInvitation(input: TeamInvitationEmailInput) {
     return this.sendInvitation(input);
+  }
+
+  sendPasswordReset(input: PasswordResetEmailInput) {
+    return this.send({
+      html: `
+        <p>Hi ${escapeHtml(input.firstName)},</p>
+        <p>We received a request to reset your TradieOS password.</p>
+        <p><a href="${escapeHtml(input.resetUrl)}">Reset your password</a></p>
+        <p>This link expires on ${escapeHtml(
+          input.expiresAt.toLocaleString('en-AU'),
+        )}.</p>
+        <p>If you didn't request this, you can safely ignore this email.</p>
+      `,
+      subject: 'Reset your TradieOS password',
+      to: input.to,
+    });
   }
 
   sendWelcomeEmail(input: {
@@ -196,4 +237,16 @@ function escapeHtml(value: string) {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
+}
+
+function redactResetToken(resetUrl: string) {
+  try {
+    const url = new URL(resetUrl);
+    if (url.searchParams.has('token')) {
+      url.searchParams.set('token', '[redacted]');
+    }
+    return url.toString();
+  } catch {
+    return '[redacted reset url]';
+  }
 }

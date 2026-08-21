@@ -8,4 +8,5 @@ export interface AuthenticatedRequest extends Request {
 export interface JwtPayload {
   sub: string;
   businessId: string;
+  authVersion: number;
 }

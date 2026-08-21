@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { StructuredLogger } from '../observability/structured-logger';
 import { IdempotencyService } from './idempotency.service';
 
 type RecordRow = {
@@ -121,6 +122,10 @@ function createService() {
   return new IdempotencyService(
     new FakePrisma() as never,
     { get: jest.fn(() => undefined) } as unknown as ConfigService,
+    {
+      info: jest.fn(),
+      warn: jest.fn(),
+    } as unknown as StructuredLogger,
   );
 }
 

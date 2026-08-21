@@ -32,6 +32,17 @@
   remains lightweight liveness, while `GET /api/ready` verifies PostgreSQL
   connectivity through Prisma and returns minimal `ready`/`not_ready`
   responses for infrastructure routing.
+- Added the private-beta observability foundation with structured server logs,
+  `X-Request-Id` correlation, central redaction rules, sanitized unexpected
+  error responses, safe auth/rate-limit/worker/idempotency events and an
+  error-monitoring provider seam.
+- Resolved existing Prisma `onDelete: SetNull` warnings on optional compound
+  tenant relations by restricting parent hard deletes while preserving
+  archive/deactivate product semantics and historical traceability.
+- Added the private-beta account recovery and session revocation foundation:
+  neutral forgot-password requests, hash-only one-time reset tokens,
+  password-reset/change token revocation, `User.authVersion` JWT invalidation,
+  sign-out-all-devices and minimal mobile forgot/reset password UX.
 - Added the private-beta Backup and Recovery runbook covering PostgreSQL
   backups/PITR, staging restore rehearsal, Prisma migration rollback, private
   S3/R2 media/PDF recovery, scheduled communication safety and RPO/RTO targets.

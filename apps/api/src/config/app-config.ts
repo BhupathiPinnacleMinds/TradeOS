@@ -17,6 +17,7 @@ export function validateEnvironment(
   const corsOrigins = requiredString(config, 'CORS_ORIGINS', failures);
   const appPublicUrl =
     stringValue(config.APP_PUBLIC_URL) ?? stringValue(config.PUBLIC_APP_URL);
+  const passwordResetUrl = stringValue(config.APP_RESET_PASSWORD_URL);
   const emailProvider = stringValue(config.EMAIL_PROVIDER) ?? 'console';
   const aiProvider = stringValue(config.AI_PROVIDER) ?? 'local';
   const storageProvider = stringValue(config.STORAGE_PROVIDER) ?? 'local';
@@ -37,6 +38,11 @@ export function validateEnvironment(
   );
   const rateLimitEnabled = stringValue(config.RATE_LIMIT_ENABLED) ?? 'true';
   const idempotencyEnabled = stringValue(config.IDEMPOTENCY_ENABLED) ?? 'true';
+  const logLevel = stringValue(config.LOG_LEVEL) ?? 'info';
+  const logFormat = stringValue(config.LOG_FORMAT) ?? 'json';
+  const errorMonitoringProvider =
+    stringValue(config.ERROR_MONITORING_PROVIDER) ?? 'none';
+  const toriDebug = stringValue(config.TORI_DEBUG) ?? '0';
 
   if (!appPublicUrl) {
     failures.push('APP_PUBLIC_URL is required in production.');
@@ -60,6 +66,12 @@ export function validateEnvironment(
   if (appPublicUrl && isUnsafeProductionUrl(appPublicUrl)) {
     failures.push(
       'APP_PUBLIC_URL/PUBLIC_APP_URL must be an HTTPS public URL in production.',
+    );
+  }
+
+  if (passwordResetUrl && isUnsafeProductionUrl(passwordResetUrl)) {
+    failures.push(
+      'APP_RESET_PASSWORD_URL must be an HTTPS public URL in production.',
     );
   }
 
@@ -89,6 +101,24 @@ export function validateEnvironment(
 
   if (idempotencyEnabled !== 'true') {
     failures.push('IDEMPOTENCY_ENABLED must be true in production.');
+  }
+
+  if (!['debug', 'info', 'warn', 'error'].includes(logLevel)) {
+    failures.push('LOG_LEVEL must be debug, info, warn or error.');
+  }
+
+  if (!['json', 'pretty'].includes(logFormat)) {
+    failures.push('LOG_FORMAT must be json or pretty.');
+  }
+
+  if (!['none'].includes(errorMonitoringProvider)) {
+    failures.push(
+      'ERROR_MONITORING_PROVIDER must be none until a production monitoring adapter is configured.',
+    );
+  }
+
+  if (toriDebug === '1' || toriDebug === 'true') {
+    failures.push('TORI_DEBUG must be disabled in production.');
   }
 
   validatePositiveInteger(config, 'RATE_LIMIT_WINDOW_SECONDS', failures);
@@ -122,6 +152,7 @@ export function validateEnvironment(
     failures,
   );
   validatePositiveInteger(config, 'IDEMPOTENCY_RETENTION_HOURS', failures);
+  validatePositiveInteger(config, 'PASSWORD_RESET_TOKEN_TTL_MINUTES', failures);
   validateBoolean(config, 'TRUST_PROXY', failures);
 
   if (customerCommunicationsEnabled) {

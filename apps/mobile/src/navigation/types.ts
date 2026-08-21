@@ -2,6 +2,8 @@ import type { InvoiceStatus } from '@tradieos/shared';
 
 export type RootStackParamList = {
   Login: undefined;
+  ForgotPassword: undefined;
+  ResetPassword: { token?: string } | undefined;
   Register: undefined;
   AcceptInvitation: { token: string };
   PublicQuote: { token: string };

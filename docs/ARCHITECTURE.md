@@ -1,5 +1,29 @@
 # Architecture
 
+## Authentication and account recovery
+
+TradieOS uses JWT access tokens for API authentication. Tokens are signed by the
+API, expire after 12 hours and contain the authenticated user id, business id and
+an internal `authVersion` claim. JWT validation always reloads the active user
+and active `BusinessMember` record from PostgreSQL, so tenant access is derived
+from server-side state rather than client-supplied business ids.
+
+Session revocation uses a user-level version strategy instead of refresh-token
+rotation or per-device session tables. `User.authVersion` starts at `0` and is
+incremented when password reset succeeds, password change succeeds,
+sign-out-all-devices is requested, or a team member is suspended/reactivated or
+removed. Any JWT with an older version is rejected on the next API request.
+
+Password recovery is backed by the `PasswordResetToken` table. The API generates
+a long random token, emails the raw token through the existing email provider
+seam, and stores only a SHA-256 hash plus expiry/used/revoked timestamps. Reset
+acceptance is transactional and single-use; token replay fails safely.
+
+Normal logout remains local-device logout: the mobile app removes the stored JWT
+from SecureStore (or localStorage on web). Users who need server-side
+invalidation use the authenticated `POST /api/auth/sign-out-all-devices`
+endpoint, which bumps `authVersion`.
+
 ## Tori AI workflow assistant
 
 Tori is implemented as a server-side workflow assistant in `AiModule`. The
@@ -200,6 +224,36 @@ bucket names or communications-provider state.
 Readiness does not run migrations. Migration deployment remains an explicit
 deployment operation so health probes cannot change schema or data.
 
+## Observability
+
+TradieOS API observability is centralised in `ObservabilityModule`.
+`StructuredLogger` writes JSON-compatible production logs and readable local
+logs without introducing a competing logging framework. A request middleware
+adds or validates `X-Request-Id`, stores it on the request and returns it in the
+response header so mobile/web error reports can be correlated with API logs.
+
+The global exception filter preserves expected 4xx domain responses and
+sanitizes unexpected 5xx failures. Clients receive a safe code, friendly
+message and request id; they do not receive stack traces, Prisma internals,
+provider errors, storage details or secrets. Unexpected 5xx errors are passed
+through `ErrorMonitoringService`, which is currently a no-op provider seam for
+private beta and can later host Sentry or another adapter.
+
+The central redaction policy treats tokens, Authorization headers, passwords,
+database URLs, provider secrets, signed URLs, public quote/invoice tokens,
+public-token hashes, idempotency payloads/hashes, full SMS/email bodies and
+full Tori conversation text as sensitive. Operational logs should prefer
+tenant-safe internal references such as `businessId`, `userId`,
+`communicationId`, `appointmentId`, `quoteId`, `invoiceId` and
+`idempotencyRecordId`.
+
+Auth, rate limiting, the communications worker and idempotency service now emit
+safe structured events. Tori debug logging remains development-only:
+`TORI_DEBUG` must be disabled in production.
+
+See [Observability](OBSERVABILITY.md) for the operational logging and staging
+verification guide.
+
 ## Backup and recovery
 
 PostgreSQL remains the authoritative application data store and production
@@ -208,6 +262,19 @@ restore operations must account for both systems plus scheduled communications
 worker safety. The operational procedure, restore rehearsal steps, migration
 rollback guidance, S3/R2 retention expectations and RPO/RTO targets are
 documented in [Backup and Recovery](BACKUP_AND_RECOVERY.md).
+
+## Deletion semantics and historical traceability
+
+TradieOS treats most customer, job, appointment, financial, communication,
+document and media rows as historical business records. Product flows archive or
+deactivate these records instead of hard-deleting them.
+
+Optional tenant-scoped relations that include `businessId` in a compound
+foreign key use restrictive parent deletion semantics. This keeps `businessId`
+non-null on every tenant row, preserves financial/field-work history and avoids
+cross-business fallback links. Clearing an optional relation remains an
+explicit application update; deleting a referenced parent with historical
+dependents is blocked unless a future retention/purge workflow is designed.
 
 ## Mobile environment profiles
 

@@ -4,13 +4,13 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import type { AuthenticatedUser } from '@tradieos/shared';
+import { StructuredLogger } from '../observability/structured-logger';
 import {
   RATE_LIMIT_POLICY_KEY,
   type RateLimitPolicyName,
@@ -62,11 +62,11 @@ const POLICY_ENV_KEYS: Record<RateLimitPolicyName, string> = {
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private readonly buckets = new Map<string, RateLimitBucket>();
-  private readonly logger = new Logger(RateLimitGuard.name);
 
   constructor(
     private readonly config: ConfigService,
     private readonly reflector: Reflector,
+    private readonly logger: StructuredLogger,
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -109,11 +109,14 @@ export class RateLimitGuard implements CanActivate {
       );
       const response = context.switchToHttp().getResponse<Response>();
       response.setHeader('Retry-After', String(retryAfterSeconds));
-      this.logger.warn(
-        `Rate limit exceeded policy=${policyName} route=${this.safeRouteLabel(
-          context,
-        )} identity=${this.safeIdentityHash(key)} retryAfterSeconds=${retryAfterSeconds}`,
-      );
+      this.logger.warn('rate_limit_triggered', {
+        category: 'security',
+        event: 'rate_limit_triggered',
+        identityHash: this.safeIdentityHash(key),
+        policy: policyName,
+        retryAfterSeconds,
+        route: this.safeRouteLabel(context),
+      });
       throw new HttpException(
         {
           code: 'RATE_LIMIT_EXCEEDED',
