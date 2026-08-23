@@ -4,6 +4,10 @@
 
 TradieOS is currently developed locally with Docker, PostgreSQL, NestJS, and Expo. Future deployment should support a hosted API/database and Expo app distribution.
 
+See [Infrastructure Inventory](INFRASTRUCTURE_INVENTORY.md) for the current
+non-secret staging/production resource inventory and monthly infrastructure
+costs.
+
 ## Local development
 
 Requirements:
