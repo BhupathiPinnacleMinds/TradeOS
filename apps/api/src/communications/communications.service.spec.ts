@@ -478,8 +478,13 @@ function isWhereCondition(value: unknown): value is Record<string, unknown> {
 }
 
 describe('CustomerCommunicationsService', () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(makeDate('2026-08-12T00:00:00.000Z'));
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
   });
 
   it('creates an appointment confirmation and schedules one reminder', async () => {

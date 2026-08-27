@@ -12,7 +12,10 @@ describe('invoice payment mobile UX contract', () => {
 
     expect(screen).toContain('<SafeAreaView style={styles.modalSafeArea}>');
     expect(screen).toContain('<KeyboardAvoidingView');
-    expect(screen).toContain("Platform.OS === 'ios' ? 'padding' : undefined");
+    expect(screen).toContain(
+      "import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';",
+    );
+    expect(screen).toContain('behavior={keyboardAvoidingBehavior}');
     expect(screen).toContain('<ScrollView');
     expect(screen).toContain('keyboardShouldPersistTaps="handled"');
     expect(screen).toContain('contentContainerStyle={styles.modal}');
