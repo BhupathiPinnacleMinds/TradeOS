@@ -72,7 +72,7 @@ type RootNavigator = {
 };
 
 const viewModes: CalendarViewMode[] = ['day', 'week', 'month', 'agenda'];
-const topTabs: CalendarTopTab[] = ['calendar', 'dispatcher', 'today'];
+const topTabs: CalendarTopTab[] = ['calendar', 'dispatcher'];
 const dispatcherFilters: Array<{
   label: string;
   value: DispatcherFilter | '';
@@ -710,53 +710,72 @@ export function CalendarScreen({ navigation }: Props) {
         />
 
         <>
-          <View style={styles.toolbar}>
-            <Pressable
-              accessibilityLabel="Show today's appointments"
-              accessibilityRole="button"
-              onPress={() => setAnchorDate(new Date())}
-              style={styles.primaryButton}
-            >
-              <Text style={styles.primaryText}>Today</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Previous date"
-              accessibilityRole="button"
-              onPress={() =>
-                setAnchorDate((current) =>
-                  navigatePeriod(viewMode, current, -1, businessTimezone),
-                )
-              }
-              style={styles.navButton}
-            >
-              <Text style={styles.navText}>‹</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Next date"
-              accessibilityRole="button"
-              onPress={() =>
-                setAnchorDate((current) =>
-                  navigatePeriod(viewMode, current, 1, businessTimezone),
-                )
-              }
-              style={styles.navButton}
-            >
-              <Text style={styles.navText}>›</Text>
-            </Pressable>
+          <View style={styles.dateNavigatorCard}>
+            <View style={styles.dateNavigatorRow}>
+              <Pressable
+                accessibilityLabel="Previous date"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() =>
+                  setAnchorDate((current) =>
+                    navigatePeriod(viewMode, current, -1, businessTimezone),
+                  )
+                }
+                style={styles.navButton}
+              >
+                <Text style={styles.navText}>‹</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityLabel="Jump to appointment date"
+                accessibilityRole="button"
+                onPress={openJumpPicker}
+                style={styles.dateSummary}
+              >
+                <Text style={styles.dateSummaryLabel}>{label(viewMode)}</Text>
+                <Text numberOfLines={2} style={styles.dateSummaryText}>
+                  {periodLabel(viewMode, range, businessTimezone)}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityLabel="Next date"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() =>
+                  setAnchorDate((current) =>
+                    navigatePeriod(viewMode, current, 1, businessTimezone),
+                  )
+                }
+                style={styles.navButton}
+              >
+                <Text style={styles.navText}>›</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.dateActionsRow}>
+              <Pressable
+                accessibilityLabel="Show today's appointments"
+                accessibilityRole="button"
+                onPress={() => {
+                  setAnchorDate(new Date());
+                  setViewMode('day');
+                }}
+                style={styles.todayButton}
+              >
+                <Text style={styles.todayButtonText}>Today</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityLabel="Jump to appointment date"
+                accessibilityRole="button"
+                onPress={openJumpPicker}
+                style={styles.jumpTextButton}
+              >
+                <Text style={styles.jumpTextButtonText}>Jump to date</Text>
+              </Pressable>
+            </View>
           </View>
-
-          <Text style={styles.rangeText}>
-            {periodLabel(viewMode, range, businessTimezone)}
-          </Text>
-
-          <Pressable
-            accessibilityLabel="Jump to appointment date"
-            accessibilityRole="button"
-            onPress={openJumpPicker}
-            style={styles.jumpButton}
-          >
-            <Text style={styles.jumpButtonText}>Jump to date</Text>
-          </Pressable>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.chipRow}>
@@ -849,7 +868,6 @@ export function CalendarScreen({ navigation }: Props) {
               </ScrollView>
             </View>
           ) : null}
-
           {isLoading ? (
             <View style={styles.stateCard}>
               <ActivityIndicator color={colours.primary} />
@@ -1029,42 +1047,46 @@ function DispatcherBoard({
           />
 
           <View style={styles.dispatcherDateBar}>
-            <Pressable
-              accessibilityLabel="Previous dispatcher day"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() =>
-                onDateChange(addBusinessDays(selectedDate, -1, timezone))
-              }
-              style={styles.navButton}
-            >
-              <Text style={styles.navText}>‹</Text>
-            </Pressable>
-            <View style={styles.dispatcherDateCopy}>
-              <Text style={styles.dispatcherDateLabel}>Dispatcher date</Text>
-              <Text style={styles.dispatcherDateText}>
-                {formatDate(selectedDate, timezone)}
-              </Text>
+            <View style={styles.dateNavigatorRow}>
+              <Pressable
+                accessibilityLabel="Previous dispatcher day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() =>
+                  onDateChange(addBusinessDays(selectedDate, -1, timezone))
+                }
+                style={styles.navButton}
+              >
+                <Text style={styles.navText}>‹</Text>
+              </Pressable>
+              <View style={styles.dispatcherDateCopy}>
+                <Text style={styles.dispatcherDateLabel}>Dispatcher date</Text>
+                <Text style={styles.dispatcherDateText}>
+                  {formatDate(selectedDate, timezone)}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Next dispatcher day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() =>
+                  onDateChange(addBusinessDays(selectedDate, 1, timezone))
+                }
+                style={styles.navButton}
+              >
+                <Text style={styles.navText}>›</Text>
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel="Next dispatcher day"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() =>
-                onDateChange(addBusinessDays(selectedDate, 1, timezone))
-              }
-              style={styles.navButton}
-            >
-              <Text style={styles.navText}>›</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Show today in dispatcher"
-              accessibilityRole="button"
-              onPress={() => onDateChange(new Date())}
-              style={styles.primaryButton}
-            >
-              <Text style={styles.primaryText}>Today</Text>
-            </Pressable>
+            <View style={styles.dateActionsRow}>
+              <Pressable
+                accessibilityLabel="Show today in dispatcher"
+                accessibilityRole="button"
+                onPress={() => onDateChange(new Date())}
+                style={styles.todayButton}
+              >
+                <Text style={styles.todayButtonText}>Today</Text>
+              </Pressable>
+            </View>
           </View>
 
           {error ? (
@@ -1733,7 +1755,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   chipActive: { backgroundColor: colours.primary },
-  chipRow: { flexDirection: 'row', gap: 8, marginTop: 14, paddingVertical: 2 },
+  chipRow: { flexDirection: 'row', gap: 8, marginTop: 12, paddingVertical: 2 },
   chipRowWide: {
     flexDirection: 'row',
     gap: 8,
@@ -1747,7 +1769,46 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   chipTextActive: { color: '#FFFFFF' },
-  container: { padding: 24, paddingBottom: 124 },
+  container: { padding: 20, paddingBottom: 124 },
+  dateActionsRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-start',
+    marginTop: 12,
+  },
+  dateNavigatorCard: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 14,
+  },
+  dateNavigatorRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  dateSummary: {
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  dateSummaryLabel: {
+    color: colours.primary,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  dateSummaryText: {
+    color: colours.ink,
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 22,
+    marginTop: 3,
+  },
   datePickerCard: {
     backgroundColor: colours.card,
     borderColor: colours.border,
@@ -1830,13 +1891,14 @@ const styles = StyleSheet.create({
     padding: 22,
   },
   dispatcherHeroMeta: { color: '#E0E7FF', fontWeight: '800', marginTop: 8 },
-  dispatcherContainer: { padding: 24, paddingBottom: 144 },
+  dispatcherContainer: { padding: 20, paddingBottom: 144 },
   dispatcherDateBar: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 18,
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 14,
   },
   dispatcherDateCopy: { flex: 1, minWidth: 160 },
   dispatcherDateLabel: {
@@ -1927,6 +1989,18 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   jumpButtonText: { color: '#FFFFFF', fontWeight: '900' },
+  jumpTextButton: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 14,
+  },
+  jumpTextButtonText: { color: colours.ink, fontWeight: '900' },
   inlineLoading: {
     color: colours.primary,
     fontSize: 12,
@@ -2080,21 +2154,41 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   technicianName: { color: colours.ink, fontSize: 18, fontWeight: '900' },
-  title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 4 },
+  title: { color: colours.ink, fontSize: 30, fontWeight: '900', marginTop: 4 },
+  todayButton: {
+    alignItems: 'center',
+    backgroundColor: colours.primary,
+    borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  todayButtonText: { color: '#FFFFFF', fontWeight: '900' },
   toolbar: { flexDirection: 'row', gap: 8, marginTop: 18 },
   topTab: {
-    backgroundColor: colours.card,
-    borderColor: colours.border,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   topTabActive: {
     backgroundColor: colours.primary,
     borderColor: colours.primary,
   },
-  topTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
+  topTabs: {
+    backgroundColor: '#E2E8F0',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 4,
+    marginTop: 14,
+    padding: 4,
+  },
   topTabText: {
     color: colours.muted,
     fontWeight: '900',

@@ -55,6 +55,7 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -814,7 +815,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={keyboardAvoidingBehavior}
       style={styles.page}
     >
       <ScrollView

@@ -1,5 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { AccountsReceivableScreen } from '../screens/AccountsReceivableScreen';
@@ -46,6 +48,38 @@ import type { MainTabsParamList, RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<MainTabsParamList>();
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+const tabIcons: Partial<
+  Record<
+    keyof MainTabsParamList,
+    {
+      focused: IoniconName;
+      unfocused: IoniconName;
+    }
+  >
+> = {
+  Calendar: {
+    focused: 'calendar',
+    unfocused: 'calendar-outline',
+  },
+  Dashboard: {
+    focused: 'home',
+    unfocused: 'home-outline',
+  },
+  Jobs: {
+    focused: 'briefcase',
+    unfocused: 'briefcase-outline',
+  },
+  More: {
+    focused: 'menu',
+    unfocused: 'menu-outline',
+  },
+  Tori: {
+    focused: 'chatbubble-ellipses',
+    unfocused: 'chatbubble-ellipses-outline',
+  },
+};
 
 function getInviteTokenFromLocation() {
   const pathname =
@@ -101,13 +135,25 @@ function MainTabs() {
   return (
     <Tabs.Navigator
       initialRouteName={getDefaultTabForRole(user?.role)}
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colours.background },
+        tabBarIcon: ({ color, focused, size }) => {
+          const icon = tabIcons[route.name];
+          if (!icon) return null;
+
+          return (
+            <Ionicons
+              color={color}
+              name={focused ? icon.focused : icon.unfocused}
+              size={Math.min(Math.max(size, 22), 24)}
+            />
+          );
+        },
         tabBarActiveTintColor: colours.primary,
         tabBarInactiveTintColor: colours.muted,
         tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
-      }}
+      })}
     >
       {tabs.includes('Dashboard') ? (
         <Tabs.Screen name="Dashboard" component={DashboardScreen} />

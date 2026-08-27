@@ -11,6 +11,7 @@ import {
   AppState,
   Image,
   InteractionManager,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -58,6 +59,7 @@ import {
 } from '../api/mediaSelection';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -988,8 +990,15 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.host}>
-      <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      behavior={keyboardAvoidingBehavior}
+      style={styles.host}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.eyebrow}>Photos & documents</Text>
         <Text style={styles.title}>Add job evidence</Text>
         <Text style={styles.subtitle}>
@@ -1316,7 +1325,7 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

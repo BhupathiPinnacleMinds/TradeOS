@@ -9,6 +9,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,6 +28,7 @@ import {
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -288,8 +291,16 @@ export function JobFormScreen({ navigation, route }: Props) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.eyebrow}>JOB DETAILS</Text>
+    <KeyboardAvoidingView
+      behavior={keyboardAvoidingBehavior}
+      style={styles.flex}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.eyebrow}>JOB DETAILS</Text>
       <Text style={styles.title}>{jobId ? 'Edit job' : 'New job'}</Text>
       <Text style={styles.subtitle}>
         Capture the minimum useful details so the team can get moving.
@@ -583,7 +594,8 @@ export function JobFormScreen({ navigation, route }: Props) {
           </View>
         </View>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -737,6 +749,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   field: { gap: 6, marginTop: 12 },
+  flex: { backgroundColor: colours.background, flex: 1 },
   input: {
     backgroundColor: '#F8FAFC',
     borderColor: colours.border,

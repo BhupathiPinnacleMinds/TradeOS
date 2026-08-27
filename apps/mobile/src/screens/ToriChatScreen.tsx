@@ -28,6 +28,7 @@ import {
 } from '../api/client';
 import { ApiRequestError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { colours } from '../theme';
 
 const USER_MESSAGE_PREFIX = 'user-';
@@ -216,7 +217,7 @@ export function ToriChatScreen() {
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
         style={styles.keyboard}
       >

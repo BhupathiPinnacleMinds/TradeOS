@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { invitationPreviewRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -109,10 +110,14 @@ export function AcceptInvitationScreen({ route }: Props) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.keyboard}
       >
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.kicker}>TRADIEOS INVITE</Text>
           <Text style={styles.title}>Join your team workspace</Text>
           <Text style={styles.subtitle}>

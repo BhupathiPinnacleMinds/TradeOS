@@ -40,6 +40,7 @@ import {
 } from '../api/invoiceDocuments';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -662,7 +663,7 @@ function PaymentModal({
     <Modal animationType="slide" onRequestClose={onCancel} visible={visible}>
       <SafeAreaView style={styles.modalSafeArea}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={keyboardAvoidingBehavior}
           style={styles.modalKeyboard}
         >
           <ScrollView

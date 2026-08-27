@@ -106,6 +106,10 @@ module.exports = {
       ...expo.extra,
       appEnvironment: environment,
       apiUrl,
+      eas: {
+        ...expo.extra?.eas,
+        projectId: '86e42f2d-7d6b-4910-9e34-7ac51f0e4928',
+      },
     },
     name: isStaging ? 'TradieOS Staging' : expo.name,
     scheme: isStaging ? 'tradieos-staging' : expo.scheme,

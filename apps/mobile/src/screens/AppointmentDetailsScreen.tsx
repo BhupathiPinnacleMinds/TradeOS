@@ -97,6 +97,7 @@ import {
 } from '../components/MediaOverflowMenu';
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import {
   canAccessStackRoute,
@@ -1799,7 +1800,7 @@ function CompletionModal({
       visible={visible}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.completionKeyboardAvoider}
       >
         <View
@@ -2202,7 +2203,7 @@ function RescheduleModal({
       visible={visible}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.modalKeyboardAvoider}
       >
         <Pressable

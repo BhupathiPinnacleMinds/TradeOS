@@ -3,8 +3,8 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -19,8 +20,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
 export function LoginScreen({ navigation }: Props) {
   const { login } = useAuth();
-  const [email, setEmail] = useState('owner@demo-tradieos.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -42,73 +43,82 @@ export function LoginScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.container}
       >
-        <Text style={styles.kicker}>TRADIEOS</Text>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>
-          Log in to your business workspace and let Tori help with the office
-          work.
-        </Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.kicker}>TRADIEOS</Text>
+          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.subtitle}>
+            Log in to your business workspace and let Tori help with the office
+            work.
+          </Text>
 
-        <View style={styles.form}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            onChangeText={setEmail}
-            style={styles.input}
-            value={email}
-          />
+          <View style={styles.form}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              onChangeText={setEmail}
+              style={styles.input}
+              value={email}
+            />
 
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setPassword}
-            secureTextEntry
-            style={styles.input}
-            value={password}
-          />
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="password"
+              onChangeText={setPassword}
+              secureTextEntry
+              style={styles.input}
+              textContentType="password"
+              value={password}
+            />
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => navigation.navigate('ForgotPassword')}
-            style={styles.forgotButton}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate('ForgotPassword')}
+              style={styles.forgotButton}
+            >
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </Pressable>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <Pressable
-            accessibilityRole="button"
-            disabled={isSubmitting}
-            onPress={() => void submit()}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.buttonPressed,
-              isSubmitting && styles.buttonDisabled,
-            ]}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.primaryText}>Log in</Text>
-            )}
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting}
+              onPress={() => void submit()}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.buttonPressed,
+                isSubmitting && styles.buttonDisabled,
+              ]}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryText}>Log in</Text>
+              )}
+            </Pressable>
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => navigation.navigate('Register')}
-            style={styles.secondaryButton}
-          >
-            <Text style={styles.secondaryText}>
-              Create a business workspace
-            </Text>
-          </Pressable>
-        </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate('Register')}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryText}>
+                Create a business workspace
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -116,7 +126,13 @@ export function LoginScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colours.background },
-  container: { flex: 1, justifyContent: 'center', padding: 24 },
+  container: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+    paddingBottom: 40,
+  },
   kicker: {
     color: colours.primary,
     fontSize: 12,

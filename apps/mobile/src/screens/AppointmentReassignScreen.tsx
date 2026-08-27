@@ -13,6 +13,8 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -28,6 +30,7 @@ import {
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -220,7 +223,15 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   const hasConflict = Boolean(availability?.hasConflict);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      behavior={keyboardAvoidingBehavior}
+      style={styles.flex}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+      >
       <Text style={styles.eyebrow}>REASSIGN APPOINTMENT</Text>
       <Text style={styles.title}>{appointment.job.title}</Text>
 
@@ -343,7 +354,8 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         onPress={() => confirmSave(false)}
         primary
       />
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -440,6 +452,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1,
   },
+  flex: { backgroundColor: colours.background, flex: 1 },
   inlineState: { alignItems: 'center', gap: 8, marginTop: 16 },
   loadingPage: {
     alignItems: 'center',

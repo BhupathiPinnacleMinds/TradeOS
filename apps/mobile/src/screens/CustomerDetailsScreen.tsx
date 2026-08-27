@@ -58,6 +58,7 @@ import {
   MediaRemovalConfirmation,
 } from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import {
   canArchiveCustomer,
@@ -958,7 +959,7 @@ function ManualMessageModal({
   return (
     <Modal transparent visible={visible} animationType="slide">
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.modalKeyboardContainer}
       >
         <Pressable

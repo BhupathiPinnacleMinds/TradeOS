@@ -4,7 +4,9 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   Share,
   ScrollView,
@@ -27,6 +29,7 @@ import {
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { canManageTeam } from '../permissions/roleVisibility';
 import { colours } from '../theme';
@@ -1105,7 +1108,12 @@ function InviteModal({
           if (!isBusy) onClose();
         }}
       >
-        <Pressable style={styles.inviteModal}>
+        <KeyboardAvoidingView
+          behavior={keyboardAvoidingBehavior}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+          style={styles.modalKeyboardAvoider}
+        >
+          <Pressable style={styles.inviteModal}>
           <Text style={styles.modalTitle}>Invite team member</Text>
           <Text style={styles.modalBody}>
             Invite someone into this workspace. They will not create a new
@@ -1192,7 +1200,8 @@ function InviteModal({
               </Text>
             </Pressable>
           </View>
-        </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Pressable>
     </Modal>
   );
@@ -1598,6 +1607,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  modalKeyboardAvoider: { width: '100%' },
   confirmCard: {
     backgroundColor: colours.card,
     borderRadius: 22,

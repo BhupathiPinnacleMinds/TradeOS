@@ -9,7 +9,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,6 +27,7 @@ import {
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
@@ -226,8 +229,15 @@ export function CustomerFormScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      behavior={keyboardAvoidingBehavior}
+      style={styles.flex}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.eyebrow}>CUSTOMER DETAILS</Text>
         <Text style={styles.title}>
           {customerId ? 'Edit customer' : 'Add customer'}
@@ -379,7 +389,7 @@ export function CustomerFormScreen({ navigation, route }: Props) {
       />
 
       <SavingOverlay visible={isSaving} />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

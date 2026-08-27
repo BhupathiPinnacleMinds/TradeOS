@@ -20,6 +20,7 @@ import {
   timezoneForAustralianState,
 } from '@tradieos/shared';
 import { useAuth } from '../auth/AuthContext';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -80,10 +81,14 @@ export function RegisterScreen({ navigation }: Props) {
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardAvoidingBehavior}
         style={styles.keyboard}
       >
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.title}>Create your TradieOS workspace</Text>
           <Text style={styles.subtitle}>
             This creates an owner account and a business workspace. All jobs,

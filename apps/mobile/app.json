@@ -20,6 +20,7 @@
     "android": {
       "package": "au.com.tradieos.mobile",
       "versionCode": 1,
+      "softwareKeyboardLayoutMode": "resize",
       "blockedPermissions": ["android.permission.RECORD_AUDIO"],
       "permissions": ["CAMERA", "READ_MEDIA_IMAGES"],
       "adaptiveIcon": {
