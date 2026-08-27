@@ -217,8 +217,10 @@ export function ToriChatScreen() {
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={keyboardAvoidingBehavior}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
+        behavior={
+          Platform.OS === 'android' ? 'padding' : keyboardAvoidingBehavior
+        }
+        keyboardVerticalOffset={tabBarHeight}
         style={styles.keyboard}
       >
         <ScrollView
