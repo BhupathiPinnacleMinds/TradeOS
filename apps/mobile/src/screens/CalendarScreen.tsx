@@ -12,7 +12,7 @@ import {
   APPOINTMENT_STATUS_COLOURS,
   APPOINTMENT_STATUSES,
   DEFAULT_BUSINESS_TIMEZONE,
-  formatBusinessRelativeDay,
+  formatBusinessRelativeDateHeading,
   formatBusinessTimeRange,
   formatBusinessLongDate,
   formatBusinessTime,
@@ -202,11 +202,7 @@ function periodLabel(
   timezone: string = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   if (viewMode === 'day') {
-    return `${formatBusinessRelativeDay(
-      range.start,
-      new Date(),
-      timezone,
-    )} · ${formatDate(range.start, timezone)}`;
+    return formatBusinessRelativeDateHeading(range.start, new Date(), timezone);
   }
   if (viewMode === 'month') {
     return new Intl.DateTimeFormat('en-AU', {

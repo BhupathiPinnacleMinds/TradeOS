@@ -75,6 +75,10 @@ const tabIcons: Partial<
     focused: 'menu',
     unfocused: 'menu-outline',
   },
+  MyDay: {
+    focused: 'today',
+    unfocused: 'today-outline',
+  },
   Tori: {
     focused: 'chatbubble-ellipses',
     unfocused: 'chatbubble-ellipses-outline',

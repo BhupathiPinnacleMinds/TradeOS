@@ -1,6 +1,7 @@
 ﻿import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDate,
+  formatBusinessRelativeDateHeading,
   formatBusinessRelativeDay,
   formatBusinessTime,
   formatBusinessTimeRange,
@@ -144,6 +145,28 @@ describe('business datetime utilities', () => {
       ),
     ).toBe('Tomorrow');
   });
+
+  it.each([
+    ['today', '2026-08-28T02:00:00.000Z', 'Today · Fri, 28 Aug 2026'],
+    ['tomorrow', '2026-08-29T02:00:00.000Z', 'Tomorrow · Sat, 29 Aug 2026'],
+    ['yesterday', '2026-08-27T02:00:00.000Z', 'Yesterday · Thu, 27 Aug 2026'],
+    ['ordinary future', '2026-08-30T02:00:00.000Z', 'Sun, 30 Aug 2026'],
+    ['ordinary past', '2026-08-26T02:00:00.000Z', 'Wed, 26 Aug 2026'],
+    ['previous year', '2025-08-28T02:00:00.000Z', 'Thu, 28 Aug 2025'],
+    ['next year', '2027-08-28T02:00:00.000Z', 'Sat, 28 Aug 2027'],
+    ['leap day', '2028-02-29T02:00:00.000Z', 'Tue, 29 Feb 2028'],
+  ])(
+    'formats %s calendar heading without duplicate dates',
+    (_label, value, expected) => {
+      expect(
+        formatBusinessRelativeDateHeading(
+          value,
+          '2026-08-28T02:00:00.000Z',
+          'Australia/Sydney',
+        ),
+      ).toBe(expected);
+    },
+  );
 
   it.each([
     ['2026-07-23T18:59:00.000Z', 'Australia/Sydney', 'Hello, Mia'],

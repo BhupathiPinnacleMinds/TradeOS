@@ -234,6 +234,17 @@ export function formatBusinessRelativeDay(
   return formatBusinessLongDate(value, timezone);
 }
 
+export function formatBusinessRelativeDateHeading(
+  value: Date | string,
+  reference: Date | string = new Date(),
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const relativeDay = formatBusinessRelativeDay(value, reference, timezone);
+  const fullDate = formatBusinessLongDate(value, timezone);
+
+  return relativeDay === fullDate ? fullDate : `${relativeDay} · ${fullDate}`;
+}
+
 export function getBusinessGreeting({
   firstName,
   now = new Date(),
