@@ -1,13 +1,15 @@
 import type { BusinessRole, MemberStatus, TeamMember } from '@tradieos/shared';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   Share,
   ScrollView,
   StyleSheet,
@@ -16,7 +18,10 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import {
   ApiRequestError,
   cancelInvitationRequest,
@@ -175,11 +180,13 @@ export function TeamScreen() {
   const navigation = useNavigation<RootNavigation>();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const menuButtonRefs = useRef<Record<string, View | null>>({});
+  const hasLoadedMembersRef = useRef(false);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<BusinessRole | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<MemberStatus | 'ALL'>('ALL');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [isInviteModalVisible, setIsInviteModalVisible] = useState(false);
   const [developmentInvite, setDevelopmentInvite] =
@@ -241,8 +248,29 @@ export function TeamScreen() {
   }
 
   useEffect(() => {
-    void loadMembers();
+    hasLoadedMembersRef.current = false;
   }, [token]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!token) return undefined;
+
+      const shouldRefreshInBackground = hasLoadedMembersRef.current;
+      hasLoadedMembersRef.current = true;
+      void loadMembers({ silent: shouldRefreshInBackground });
+
+      return undefined;
+    }, [token]),
+  );
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    try {
+      await loadMembers({ silent: true });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
 
   const filteredMembers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -592,6 +620,19 @@ export function TeamScreen() {
     return 'No team members found.';
   }
 
+  function resetInviteForm() {
+    setInviteEmail('');
+    setInviteEmailError(null);
+    setInviteFirstName('');
+    setInviteLastName('');
+    setInviteRole('TECHNICIAN');
+  }
+
+  function closeInviteModal() {
+    resetInviteForm();
+    setIsInviteModalVisible(false);
+  }
+
   const confirmCopy = pendingAction ? getConfirmationCopy(pendingAction) : null;
   const confirmBusy =
     Boolean(pendingAction) &&
@@ -622,6 +663,14 @@ export function TeamScreen() {
           setMenuMember(null);
           setMenuAnchor(null);
         }}
+        refreshControl={
+          <RefreshControl
+            colors={[colours.primary]}
+            onRefresh={() => void handleRefresh()}
+            refreshing={isRefreshing}
+            tintColor={colours.primary}
+          />
+        }
         scrollEventThrottle={16}
       >
         <Text style={styles.eyebrow}>BUSINESS WORKSPACE</Text>
@@ -870,7 +919,7 @@ export function TeamScreen() {
         inviteRole={inviteRole}
         isBusy={isInviting}
         isVisible={isInviteModalVisible}
-        onClose={() => setIsInviteModalVisible(false)}
+        onClose={closeInviteModal}
         onInvite={() => void createInvite()}
         setInviteEmail={(value) => {
           setInviteEmail(value);
@@ -1093,116 +1142,153 @@ function InviteModal({
   setInviteLastName(value: string): void;
   setInviteRole(value: BusinessRole): void;
 }) {
+  const insets = useSafeAreaInsets();
+
+  function closeModal() {
+    Keyboard.dismiss();
+    onClose();
+  }
+
   return (
     <Modal
       animationType="slide"
       onRequestClose={() => {
-        if (!isBusy) onClose();
+        if (!isBusy) closeModal();
       }}
       transparent
       visible={isVisible}
     >
-      <Pressable
-        style={styles.modalBackdrop}
-        onPress={() => {
-          if (!isBusy) onClose();
-        }}
+      <KeyboardAvoidingView
+        behavior={keyboardAvoidingBehavior}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+        style={styles.modalKeyboardAvoider}
       >
-        <KeyboardAvoidingView
-          behavior={keyboardAvoidingBehavior}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
-          style={styles.modalKeyboardAvoider}
-        >
-          <Pressable style={styles.inviteModal}>
-          <Text style={styles.modalTitle}>Invite team member</Text>
-          <Text style={styles.modalBody}>
-            Invite someone into this workspace. They will not create a new
-            business.
-          </Text>
-          <TextInput
-            accessibilityLabel="Invite email"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            onChangeText={setInviteEmail}
-            placeholder="Email"
-            placeholderTextColor={colours.muted}
-            style={[styles.input, inviteEmailError && styles.inputError]}
-            value={inviteEmail}
-          />
-          {inviteEmailError ? (
-            <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
-              {inviteEmailError}
-            </Text>
-          ) : null}
-          <View style={styles.inputRow}>
-            <TextInput
-              accessibilityLabel="Invite first name"
-              onChangeText={setInviteFirstName}
-              placeholder="First name"
-              placeholderTextColor={colours.muted}
-              style={[styles.input, styles.inputHalf]}
-              value={inviteFirstName}
-            />
-            <TextInput
-              accessibilityLabel="Invite last name"
-              onChangeText={setInviteLastName}
-              placeholder="Last name"
-              placeholderTextColor={colours.muted}
-              style={[styles.input, styles.inputHalf]}
-              value={inviteLastName}
-            />
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {roles
-              .filter((role) => currentUserRole === 'OWNER' || role !== 'OWNER')
-              .map((role) => (
-                <Pressable
-                  accessibilityLabel={`Select ${roleLabel(role)} role`}
-                  accessibilityRole="button"
-                  key={role}
-                  onPress={() => setInviteRole(role)}
-                  style={[
-                    styles.rolePicker,
-                    inviteRole === role && styles.rolePickerActive,
-                  ]}
-                >
+        <View style={styles.modalBackdrop}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.inviteModalScrollContent,
+              {
+                paddingBottom: Math.max(24, insets.bottom + 24),
+                paddingTop: Math.max(24, insets.top + 12),
+              },
+            ]}
+            keyboardDismissMode={
+              Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+            }
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.inviteModalScroll}
+          >
+            <Pressable
+              accessibilityLabel="Close invite modal"
+              disabled={isBusy}
+              onPress={closeModal}
+              style={styles.inviteModalTouchLayer}
+            >
+              <Pressable
+                onPress={(event) => event.stopPropagation()}
+                style={styles.inviteModal}
+              >
+                <Text style={styles.modalTitle}>Invite team member</Text>
+                <Text style={styles.modalBody}>
+                  Invite someone into this workspace. They will not create a new
+                  business.
+                </Text>
+                <TextInput
+                  accessibilityLabel="Invite email"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  onChangeText={setInviteEmail}
+                  placeholder="Email"
+                  placeholderTextColor={colours.muted}
+                  style={[styles.input, inviteEmailError && styles.inputError]}
+                  value={inviteEmail}
+                />
+                {inviteEmailError ? (
                   <Text
-                    style={[
-                      styles.rolePickerText,
-                      inviteRole === role && styles.rolePickerTextActive,
-                    ]}
+                    accessibilityLiveRegion="polite"
+                    style={styles.fieldError}
                   >
-                    {roleLabel(role)}
+                    {inviteEmailError}
                   </Text>
-                </Pressable>
-              ))}
+                ) : null}
+                <View style={styles.inputRow}>
+                  <TextInput
+                    accessibilityLabel="Invite first name"
+                    onChangeText={setInviteFirstName}
+                    placeholder="First name"
+                    placeholderTextColor={colours.muted}
+                    style={[styles.input, styles.inputHalf]}
+                    value={inviteFirstName}
+                  />
+                  <TextInput
+                    accessibilityLabel="Invite last name"
+                    onChangeText={setInviteLastName}
+                    placeholder="Last name"
+                    placeholderTextColor={colours.muted}
+                    style={[styles.input, styles.inputHalf]}
+                    value={inviteLastName}
+                  />
+                </View>
+                <ScrollView
+                  horizontal
+                  keyboardShouldPersistTaps="handled"
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {roles
+                    .filter(
+                      (role) => currentUserRole === 'OWNER' || role !== 'OWNER',
+                    )
+                    .map((role) => (
+                      <Pressable
+                        accessibilityLabel={`Select ${roleLabel(role)} role`}
+                        accessibilityRole="button"
+                        key={role}
+                        onPress={() => setInviteRole(role)}
+                        style={[
+                          styles.rolePicker,
+                          inviteRole === role && styles.rolePickerActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.rolePickerText,
+                            inviteRole === role && styles.rolePickerTextActive,
+                          ]}
+                        >
+                          {roleLabel(role)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                </ScrollView>
+                <View style={styles.modalActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isBusy}
+                    onPress={closeModal}
+                    style={[styles.modalSecondary, isBusy && styles.pressed]}
+                  >
+                    <Text style={styles.modalSecondaryText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isBusy}
+                    onPress={onInvite}
+                    style={[styles.modalPrimary, isBusy && styles.pressed]}
+                  >
+                    {isBusy ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : null}
+                    <Text style={styles.modalPrimaryText}>
+                      {isBusy ? 'Creating invite...' : 'Create invite'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            </Pressable>
           </ScrollView>
-          <View style={styles.modalActions}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={isBusy}
-              onPress={onClose}
-              style={[styles.modalSecondary, isBusy && styles.pressed]}
-            >
-              <Text style={styles.modalSecondaryText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={isBusy}
-              onPress={onInvite}
-              style={[styles.modalPrimary, isBusy && styles.pressed]}
-            >
-              {isBusy ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : null}
-              <Text style={styles.modalPrimaryText}>
-                {isBusy ? 'Creating invite...' : 'Create invite'}
-              </Text>
-            </Pressable>
-          </View>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1607,7 +1693,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  modalKeyboardAvoider: { width: '100%' },
+  modalKeyboardAvoider: { flex: 1 },
+  inviteModalScroll: {
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  inviteModalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  inviteModalTouchLayer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   confirmCard: {
     backgroundColor: colours.card,
     borderRadius: 22,
@@ -1624,6 +1722,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   inviteModal: {
+    alignSelf: 'center',
     backgroundColor: colours.card,
     borderRadius: 22,
     gap: 12,
