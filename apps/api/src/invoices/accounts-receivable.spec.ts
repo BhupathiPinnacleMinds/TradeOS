@@ -66,6 +66,7 @@ describe('InvoicesService accounts receivable', () => {
         invoiceSent: jest.fn(),
         paymentRecorded: jest.fn(),
       } as never,
+      { createForRoles: jest.fn() } as never,
     );
   });
 

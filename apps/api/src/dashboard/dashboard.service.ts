@@ -253,7 +253,7 @@ export class DashboardService {
         },
       }),
       this.prisma.notification.count({
-        where: { businessId, status: 'UNREAD' },
+        where: { businessId, status: 'UNREAD', userId: currentUser.id },
       }),
       this.prisma.aiMessage.count({ where: { businessId } }),
       this.prisma.job.findMany({
@@ -353,15 +353,22 @@ export class DashboardService {
         },
       }),
       this.prisma.notification.findMany({
-        where: { businessId },
+        where: {
+          businessId,
+          status: { not: 'ARCHIVED' },
+          userId: currentUser.id,
+        },
         orderBy: { createdAt: 'desc' },
         take: 5,
         select: {
+          body: true,
+          createdAt: true,
+          entityId: true,
+          entityType: true,
           id: true,
           title: true,
-          body: true,
           status: true,
-          createdAt: true,
+          type: true,
         },
       }),
     ]);

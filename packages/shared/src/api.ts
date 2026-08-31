@@ -86,6 +86,9 @@ export interface DashboardSummaryResponse {
     title: string;
     body: string;
     status: string;
+    type?: string;
+    entityType?: string | null;
+    entityId?: string | null;
     createdAt: string;
   }>;
   toriPriority: {

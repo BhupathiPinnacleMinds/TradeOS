@@ -24,6 +24,7 @@ import {
   INVOICE_VIEW_ROLES,
   INVOICE_VOID_ROLES,
   calculateInvoiceTotals,
+  formatAudCents,
   getInvoiceDisplayStatus,
   parseInvoiceQuantityInput,
   roleCanEditInvoice,
@@ -34,6 +35,7 @@ import { CustomerCommunicationsService } from '../communications/communications.
 import { STORAGE_PROVIDER } from '../media/storage-provider';
 import type { StorageProvider } from '../media/storage-provider';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   ConsoleInvoiceEmailProvider,
   type InvoiceEmailProvider,
@@ -75,6 +77,7 @@ export class InvoicesService {
     private readonly config: ConfigService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly communications: CustomerCommunicationsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAll(
@@ -789,6 +792,7 @@ export class InvoicesService {
       invoiceId: id,
       paymentId,
     });
+    await this.notifyPaymentRecorded(currentUser, invoice, dto.amountCents);
     return this.findOne(currentUser, id);
   }
 
@@ -1586,6 +1590,29 @@ export class InvoicesService {
       select: { timezone: true },
     });
     return business?.timezone ?? 'Australia/Melbourne';
+  }
+
+  private async notifyPaymentRecorded(
+    currentUser: AuthenticatedUser,
+    invoice: InvoiceRecord,
+    amountCents: number,
+  ) {
+    await this.notifications.createForRoles({
+      actorUserId: currentUser.id,
+      body: `${formatAudCents(amountCents)} was recorded against ${
+        invoice.invoiceNumber
+      }.`,
+      businessId: currentUser.businessId,
+      entityId: invoice.id,
+      entityType: 'invoice',
+      metadata: {
+        amountCents,
+        invoiceNumber: invoice.invoiceNumber,
+      },
+      roles: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'ACCOUNTANT'],
+      title: 'Payment recorded',
+      type: 'PAYMENT_RECORDED',
+    });
   }
 
   private invoiceInclude() {

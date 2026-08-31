@@ -32,6 +32,7 @@ import {
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
 import { CustomerCommunicationsService } from '../communications/communications.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   ListQuotesQueryDto,
@@ -83,6 +84,7 @@ export class QuotesService {
     private readonly config: ConfigService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly communications: CustomerCommunicationsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAll(
@@ -564,6 +566,17 @@ export class QuotesService {
       currentUser.businessId,
       updated.id,
     );
+    await this.notifyQuoteAction({
+      actorUserId: currentUser.id,
+      businessId: currentUser.businessId,
+      body: `${updated.quoteNumber} was accepted for ${formatAudCents(
+        updated.totalCents,
+      )}.`,
+      quoteId: updated.id,
+      quoteNumber: updated.quoteNumber,
+      title: 'Quote accepted',
+      type: 'QUOTE_ACTION',
+    });
     return this.findOne(currentUser, updated.id);
   }
 
@@ -611,6 +624,15 @@ export class QuotesService {
       currentUser.businessId,
       updated.id,
     );
+    await this.notifyQuoteAction({
+      actorUserId: currentUser.id,
+      businessId: currentUser.businessId,
+      body: `${updated.quoteNumber} was declined.`,
+      quoteId: updated.id,
+      quoteNumber: updated.quoteNumber,
+      title: 'Quote declined',
+      type: 'QUOTE_ACTION',
+    });
     return this.findOne(currentUser, updated.id);
   }
 
@@ -964,6 +986,16 @@ export class QuotesService {
       context.quote.businessId,
       context.quote.id,
     );
+    await this.notifyQuoteAction({
+      businessId: context.quote.businessId,
+      body: `${context.quote.quoteNumber} was accepted by ${dto.acceptedByName.trim()} for ${formatAudCents(
+        context.quote.totalCents,
+      )}.`,
+      quoteId: context.quote.id,
+      quoteNumber: context.quote.quoteNumber,
+      title: 'Quote accepted',
+      type: 'QUOTE_ACTION',
+    });
     return this.publicPreview(token, false);
   }
 
@@ -1013,7 +1045,37 @@ export class QuotesService {
       context.quote.businessId,
       context.quote.id,
     );
+    await this.notifyQuoteAction({
+      businessId: context.quote.businessId,
+      body: `${context.quote.quoteNumber} was declined by the customer.`,
+      quoteId: context.quote.id,
+      quoteNumber: context.quote.quoteNumber,
+      title: 'Quote declined',
+      type: 'QUOTE_ACTION',
+    });
     return this.publicPreview(token, false);
+  }
+
+  private async notifyQuoteAction(input: {
+    actorUserId?: string | null;
+    businessId: string;
+    body: string;
+    quoteId: string;
+    quoteNumber: string;
+    title: string;
+    type: 'QUOTE_ACTION';
+  }) {
+    await this.notifications.createForRoles({
+      actorUserId: input.actorUserId,
+      body: input.body,
+      businessId: input.businessId,
+      entityId: input.quoteId,
+      entityType: 'quote',
+      metadata: { quoteNumber: input.quoteNumber },
+      roles: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SALES'],
+      title: input.title,
+      type: input.type,
+    });
   }
 
   private async replaceQuoteContents(

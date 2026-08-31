@@ -1225,7 +1225,14 @@ export class CustomerCommunicationsService {
         .map((member) => ({
           body: `A ${record.type.replaceAll('_', ' ').toLowerCase()} communication could not be delivered.`,
           businessId: record.businessId,
+          entityId: record.id,
+          entityType: 'communication',
+          metadata: {
+            communicationId: record.id,
+            communicationType: record.type,
+          },
           title: 'Customer communication failed',
+          type: 'COMMUNICATION_FAILED',
           userId: member.userId,
         })),
       skipDuplicates: true,

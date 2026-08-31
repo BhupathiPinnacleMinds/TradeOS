@@ -48,6 +48,10 @@ import type {
   MediaUploadTargetRequest,
   MediaUploadTargetResponse,
   MyDayResponse,
+  MarkAllNotificationsReadResponse,
+  MarkNotificationReadResponse,
+  NotificationsListResponse,
+  NotificationUnreadCountResponse,
   ResendInvitationResponse,
   TeamMemberDetailResponse,
   TeamMember,
@@ -516,6 +520,44 @@ export function cancelInvitationRequest(token: string, memberId: string) {
     method: 'POST',
     token,
   });
+}
+
+export function notificationsRequest(
+  token: string,
+  params: {
+    page?: number;
+    pageSize?: number;
+    status?: 'ALL' | 'UNREAD';
+  } = {},
+) {
+  return apiRequest<NotificationsListResponse>(
+    `/notifications${queryString(params)}`,
+    { token },
+  );
+}
+
+export function notificationUnreadCountRequest(token: string) {
+  return apiRequest<NotificationUnreadCountResponse>(
+    '/notifications/unread-count',
+    { token },
+  );
+}
+
+export function markNotificationReadRequest(token: string, id: string) {
+  return apiRequest<MarkNotificationReadResponse>(`/notifications/${id}/read`, {
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function markAllNotificationsReadRequest(token: string) {
+  return apiRequest<MarkAllNotificationsReadResponse>(
+    '/notifications/read-all',
+    {
+      method: 'PATCH',
+      token,
+    },
+  );
 }
 
 export function updateMemberRoleRequest(

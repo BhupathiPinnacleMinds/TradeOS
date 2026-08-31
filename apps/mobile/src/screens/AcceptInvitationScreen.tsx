@@ -115,7 +115,9 @@ export function AcceptInvitationScreen({ route }: Props) {
       >
         <ScrollView
           contentContainerStyle={styles.container}
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardDismissMode={
+            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.kicker}>TRADIEOS INVITE</Text>

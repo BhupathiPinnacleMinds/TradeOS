@@ -301,299 +301,301 @@ export function JobFormScreen({ navigation, route }: Props) {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.eyebrow}>JOB DETAILS</Text>
-      <Text style={styles.title}>{jobId ? 'Edit job' : 'New job'}</Text>
-      <Text style={styles.subtitle}>
-        Capture the minimum useful details so the team can get moving.
-      </Text>
-
-      <Section title="Customer">
-        {!jobId ? (
-          <Toggle
-            active={useQuickCustomer}
-            label="Create quick customer"
-            onPress={() => {
-              setUseQuickCustomer((current) => !current);
-              setForm((current) => ({
-                ...current,
-                customerId: useQuickCustomer ? current.customerId : undefined,
-                quickCustomer: useQuickCustomer
-                  ? undefined
-                  : {
-                      addressLine1: current.addressLine1,
-                      addressLine2: current.addressLine2,
-                      name: '',
-                      phone: '',
-                      postcode: current.postcode,
-                      state: current.state,
-                      suburb: current.suburb,
-                    },
-              }));
-            }}
-          />
-        ) : null}
-        {!useQuickCustomer ? (
-          <>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.pickerRow}>
-                {customers.map((customer) => (
-                  <Chip
-                    active={form.customerId === customer.id}
-                    key={customer.id}
-                    label={customer.displayName}
-                    onPress={() => {
-                      update('customerId', customer.id);
-                      update('addressLine1', customer.addressLine1 ?? '');
-                      update('addressLine2', customer.addressLine2 ?? '');
-                      update('suburb', customer.suburb ?? '');
-                      update('state', customer.state ?? 'NSW');
-                      update('postcode', customer.postcode ?? '');
-                    }}
-                  />
-                ))}
-              </View>
-            </ScrollView>
-            {errors.customerId ? (
-              <Text style={styles.error}>{errors.customerId}</Text>
-            ) : null}
-            {selectedCustomer ? (
-              <Text style={styles.muted}>
-                Selected: {selectedCustomer.displayName}
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Field
-              error={errors.quickCustomerName}
-              label="Customer name"
-              onChangeText={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  quickCustomer: {
-                    ...(current.quickCustomer ?? {
-                      addressLine1: '',
-                      name: '',
-                      phone: '',
-                      postcode: '',
-                      state: 'NSW',
-                      suburb: '',
-                    }),
-                    name: value,
-                  },
-                }))
-              }
-              value={form.quickCustomer?.name ?? ''}
-            />
-            <Field
-              error={errors.quickCustomerPhone}
-              keyboardType="phone-pad"
-              label="Phone"
-              onChangeText={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  quickCustomer: {
-                    ...(current.quickCustomer ?? {
-                      addressLine1: '',
-                      name: '',
-                      phone: '',
-                      postcode: '',
-                      state: 'NSW',
-                      suburb: '',
-                    }),
-                    phone: value,
-                  },
-                }))
-              }
-              value={form.quickCustomer?.phone ?? ''}
-            />
-            <Text style={styles.muted}>
-              The address below will be saved to the new customer and job.
-            </Text>
-          </>
-        )}
-      </Section>
-
-      <Section title="Basics">
-        <Field
-          error={errors.title}
-          label="Title"
-          onChangeText={(value) => update('title', value)}
-          value={form.title}
-        />
-        <Field
-          label="Trade type"
-          onChangeText={(value) => update('tradeType', value)}
-          value={form.tradeType ?? ''}
-        />
-        <Field
-          label="Description"
-          multiline
-          onChangeText={(value) => update('description', value)}
-          value={form.description ?? ''}
-        />
-        <Picker
-          label="Status"
-          options={statuses}
-          selected={form.status}
-          onSelect={(value) => update('status', value)}
-        />
-        <Picker
-          label="Priority"
-          options={priorities}
-          selected={form.priority}
-          onSelect={(value) => update('priority', value)}
-        />
-      </Section>
-
-      <Section title="Schedule">
-        <Field
-          error={errors.scheduledStart}
-          label="Scheduled start"
-          onChangeText={(value) => update('scheduledStart', value)}
-          value={form.scheduledStart}
-        />
-        <Field
-          error={errors.scheduledEnd}
-          label="Scheduled end"
-          onChangeText={(value) => update('scheduledEnd', value)}
-          value={form.scheduledEnd ?? ''}
-        />
-        <Field
-          keyboardType="number-pad"
-          label="Estimated duration minutes"
-          onChangeText={(value) =>
-            update('estimatedDurationMinutes', value ? Number(value) : null)
-          }
-          value={String(form.estimatedDurationMinutes ?? '')}
-        />
-      </Section>
-
-      <Section title="Address">
-        <Field
-          error={errors.addressLine1}
-          label="Address line 1"
-          onChangeText={(value) => update('addressLine1', value)}
-          value={form.addressLine1}
-        />
-        <Field
-          label="Address line 2"
-          onChangeText={(value) => update('addressLine2', value)}
-          value={form.addressLine2 ?? ''}
-        />
-        <Field
-          error={errors.suburb}
-          label="Suburb"
-          onChangeText={(value) => update('suburb', value)}
-          value={form.suburb}
-        />
-        <Picker
-          label="State"
-          options={['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']}
-          selected={form.state}
-          onSelect={(value) => update('state', value)}
-        />
-        <Field
-          error={errors.postcode}
-          keyboardType="number-pad"
-          label="Postcode"
-          onChangeText={(value) => update('postcode', value)}
-          value={form.postcode}
-        />
-        <Field
-          label="Access instructions"
-          multiline
-          onChangeText={(value) => update('accessInstructions', value)}
-          value={form.accessInstructions ?? ''}
-        />
-      </Section>
-
-      <Section title="Assignment">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.pickerRow}>
-            <Chip
-              active={!form.assignedToUserId}
-              label="Unassigned"
-              onPress={() => update('assignedToUserId', null)}
-            />
-            {members.map((member) => (
-              <Chip
-                active={form.assignedToUserId === member.userId}
-                key={member.id}
-                label={member.name}
-                onPress={() => update('assignedToUserId', member.userId ?? '')}
-              />
-            ))}
-          </View>
-        </ScrollView>
-      </Section>
-
-      <Section title="Notes and follow-up">
-        <Field
-          label="Customer notes"
-          multiline
-          onChangeText={(value) => update('customerNotes', value)}
-          value={form.customerNotes ?? ''}
-        />
-        <Field
-          label="Internal notes"
-          multiline
-          onChangeText={(value) => update('internalNotes', value)}
-          value={form.internalNotes ?? ''}
-        />
-        <Toggle
-          active={Boolean(form.requiresQuote)}
-          label="Requires quote"
-          onPress={() => update('requiresQuote', !form.requiresQuote)}
-        />
-        <Toggle
-          active={Boolean(form.requiresInvoice)}
-          label="Requires invoice"
-          onPress={() => update('requiresInvoice', !form.requiresInvoice)}
-        />
-      </Section>
-
-      <Pressable
-        disabled={isSaving}
-        onPress={() => void save()}
-        style={styles.saveButton}
-      >
-        {isSaving ? <ActivityIndicator color="#FFFFFF" /> : null}
-        <Text style={styles.saveText}>
-          {isSaving ? 'Saving job...' : 'Save job'}
+        <Text style={styles.title}>{jobId ? 'Edit job' : 'New job'}</Text>
+        <Text style={styles.subtitle}>
+          Capture the minimum useful details so the team can get moving.
         </Text>
-      </Pressable>
 
-      {createdJobPrompt ? (
-        <View style={styles.promptCard}>
-          <Text style={styles.promptTitle}>Job created successfully.</Text>
-          <Text style={styles.muted}>Schedule an appointment now?</Text>
-          <View style={styles.promptActions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                navigation.replace('AppointmentForm', {
-                  customerId: createdJobPrompt.customerId,
-                  jobId: createdJobPrompt.jobId,
-                })
-              }
-              style={styles.promptPrimary}
-            >
-              <Text style={styles.promptPrimaryText}>Schedule Now</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                navigation.replace('JobDetails', {
-                  jobId: createdJobPrompt.jobId,
-                })
-              }
-              style={styles.promptSecondary}
-            >
-              <Text style={styles.promptSecondaryText}>Later</Text>
-            </Pressable>
+        <Section title="Customer">
+          {!jobId ? (
+            <Toggle
+              active={useQuickCustomer}
+              label="Create quick customer"
+              onPress={() => {
+                setUseQuickCustomer((current) => !current);
+                setForm((current) => ({
+                  ...current,
+                  customerId: useQuickCustomer ? current.customerId : undefined,
+                  quickCustomer: useQuickCustomer
+                    ? undefined
+                    : {
+                        addressLine1: current.addressLine1,
+                        addressLine2: current.addressLine2,
+                        name: '',
+                        phone: '',
+                        postcode: current.postcode,
+                        state: current.state,
+                        suburb: current.suburb,
+                      },
+                }));
+              }}
+            />
+          ) : null}
+          {!useQuickCustomer ? (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.pickerRow}>
+                  {customers.map((customer) => (
+                    <Chip
+                      active={form.customerId === customer.id}
+                      key={customer.id}
+                      label={customer.displayName}
+                      onPress={() => {
+                        update('customerId', customer.id);
+                        update('addressLine1', customer.addressLine1 ?? '');
+                        update('addressLine2', customer.addressLine2 ?? '');
+                        update('suburb', customer.suburb ?? '');
+                        update('state', customer.state ?? 'NSW');
+                        update('postcode', customer.postcode ?? '');
+                      }}
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+              {errors.customerId ? (
+                <Text style={styles.error}>{errors.customerId}</Text>
+              ) : null}
+              {selectedCustomer ? (
+                <Text style={styles.muted}>
+                  Selected: {selectedCustomer.displayName}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Field
+                error={errors.quickCustomerName}
+                label="Customer name"
+                onChangeText={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    quickCustomer: {
+                      ...(current.quickCustomer ?? {
+                        addressLine1: '',
+                        name: '',
+                        phone: '',
+                        postcode: '',
+                        state: 'NSW',
+                        suburb: '',
+                      }),
+                      name: value,
+                    },
+                  }))
+                }
+                value={form.quickCustomer?.name ?? ''}
+              />
+              <Field
+                error={errors.quickCustomerPhone}
+                keyboardType="phone-pad"
+                label="Phone"
+                onChangeText={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    quickCustomer: {
+                      ...(current.quickCustomer ?? {
+                        addressLine1: '',
+                        name: '',
+                        phone: '',
+                        postcode: '',
+                        state: 'NSW',
+                        suburb: '',
+                      }),
+                      phone: value,
+                    },
+                  }))
+                }
+                value={form.quickCustomer?.phone ?? ''}
+              />
+              <Text style={styles.muted}>
+                The address below will be saved to the new customer and job.
+              </Text>
+            </>
+          )}
+        </Section>
+
+        <Section title="Basics">
+          <Field
+            error={errors.title}
+            label="Title"
+            onChangeText={(value) => update('title', value)}
+            value={form.title}
+          />
+          <Field
+            label="Trade type"
+            onChangeText={(value) => update('tradeType', value)}
+            value={form.tradeType ?? ''}
+          />
+          <Field
+            label="Description"
+            multiline
+            onChangeText={(value) => update('description', value)}
+            value={form.description ?? ''}
+          />
+          <Picker
+            label="Status"
+            options={statuses}
+            selected={form.status}
+            onSelect={(value) => update('status', value)}
+          />
+          <Picker
+            label="Priority"
+            options={priorities}
+            selected={form.priority}
+            onSelect={(value) => update('priority', value)}
+          />
+        </Section>
+
+        <Section title="Schedule">
+          <Field
+            error={errors.scheduledStart}
+            label="Scheduled start"
+            onChangeText={(value) => update('scheduledStart', value)}
+            value={form.scheduledStart}
+          />
+          <Field
+            error={errors.scheduledEnd}
+            label="Scheduled end"
+            onChangeText={(value) => update('scheduledEnd', value)}
+            value={form.scheduledEnd ?? ''}
+          />
+          <Field
+            keyboardType="number-pad"
+            label="Estimated duration minutes"
+            onChangeText={(value) =>
+              update('estimatedDurationMinutes', value ? Number(value) : null)
+            }
+            value={String(form.estimatedDurationMinutes ?? '')}
+          />
+        </Section>
+
+        <Section title="Address">
+          <Field
+            error={errors.addressLine1}
+            label="Address line 1"
+            onChangeText={(value) => update('addressLine1', value)}
+            value={form.addressLine1}
+          />
+          <Field
+            label="Address line 2"
+            onChangeText={(value) => update('addressLine2', value)}
+            value={form.addressLine2 ?? ''}
+          />
+          <Field
+            error={errors.suburb}
+            label="Suburb"
+            onChangeText={(value) => update('suburb', value)}
+            value={form.suburb}
+          />
+          <Picker
+            label="State"
+            options={['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']}
+            selected={form.state}
+            onSelect={(value) => update('state', value)}
+          />
+          <Field
+            error={errors.postcode}
+            keyboardType="number-pad"
+            label="Postcode"
+            onChangeText={(value) => update('postcode', value)}
+            value={form.postcode}
+          />
+          <Field
+            label="Access instructions"
+            multiline
+            onChangeText={(value) => update('accessInstructions', value)}
+            value={form.accessInstructions ?? ''}
+          />
+        </Section>
+
+        <Section title="Assignment">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.pickerRow}>
+              <Chip
+                active={!form.assignedToUserId}
+                label="Unassigned"
+                onPress={() => update('assignedToUserId', null)}
+              />
+              {members.map((member) => (
+                <Chip
+                  active={form.assignedToUserId === member.userId}
+                  key={member.id}
+                  label={member.name}
+                  onPress={() =>
+                    update('assignedToUserId', member.userId ?? '')
+                  }
+                />
+              ))}
+            </View>
+          </ScrollView>
+        </Section>
+
+        <Section title="Notes and follow-up">
+          <Field
+            label="Customer notes"
+            multiline
+            onChangeText={(value) => update('customerNotes', value)}
+            value={form.customerNotes ?? ''}
+          />
+          <Field
+            label="Internal notes"
+            multiline
+            onChangeText={(value) => update('internalNotes', value)}
+            value={form.internalNotes ?? ''}
+          />
+          <Toggle
+            active={Boolean(form.requiresQuote)}
+            label="Requires quote"
+            onPress={() => update('requiresQuote', !form.requiresQuote)}
+          />
+          <Toggle
+            active={Boolean(form.requiresInvoice)}
+            label="Requires invoice"
+            onPress={() => update('requiresInvoice', !form.requiresInvoice)}
+          />
+        </Section>
+
+        <Pressable
+          disabled={isSaving}
+          onPress={() => void save()}
+          style={styles.saveButton}
+        >
+          {isSaving ? <ActivityIndicator color="#FFFFFF" /> : null}
+          <Text style={styles.saveText}>
+            {isSaving ? 'Saving job...' : 'Save job'}
+          </Text>
+        </Pressable>
+
+        {createdJobPrompt ? (
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Job created successfully.</Text>
+            <Text style={styles.muted}>Schedule an appointment now?</Text>
+            <View style={styles.promptActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() =>
+                  navigation.replace('AppointmentForm', {
+                    customerId: createdJobPrompt.customerId,
+                    jobId: createdJobPrompt.jobId,
+                  })
+                }
+                style={styles.promptPrimary}
+              >
+                <Text style={styles.promptPrimaryText}>Schedule Now</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() =>
+                  navigation.replace('JobDetails', {
+                    jobId: createdJobPrompt.jobId,
+                  })
+                }
+                style={styles.promptSecondary}
+              >
+                <Text style={styles.promptSecondaryText}>Later</Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
-      ) : null}
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );

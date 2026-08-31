@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CustomerCommunicationsModule } from '../communications/communications.module';
 import { MediaModule } from '../media/media.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
@@ -14,6 +15,7 @@ import { PublicInvoicesController } from './public-invoices.controller';
     ConfigModule,
     MediaModule,
     CustomerCommunicationsModule,
+    NotificationsModule,
   ],
   providers: [InvoicesService],
   exports: [InvoicesService],

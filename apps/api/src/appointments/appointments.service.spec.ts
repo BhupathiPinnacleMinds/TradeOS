@@ -230,8 +230,11 @@ function createService() {
   };
   const scheduling = new SchedulingService(prisma as never);
   const notificationMocks = {
+    notifyAssigned: jest.fn(),
+    notifyCancelled: jest.fn(),
     notifyNewTechnician: jest.fn(),
     notifyOldTechnician: jest.fn(),
+    notifyRescheduled: jest.fn(),
   };
   const notifications =
     notificationMocks as unknown as AppointmentNotificationsService;
@@ -279,7 +282,7 @@ describe('AppointmentsService', () => {
   });
 
   it('creates appointments with per-business appointment numbers', async () => {
-    const { prisma, service } = createService();
+    const { notificationMocks, prisma, service } = createService();
     prisma.appointment.findMany.mockResolvedValueOnce([]);
 
     await service.create(owner, {
@@ -300,6 +303,16 @@ describe('AppointmentsService', () => {
       .calls as unknown as AppointmentCreateCall[];
     expect(createCalls[0][0].data.appointmentNumber).toBe('APT-2026-000004');
     expect(prisma.auditLog.create).toHaveBeenCalled();
+    expect(notificationMocks.notifyAssigned).toHaveBeenCalledTimes(1);
+    const [notificationInput] = notificationMocks.notifyAssigned.mock
+      .calls[0] as [
+      {
+        actor: AuthenticatedUser;
+        appointment: { assignedUserId: string | null };
+      },
+    ];
+    expect(notificationInput.actor).toBe(owner);
+    expect(notificationInput.appointment.assignedUserId).toBe('tech-1');
   });
 
   it('repairs stale appointment sequences before creating appointments', async () => {
@@ -551,8 +564,11 @@ describe('AppointmentsService', () => {
       prisma as never,
       new SchedulingService(prisma as never),
       {
+        notifyAssigned: jest.fn(),
+        notifyCancelled: jest.fn(),
         notifyNewTechnician: jest.fn(),
         notifyOldTechnician: jest.fn(),
+        notifyRescheduled: jest.fn(),
       } as unknown as AppointmentNotificationsService,
       {
         appointmentCancelled: jest.fn(),
@@ -1251,7 +1267,8 @@ describe('AppointmentsService', () => {
   });
 
   it('persists scheduled to cancelled transitions and returns the updated appointment', async () => {
-    const { communications, prisma, service } = createService();
+    const { communications, notificationMocks, prisma, service } =
+      createService();
     prisma.appointment.findFirst.mockResolvedValueOnce(
       appointment({ status: 'SCHEDULED' }),
     );
@@ -1274,10 +1291,18 @@ describe('AppointmentsService', () => {
       updatedBy: owner.id,
     });
     expect(communications.appointmentCancelled).toHaveBeenCalledTimes(1);
+    expect(notificationMocks.notifyCancelled).toHaveBeenCalledTimes(1);
+    const [notificationInput] = notificationMocks.notifyCancelled.mock
+      .calls[0] as [
+      { actor: AuthenticatedUser; appointment: { status: string } },
+    ];
+    expect(notificationInput.actor).toBe(owner);
+    expect(notificationInput.appointment.status).toBe('CANCELLED');
   });
 
   it('reschedules to an explicit date/time and persists the selected duration', async () => {
-    const { communications, prisma, service } = createService();
+    const { communications, notificationMocks, prisma, service } =
+      createService();
     const existing = appointment({
       scheduledEnd: new Date('2026-08-16T23:00:00.000Z'),
       scheduledStart: new Date('2026-08-16T21:00:00.000Z'),
@@ -1326,6 +1351,15 @@ describe('AppointmentsService', () => {
     expect(result.appointment.scheduledEnd).toBe('2026-08-17T23:00:00.000Z');
     expect(result.appointment.estimatedDurationMinutes).toBe(60);
     expect(communications.appointmentRescheduled).toHaveBeenCalledTimes(1);
+    expect(notificationMocks.notifyRescheduled).toHaveBeenCalledTimes(1);
+    const [notificationInput] = notificationMocks.notifyRescheduled.mock
+      .calls[0] as [
+      { actor: AuthenticatedUser; appointment: { scheduledStart: string } },
+    ];
+    expect(notificationInput.actor).toBe(owner);
+    expect(notificationInput.appointment.scheduledStart).toBe(
+      '2026-08-17T22:00:00.000Z',
+    );
   });
 
   it('allows an assigned technician to start travel only after confirmation', async () => {

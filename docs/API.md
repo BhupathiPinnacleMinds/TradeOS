@@ -851,6 +851,26 @@ Use REST endpoints grouped by domain:
 /api/members
 ```
 
+### Notifications
+
+In-app notification endpoints are authenticated and scoped to the logged-in
+user's `businessId` and `userId`.
+
+- `GET /api/notifications?page=1&pageSize=25&status=ALL` lists the current
+  user's non-archived notifications.
+- `GET /api/notifications?status=UNREAD` lists only unread notifications.
+- `GET /api/notifications/unread-count` returns the current user's unread
+  notification count.
+- `PATCH /api/notifications/:id/read` marks one current-user notification as
+  read.
+- `PATCH /api/notifications/read-all` marks all current-user unread
+  notifications as read.
+
+Notifications include a type, title/body, read state, timestamps and optional
+entity navigation metadata such as `entityType: "appointment"` and
+`entityId`. API responses never return notifications for another business or
+another user in the same business.
+
 ### Versioning
 
 Future public API versions should use one of:

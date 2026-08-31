@@ -78,6 +78,10 @@ TradieOS has a strong multi-tenant foundation and many production-oriented seams
   must not contain Authorization headers, JWTs, provider secrets, raw public
   tokens, public-token hashes, signed URLs, idempotency request payloads, full
   SMS/email bodies or full Tori conversation messages.
+- In-app notifications are database-backed and recipient-scoped. They are safe
+  for private beta operational alerts, but they are not background push
+  notifications; Expo Push, FCM/APNs, SMS and email notification delivery remain
+  separate future work.
 
 ## Multi-tenant findings
 

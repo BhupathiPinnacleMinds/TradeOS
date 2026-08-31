@@ -232,128 +232,128 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
       >
-      <Text style={styles.eyebrow}>REASSIGN APPOINTMENT</Text>
-      <Text style={styles.title}>{appointment.job.title}</Text>
+        <Text style={styles.eyebrow}>REASSIGN APPOINTMENT</Text>
+        <Text style={styles.title}>{appointment.job.title}</Text>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Appointment summary</Text>
-        <Text style={styles.meta}>
-          Customer:{' '}
-          {appointment.job.customer.companyName ??
-            appointment.job.customer.displayName}
-        </Text>
-        <Text style={styles.meta}>Job: {appointment.job.jobNumber}</Text>
-        <Text style={styles.meta}>
-          Current technician: {technicianName(appointment)}
-        </Text>
-        <Text style={styles.meta}>
-          Time: {formatDateTime(appointment.scheduledStart, businessTimezone)}
-        </Text>
-        <Text style={styles.meta}>
-          Location: {appointmentAddress(appointment)}
-        </Text>
-      </View>
-
-      {recommendation?.technicianId ? (
-        <View style={[styles.card, styles.recommendedCard]}>
-          <Text style={styles.cardTitle}>⭐ Recommended</Text>
-          <Text style={styles.recommendedName}>
-            {recommendation.technicianName}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Appointment summary</Text>
+          <Text style={styles.meta}>
+            Customer:{' '}
+            {appointment.job.customer.companyName ??
+              appointment.job.customer.displayName}
           </Text>
-          <Text style={styles.meta}>{recommendation.reason}</Text>
-        </View>
-      ) : null}
-
-      <Text style={styles.sectionTitle}>Available technicians</Text>
-      {technicians.map((technician) => (
-        <Pressable
-          accessibilityRole="button"
-          key={technician.userId}
-          onPress={() => void selectTechnician(technician.userId)}
-          style={[
-            styles.technicianCard,
-            selectedTechnicianId === technician.userId &&
-              styles.technicianSelected,
-          ]}
-        >
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {technician.name
-                .split(' ')
-                .map((part) => part[0])
-                .join('')
-                .slice(0, 2)}
-            </Text>
-          </View>
-          <View style={styles.technicianCopy}>
-            <Text style={styles.technicianName}>{technician.name}</Text>
-            <Text style={styles.meta}>
-              {technician.role.replaceAll('_', ' ')} ·{' '}
-              {technician.todayWorkload} appointments today
-            </Text>
-            <Text style={styles.meta}>
-              {technician.upcomingToday} upcoming today
-            </Text>
-            <Text
-              style={[
-                styles.availability,
-                technician.isAvailable
-                  ? styles.availabilityGood
-                  : styles.availabilityWarn,
-              ]}
-            >
-              {technician.isAvailable
-                ? 'Available'
-                : technician.availabilityReason}
-            </Text>
-          </View>
-        </Pressable>
-      ))}
-
-      {isChecking ? (
-        <View style={styles.inlineState}>
-          <ActivityIndicator color={colours.primary} />
-          <Text style={styles.meta}>Checking availability...</Text>
-        </View>
-      ) : null}
-
-      {hasConflict ? (
-        <View style={styles.conflictCard}>
-          <Text style={styles.conflictTitle}>
-            This technician already has another appointment at this time.
+          <Text style={styles.meta}>Job: {appointment.job.jobNumber}</Text>
+          <Text style={styles.meta}>
+            Current technician: {technicianName(appointment)}
           </Text>
-          <Text style={styles.meta}>{availability?.reason}</Text>
-          <View style={styles.actions}>
-            <ActionButton
-              label="Choose another"
-              onPress={() => setAvailability(null)}
-            />
-            {canOverrideConflict ? (
+          <Text style={styles.meta}>
+            Time: {formatDateTime(appointment.scheduledStart, businessTimezone)}
+          </Text>
+          <Text style={styles.meta}>
+            Location: {appointmentAddress(appointment)}
+          </Text>
+        </View>
+
+        {recommendation?.technicianId ? (
+          <View style={[styles.card, styles.recommendedCard]}>
+            <Text style={styles.cardTitle}>⭐ Recommended</Text>
+            <Text style={styles.recommendedName}>
+              {recommendation.technicianName}
+            </Text>
+            <Text style={styles.meta}>{recommendation.reason}</Text>
+          </View>
+        ) : null}
+
+        <Text style={styles.sectionTitle}>Available technicians</Text>
+        {technicians.map((technician) => (
+          <Pressable
+            accessibilityRole="button"
+            key={technician.userId}
+            onPress={() => void selectTechnician(technician.userId)}
+            style={[
+              styles.technicianCard,
+              selectedTechnicianId === technician.userId &&
+                styles.technicianSelected,
+            ]}
+          >
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>
+                {technician.name
+                  .split(' ')
+                  .map((part) => part[0])
+                  .join('')
+                  .slice(0, 2)}
+              </Text>
+            </View>
+            <View style={styles.technicianCopy}>
+              <Text style={styles.technicianName}>{technician.name}</Text>
+              <Text style={styles.meta}>
+                {technician.role.replaceAll('_', ' ')} ·{' '}
+                {technician.todayWorkload} appointments today
+              </Text>
+              <Text style={styles.meta}>
+                {technician.upcomingToday} upcoming today
+              </Text>
+              <Text
+                style={[
+                  styles.availability,
+                  technician.isAvailable
+                    ? styles.availabilityGood
+                    : styles.availabilityWarn,
+                ]}
+              >
+                {technician.isAvailable
+                  ? 'Available'
+                  : technician.availabilityReason}
+              </Text>
+            </View>
+          </Pressable>
+        ))}
+
+        {isChecking ? (
+          <View style={styles.inlineState}>
+            <ActivityIndicator color={colours.primary} />
+            <Text style={styles.meta}>Checking availability...</Text>
+          </View>
+        ) : null}
+
+        {hasConflict ? (
+          <View style={styles.conflictCard}>
+            <Text style={styles.conflictTitle}>
+              This technician already has another appointment at this time.
+            </Text>
+            <Text style={styles.meta}>{availability?.reason}</Text>
+            <View style={styles.actions}>
               <ActionButton
-                danger
-                label="Override"
-                onPress={() => confirmSave(true)}
+                label="Choose another"
+                onPress={() => setAvailability(null)}
               />
-            ) : null}
+              {canOverrideConflict ? (
+                <ActionButton
+                  danger
+                  label="Override"
+                  onPress={() => confirmSave(true)}
+                />
+              ) : null}
+            </View>
           </View>
-        </View>
-      ) : null}
+        ) : null}
 
-      <TextInput
-        multiline
-        onChangeText={setReason}
-        placeholder="Optional reason for audit history"
-        placeholderTextColor={colours.muted}
-        style={styles.reasonInput}
-        value={reason}
-      />
+        <TextInput
+          multiline
+          onChangeText={setReason}
+          placeholder="Optional reason for audit history"
+          placeholderTextColor={colours.muted}
+          style={styles.reasonInput}
+          value={reason}
+        />
 
-      <ActionButton
-        disabled={!selectedTechnician || isSaving || hasConflict}
-        label={isSaving ? 'Saving...' : 'Confirm reassignment'}
-        onPress={() => confirmSave(false)}
-        primary
-      />
+        <ActionButton
+          disabled={!selectedTechnician || isSaving || hasConflict}
+          label={isSaving ? 'Saving...' : 'Confirm reassignment'}
+          onPress={() => confirmSave(false)}
+          primary
+        />
       </ScrollView>
     </KeyboardAvoidingView>
   );

@@ -43,6 +43,11 @@
   neutral forgot-password requests, hash-only one-time reset tokens,
   password-reset/change token revocation, `User.authVersion` JWT invalidation,
   sign-out-all-devices and minimal mobile forgot/reset password UX.
+- Added the first production-usable in-app Notifications Centre with
+  recipient-scoped notification records, list/unread/read APIs, mobile
+  All/Unread filtering, pull-to-refresh, mark-as-read actions and safe
+  appointment/quote/invoice/payment navigation metadata. Push, SMS and email
+  notification channels remain future work.
 - Added the private-beta Backup and Recovery runbook covering PostgreSQL
   backups/PITR, staging restore rehearsal, Prisma migration rollback, private
   S3/R2 media/PDF recovery, scheduled communication safety and RPO/RTO targets.

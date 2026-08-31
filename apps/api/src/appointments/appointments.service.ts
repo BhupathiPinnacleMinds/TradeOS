@@ -512,7 +512,13 @@ export class AppointmentsService {
       return appointment;
     });
 
-    return { appointment: this.toAppointment(created) };
+    const appointment = this.toAppointment(created);
+    await this.notifications.notifyAssigned({
+      actor: currentUser,
+      appointment,
+    });
+
+    return { appointment };
   }
 
   async update(
@@ -586,7 +592,26 @@ export class AppointmentsService {
       return appointment;
     });
 
-    return { appointment: this.toAppointment(updated) };
+    const appointment = this.toAppointment(updated);
+    if (
+      existing.scheduledStart.getTime() !== updated.scheduledStart.getTime() ||
+      existing.scheduledEnd.getTime() !== updated.scheduledEnd.getTime()
+    ) {
+      await this.notifications.notifyRescheduled({
+        actor: currentUser,
+        appointment,
+      });
+    }
+    if (existing.assignedUserId !== appointment.assignedUserId) {
+      await this.notifications.notifyNewTechnician({
+        actor: currentUser,
+        appointment,
+        newTechnicianId: appointment.assignedUserId,
+        previousTechnicianName: this.technicianName(existing.assignedUser),
+      });
+    }
+
+    return { appointment };
   }
 
   async reassignmentOptions(
@@ -780,11 +805,13 @@ export class AppointmentsService {
 
     const appointment = this.toAppointment(updated);
     this.notifications.notifyOldTechnician({
+      actor: currentUser,
       appointment,
       newTechnicianName: nextTechnicianName,
       oldTechnicianId: existing.assignedUserId,
     });
-    this.notifications.notifyNewTechnician({
+    await this.notifications.notifyNewTechnician({
+      actor: currentUser,
       appointment,
       newTechnicianId: appointment.assignedUserId,
       previousTechnicianName,
@@ -1091,7 +1118,15 @@ export class AppointmentsService {
       return appointment;
     });
 
-    return { appointment: this.toAppointment(updated) };
+    const appointment = this.toAppointment(updated);
+    if (status === 'CANCELLED') {
+      await this.notifications.notifyCancelled({
+        actor: currentUser,
+        appointment,
+      });
+    }
+
+    return { appointment };
   }
 
   private buildWhere(

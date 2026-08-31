@@ -748,9 +748,29 @@ AI actions should be represented as drafts or recommendations before confirmatio
 
 Notifications surface reminders, follow-ups, failed actions, unread customer updates, and Tori priorities.
 
+The first production-usable notification channel is in-app only. Notification
+records are durable database rows scoped by `businessId` and recipient `userId`.
+They carry a notification type, title/body, read/archive status, optional
+entity reference (`appointment`, `quote`, `invoice`, `payment`, `team`,
+`communication`, `tori`, `job`, or `customer`) and optional JSON metadata for
+safe mobile navigation.
+
+V1 event producers are intentionally narrow:
+
+- appointment assignment, reassignment, reschedule and cancellation create
+  technician-targeted notifications and avoid notifying the actor;
+- payment-recorded events notify active finance/owner roles where appropriate;
+- customer communication delivery failures create in-app alerts for operational
+  owner/admin roles;
+- customer quote accept/decline transitions create quote notifications for
+  roles that can already view quote work.
+
+Notification writes are best effort and should not cause the parent domain
+operation to fail. The notification API reads and mutates only the authenticated
+recipient's rows.
+
 Future notification channels:
 
-- in-app
 - push
 - SMS
 - email

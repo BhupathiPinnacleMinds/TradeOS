@@ -86,7 +86,9 @@ export function RegisterScreen({ navigation }: Props) {
       >
         <ScrollView
           contentContainerStyle={styles.container}
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardDismissMode={
+            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.title}>Create your TradieOS workspace</Text>

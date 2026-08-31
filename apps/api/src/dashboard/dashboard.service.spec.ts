@@ -10,6 +10,7 @@ type CountCall = {
     dueDate?: unknown;
     receivedAt?: unknown;
     status?: string | { in?: string[]; notIn?: string[] };
+    userId?: string;
   };
 };
 
@@ -201,6 +202,28 @@ describe('DashboardService', () => {
     expect(result.counts.paidInvoicesToday).toBe(1);
     expect(result.money.paidTodayCents).toBe(20000);
     expect(result.money.outstandingInvoicesCents).toBe(80000);
+  });
+
+  it('scopes dashboard notification summaries to the current user', async () => {
+    const prisma = createPrisma();
+    await getSummary(prisma);
+
+    expect(prisma.notification.count).toHaveBeenCalledWith({
+      where: {
+        businessId: 'business-1',
+        status: 'UNREAD',
+        userId: 'owner-1',
+      },
+    });
+    expect(prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          businessId: 'business-1',
+          status: { not: 'ARCHIVED' },
+          userId: 'owner-1',
+        },
+      }),
+    );
   });
 
   it('scopes invoice and payment dashboard queries to the current business', async () => {

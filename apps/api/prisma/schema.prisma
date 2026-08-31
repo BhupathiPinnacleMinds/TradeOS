@@ -1194,15 +1194,22 @@ model Notification {
   id         String             @id @default(cuid())
   businessId String
   userId     String
+  type       String             @default("GENERAL")
   title      String
   body       String
   status     NotificationStatus @default(UNREAD)
   readAt     DateTime?
+  entityType String?
+  entityId   String?
+  metadata   Json?
   createdAt  DateTime           @default(now())
   business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user       User               @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
 
   @@index([businessId, userId, status])
+  @@index([businessId, userId, createdAt])
+  @@index([businessId, type])
+  @@index([businessId, entityType, entityId])
 }
 
 model AiConversation {

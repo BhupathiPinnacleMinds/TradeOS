@@ -12,5 +12,6 @@ export * from './media-menu';
 export * from './menu-position';
 export * from './members';
 export * from './mobile-config';
+export * from './notifications';
 export * from './quotes';
 export * from './unsaved-changes';
