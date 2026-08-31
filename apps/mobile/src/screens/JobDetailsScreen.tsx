@@ -979,14 +979,21 @@ function Card({
 
 const styles = StyleSheet.create({
   actionButton: {
+    alignItems: 'center',
     backgroundColor: '#EEF2FF',
     borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   actionDanger: { backgroundColor: '#FFF1F2' },
   actionDangerText: { color: '#BE123C' },
-  actionText: { color: colours.primary, fontWeight: '900' },
+  actionText: {
+    color: colours.primary,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
   appointmentCard: {
     borderColor: colours.border,

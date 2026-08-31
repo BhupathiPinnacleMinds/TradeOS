@@ -37,6 +37,56 @@ describe('customer communications mobile UI contracts', () => {
     expect(customerDetails).toContain('styles.modalScrollContent');
   });
 
+  it('keeps the Customer Form keyboard-safe with safe bottom scroll padding', () => {
+    const customerForm = mobileSource('screens/CustomerFormScreen.tsx');
+
+    expect(customerForm).toContain('KeyboardAvoidingView');
+    expect(customerForm).toContain('keyboardAvoidingBehavior');
+    expect(customerForm).toContain('useSafeAreaInsets');
+    expect(customerForm).toContain('keyboardShouldPersistTaps="handled"');
+    expect(customerForm).toContain('keyboardDismissMode');
+    expect(customerForm).toContain('Math.max(insets.bottom + 96, 120)');
+  });
+
+  it('keeps the Customer Details archive action above the bottom safe area', () => {
+    const customerDetails = mobileSource('screens/CustomerDetailsScreen.tsx');
+
+    expect(customerDetails).toContain('useSafeAreaInsets');
+    expect(customerDetails).toContain('Math.max(insets.bottom + 72, 104)');
+    expect(customerDetails).toContain('Archive customer');
+    expect(customerDetails).toContain('Restore customer');
+  });
+
+  it('renders customer activity with clean Unicode separators', () => {
+    const customerDetails = mobileSource('screens/CustomerDetailsScreen.tsx');
+
+    expect(customerDetails).toContain("const ACTIVITY_SEPARATOR = '\\u2014'");
+    expect(customerDetails).toContain(
+      "{site.isPrimary ? '\\u2022 Primary' : ''}",
+    );
+    expect(customerDetails).not.toContain('â€”');
+    expect(customerDetails).not.toContain('â€¢');
+  });
+
+  it('keeps one in-app customer message entry point and preserves device actions', () => {
+    const customerDetails = mobileSource('screens/CustomerDetailsScreen.tsx');
+
+    expect(customerDetails.match(/setMessageModal\(true\)/g)).toHaveLength(1);
+    expect(customerDetails).toContain(
+      '<Text style={styles.secondaryText}>Send message</Text>',
+    );
+    expect(customerDetails).not.toContain('label="Send Message"');
+    expect(customerDetails).toContain(
+      'Linking.openURL(`tel:${customer.phone}`)',
+    );
+    expect(customerDetails).toContain(
+      'Linking.openURL(`sms:${customer.phone}`)',
+    );
+    expect(customerDetails).toContain(
+      'Linking.openURL(`mailto:${customer.email}`)',
+    );
+  });
+
   it('refreshes customer communications on focus and labels scheduled reminders clearly', () => {
     const customerDetails = mobileSource('screens/CustomerDetailsScreen.tsx');
 

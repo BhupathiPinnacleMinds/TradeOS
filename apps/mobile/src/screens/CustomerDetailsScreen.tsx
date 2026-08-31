@@ -32,6 +32,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   archiveMediaRequest,
   archiveCustomerRequest,
@@ -73,6 +74,8 @@ function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
+const ACTIVITY_SEPARATOR = '\u2014';
+
 function formatDate(date: string | null) {
   if (!date) return 'Not recorded';
   return new Intl.DateTimeFormat('en-AU', {
@@ -111,6 +114,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
   const { customerId } = route.params;
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const insets = useSafeAreaInsets();
   const loadRequestIdRef = useRef(0);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [activity, setActivity] = useState<
@@ -392,7 +396,12 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: Math.max(insets.bottom + 72, 104) },
+        ]}
+      >
         <Text style={styles.eyebrow}>CUSTOMER PROFILE</Text>
         <Text style={styles.title}>{customer.displayName}</Text>
         {customer.companyName ? (
@@ -432,12 +441,6 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               onPress={() =>
                 navigation.navigate('QuoteForm', { customerId: customer.id })
               }
-            />
-          ) : null}
-          {canSendMessage ? (
-            <QuickAction
-              label="Send Message"
-              onPress={() => setMessageModal(true)}
             />
           ) : null}
         </View>
@@ -537,7 +540,7 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
           {customer.sites.map((site) => (
             <View key={site.id} style={styles.siteCard}>
               <Text style={styles.siteTitle}>
-                {site.label} {site.isPrimary ? 'â€¢ Primary' : ''}
+                {site.label} {site.isPrimary ? '\u2022 Primary' : ''}
               </Text>
               <Text style={styles.meta}>
                 {[
@@ -771,7 +774,8 @@ export function CustomerDetailsScreen({ navigation, route }: Props) {
               key={`${entry.action}-${entry.createdAt}`}
               style={styles.meta}
             >
-              {label(entry.action)} â€” {formatDate(entry.createdAt)}
+              {label(entry.action)} {ACTIVITY_SEPARATOR}{' '}
+              {formatDate(entry.createdAt)}
             </Text>
           ))}
         </Card>

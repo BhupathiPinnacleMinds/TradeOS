@@ -19,6 +19,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ApiRequestError,
   createCustomerRequest,
@@ -74,6 +75,7 @@ export function CustomerFormScreen({ navigation, route }: Props) {
   const customerId = route.params?.customerId;
   const { token } = useAuth();
   const { showToast } = useToast();
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState<CustomerPayload>(initialPayload());
   const [tagText, setTagText] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -234,7 +236,10 @@ export function CustomerFormScreen({ navigation, route }: Props) {
       style={styles.flex}
     >
       <ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: Math.max(insets.bottom + 96, 120) },
+        ]}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
       >

@@ -165,6 +165,16 @@ function formatLocation(location: ResolvedLocation) {
     .join(', ');
 }
 
+function upsertCustomer(records: Customer[], customer: Customer) {
+  const existingIndex = records.findIndex(
+    (record) => record.id === customer.id,
+  );
+  if (existingIndex === -1) return [customer, ...records];
+  return records.map((record, index) =>
+    index === existingIndex ? customer : record,
+  );
+}
+
 function logAppointmentFormNavigation(
   event: string,
   details: Record<string, unknown> = {},
@@ -570,6 +580,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     const activeSites = detail.customer.sites.filter(
       (site) => !site.isArchived,
     );
+    setCustomers((current) => upsertCustomer(current, detail.customer));
     setSites(activeSites);
     setJobs(detail.jobs);
     const nextSiteId = preferredSiteId
@@ -859,8 +870,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                 <View style={styles.summaryBox}>
                   <Text style={styles.label}>Selected customer</Text>
                   <Text style={styles.summaryTitle}>
-                    {selectedCustomer.companyName ??
-                      selectedCustomer.displayName}
+                    {selectedCustomer.displayName}
                   </Text>
                   <Text style={styles.muted}>
                     {selectedCustomer.phone ?? 'No phone'} ·{' '}
@@ -986,11 +996,31 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="3. Job">
-          <Toggle
-            active={useQuickJob}
-            label="Create job for this appointment"
-            onPress={() => setUseQuickJob((current) => !current)}
-          />
+          {selectedJob && !useQuickJob ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.label}>Selected job</Text>
+              <Text style={styles.summaryTitle}>
+                {selectedJob.jobNumber} · {selectedJob.title}
+              </Text>
+              <Text style={styles.muted}>
+                Create a new job only if this appointment should not be linked
+                to the selected job.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setSelectedJobId('');
+                  setQuickJobTitle('');
+                  setUseQuickJob(true);
+                }}
+                style={styles.clearButton}
+              >
+                <Text style={styles.clearButtonText}>
+                  Create a different job
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           {useQuickJob ? (
             <Field
               label="Job title"
@@ -1013,8 +1043,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               }}
             />
           )}
-          {selectedJob && !useQuickJob ? (
-            <Text style={styles.muted}>Selected: {selectedJob.title}</Text>
+          {!selectedJob && !useQuickJob ? (
+            <Toggle
+              active={useQuickJob}
+              label="Create job for this appointment"
+              onPress={() => setUseQuickJob(true)}
+            />
           ) : null}
         </Section>
 
@@ -1313,20 +1347,22 @@ function Toggle({
 
 const styles = StyleSheet.create({
   chip: {
-    backgroundColor: colours.card,
-    borderColor: colours.border,
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: '#C7D2FE',
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   chipActive: { backgroundColor: colours.primary },
-  chipText: { color: colours.muted, fontWeight: '800' },
+  chipText: { color: colours.primary, fontWeight: '800' },
   chipTextActive: { color: '#FFFFFF' },
   clearButton: {
     alignSelf: 'flex-start',
-    backgroundColor: '#EEF2FF',
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: '#C7D2FE',
     borderRadius: 999,
+    borderWidth: 1,
     marginTop: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -1434,8 +1470,8 @@ const styles = StyleSheet.create({
   title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 4 },
   toggle: {
     alignSelf: 'flex-start',
-    backgroundColor: colours.card,
-    borderColor: colours.border,
+    backgroundColor: colours.secondaryActionSurface,
+    borderColor: '#C7D2FE',
     borderRadius: 999,
     borderWidth: 1,
     marginTop: 12,
