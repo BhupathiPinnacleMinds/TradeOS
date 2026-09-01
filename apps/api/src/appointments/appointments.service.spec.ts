@@ -1056,6 +1056,130 @@ describe('AppointmentsService', () => {
     jest.useRealTimers();
   });
 
+  it('shows a today appointment as the next My Day appointment before checking future work', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        id: 'today-confirmed',
+        scheduledEnd: new Date('2026-09-01T01:00:00.000Z'),
+        scheduledStart: new Date('2026-09-01T00:30:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    ]);
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment?.id).toBe('today-confirmed');
+    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('shows the nearest future assigned appointment when today has no remaining work', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        id: 'future-confirmed',
+        scheduledEnd: new Date('2026-09-03T01:00:00.000Z'),
+        scheduledStart: new Date('2026-09-02T23:00:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    );
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment?.id).toBe('future-confirmed');
+    expect(result.remainingCount).toBe(0);
+    expect(result.laterToday).toEqual([]);
+  });
+
+  it('orders future My Day fallback appointments by earliest scheduled time', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ id: 'earliest-future', status: 'SCHEDULED' }),
+    );
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment?.id).toBe('earliest-future');
+    expect(prisma.appointment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
+      }),
+    );
+  });
+
+  it('ignores cancelled future appointments in the My Day fallback', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ id: 'cancelled-future', status: 'CANCELLED' }),
+    );
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment).toBeNull();
+  });
+
+  it("ignores another technician's future appointment in the My Day fallback", async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        assignedUserId: 'other-tech',
+        id: 'other-tech-future',
+        status: 'CONFIRMED',
+      }),
+    );
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment).toBeNull();
+  });
+
+  it('keeps My Day empty when there are no future appointments', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment).toBeNull();
+    expect(result.remainingCount).toBe(0);
+    expect(result.completedCount).toBe(0);
+    expect(result.urgentCount).toBe(0);
+  });
+
   it('prioritises an in-progress appointment as the current appointment', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-07-15T00:15:00.000Z'));
     const { prisma, service } = createService();

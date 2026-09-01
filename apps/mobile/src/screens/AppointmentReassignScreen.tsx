@@ -33,6 +33,7 @@ import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
+import { primaryCustomerName } from '../utils/customerDisplay';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentReassign'>;
 
@@ -238,9 +239,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Appointment summary</Text>
           <Text style={styles.meta}>
-            Customer:{' '}
-            {appointment.job.customer.companyName ??
-              appointment.job.customer.displayName}
+            Customer: {primaryCustomerName(appointment.job.customer)}
           </Text>
           <Text style={styles.meta}>Job: {appointment.job.jobNumber}</Text>
           <Text style={styles.meta}>

@@ -37,6 +37,10 @@ import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
+import {
+  primaryCustomerName,
+  secondaryCustomerCompany,
+} from '../utils/customerDisplay';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'MyDay'>;
 type MyDayData = Awaited<ReturnType<typeof myDayRequest>>;
@@ -340,6 +344,7 @@ function AppointmentCard({
   userId?: string;
 }) {
   const colour = APPOINTMENT_STATUS_COLOURS[appointment.status];
+  const customerCompany = secondaryCustomerCompany(appointment.job.customer);
   const transitions = getAllowedAppointmentTransitions({
     currentStatus: appointment.status,
     isAssignedTechnician: appointment.assignedUserId === userId,
@@ -381,9 +386,11 @@ function AppointmentCard({
       </View>
       <Text style={styles.cardTitle}>{appointment.job.title}</Text>
       <Text style={styles.meta}>
-        {appointment.job.customer.companyName ??
-          appointment.job.customer.displayName}
+        {primaryCustomerName(appointment.job.customer)}
       </Text>
+      {customerCompany ? (
+        <Text style={styles.meta}>{customerCompany}</Text>
+      ) : null}
       <Text style={styles.meta}>
         {appointment.suburb} · {appointment.job.priority} priority ·{' '}
         {formatBusinessTimeRange(

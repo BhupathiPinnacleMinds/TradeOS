@@ -104,6 +104,7 @@ import {
   canCreateAppointment,
 } from '../permissions/roleVisibility';
 import { colours } from '../theme';
+import { primaryCustomerName } from '../utils/customerDisplay';
 
 const MORE_ACTION_DISMISS_DELAY_MS = 180;
 const RESCHEDULE_DURATIONS = [30, 60, 90, 120, 180, 240];
@@ -1080,9 +1081,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       </View>
 
       <Card title="Customer">
-        <Text style={styles.meta}>
-          {customer.companyName ?? customer.displayName}
-        </Text>
+        <Text style={styles.meta}>{primaryCustomerName(customer)}</Text>
         <Text style={styles.meta}>
           Phone: {customer.phone ?? 'Not recorded'}
         </Text>
@@ -1449,7 +1448,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     Alert.alert(
       'Confirm this appointment?',
       [
-        `Customer: ${customer.companyName ?? customer.displayName}`,
+        `Customer: ${primaryCustomerName(customer)}`,
         `When: ${formatDateTime(appointment.scheduledStart, businessTimezone)}`,
         `Technician: ${technician}`,
       ].join('\n'),
@@ -1816,9 +1815,8 @@ function CompletionModal({
             <View style={styles.completionHeader}>
               <Text style={styles.moreTitle}>Complete this appointment?</Text>
               <Text style={styles.meta}>
-                {appointment.job.customer.companyName ??
-                  appointment.job.customer.displayName}{' '}
-                · {appointment.job.title}
+                {primaryCustomerName(appointment.job.customer)} ·{' '}
+                {appointment.job.title}
               </Text>
             </View>
 
@@ -2043,9 +2041,7 @@ function CompletionModal({
               <Card title="Completion review">
                 <Text style={styles.meta}>Job: {appointment.job.title}</Text>
                 <Text style={styles.meta}>
-                  Customer:{' '}
-                  {appointment.job.customer.companyName ??
-                    appointment.job.customer.displayName}
+                  Customer: {primaryCustomerName(appointment.job.customer)}
                 </Text>
                 <Text style={styles.meta}>
                   Media: {mediaCount} {mediaCount === 1 ? 'file' : 'files'}

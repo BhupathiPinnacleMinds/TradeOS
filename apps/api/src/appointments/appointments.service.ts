@@ -431,7 +431,31 @@ export class AppointmentsService {
         ['SCHEDULED', 'CONFIRMED'].includes(appointment.status),
       ) ??
       null;
-    const nextAppointment = currentAppointment ?? nextUpcomingAppointment;
+    let nextAppointment = currentAppointment ?? nextUpcomingAppointment;
+    if (!nextAppointment) {
+      const futureAppointment = await this.prisma.appointment.findFirst({
+        where: {
+          assignedUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          scheduledStart: { gte: end },
+          status: { in: [...REMAINING_MY_DAY_STATUSES] },
+        },
+        include: this.appointmentInclude(),
+        orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
+      });
+      const mappedFutureAppointment = futureAppointment
+        ? this.toAppointment(futureAppointment)
+        : null;
+      nextAppointment =
+        mappedFutureAppointment &&
+        mappedFutureAppointment.assignedUserId === currentUser.id &&
+        mappedFutureAppointment.businessId === currentUser.businessId &&
+        REMAINING_MY_DAY_STATUSES.includes(
+          mappedFutureAppointment.status as never,
+        )
+          ? mappedFutureAppointment
+          : null;
+    }
     const laterToday = remaining.filter(
       (appointment) => appointment.id !== nextAppointment?.id,
     );

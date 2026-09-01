@@ -62,6 +62,7 @@ import {
   canManageDispatcher,
 } from '../permissions/roleVisibility';
 import { colours } from '../theme';
+import { primaryCustomerName } from '../utils/customerDisplay';
 
 type Props = BottomTabScreenProps<MainTabsParamList, 'Calendar'>;
 type RootNavigator = {
@@ -1379,8 +1380,7 @@ function DispatcherAppointmentCard({
       </View>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
       <Text style={styles.meta}>
-        {appointment.job.customer.companyName ??
-          appointment.job.customer.displayName}
+        {primaryCustomerName(appointment.job.customer)}
       </Text>
       <Text style={styles.meta}>
         {label(appointment.job.priority)} · {label(appointment.appointmentType)}{' '}
@@ -1597,8 +1597,7 @@ function AppointmentCard({
       </Text>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
       <Text style={styles.meta}>
-        {appointment.job.customer.companyName ??
-          appointment.job.customer.displayName}
+        {primaryCustomerName(appointment.job.customer)}
       </Text>
       <Text style={styles.meta}>
         {appointment.assignedUser
