@@ -1,5 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
+import type { UpsertJobDto } from './dto/jobs.dto';
 import { JobsService } from './jobs.service';
 
 jest.mock('../prisma/prisma.service', () => ({
@@ -72,6 +73,13 @@ type AuditCreateCall = {
   };
 };
 
+type CustomerCreateCall = {
+  data: {
+    email?: string | null;
+    emailNormalised?: string | null;
+  };
+};
+
 function job(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'job-1',
@@ -126,7 +134,7 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function payload(overrides: Partial<Record<string, unknown>> = {}) {
+function payload(overrides: Partial<UpsertJobDto> = {}): UpsertJobDto {
   return {
     customerId: 'customer-1',
     assignedToUserId: 'tech-1',
@@ -265,16 +273,15 @@ describe('JobsService', () => {
           state: 'VIC',
           suburb: 'Tarneit',
         },
-      }) as never,
+      }),
     );
 
-    expect(prisma.customer.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          email: 'sam.donald@example.com',
-          emailNormalised: 'sam.donald@example.com',
-        }),
-      }),
+    const [[customerCreateArg]] = prisma.customer.create.mock.calls as [
+      [CustomerCreateCall],
+    ];
+    expect(customerCreateArg.data.email).toBe('sam.donald@example.com');
+    expect(customerCreateArg.data.emailNormalised).toBe(
+      'sam.donald@example.com',
     );
   });
 

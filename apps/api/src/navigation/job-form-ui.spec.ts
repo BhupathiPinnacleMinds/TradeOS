@@ -141,6 +141,7 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(appointmentForm).toContain('Create a different job');
     expect(appointmentForm).toContain('hasSelectedExistingJob');
+    expect(appointmentForm).toContain('isJobLinkedAppointment');
     expect(appointmentForm).toContain(
       'setSelectedCustomerId(jobResponse.job.customerId)',
     );
@@ -152,6 +153,59 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(appointmentForm.indexOf('Selected job')).toBeLessThan(
       appointmentForm.indexOf('label="Create job for this appointment"'),
+    );
+  });
+
+  it('renders job-linked appointment forms as locked customer and job summaries', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain(
+      'const isJobLinkedAppointment = Boolean(jobId)',
+    );
+    expect(appointmentForm).toContain(
+      '{isJobLinkedAppointment && selectedCustomer ? (',
+    );
+    expect(appointmentForm).toContain(
+      '<Text style={styles.label}>Customer</Text>',
+    );
+    expect(appointmentForm).toContain('{selectedCustomer.displayName}');
+    expect(appointmentForm).toContain('{selectedCustomer.email}');
+    expect(appointmentForm).toContain(
+      '{!isJobLinkedAppointment && !hasSelectedExistingJob ? (',
+    );
+    expect(appointmentForm).toContain(
+      '{isJobLinkedAppointment ? null : useQuickCustomer ? (',
+    );
+    expect(appointmentForm).toContain(
+      '{isJobLinkedAppointment && selectedJob ? (',
+    );
+    expect(appointmentForm).toContain('<Text style={styles.label}>Job</Text>');
+    expect(appointmentForm).toContain('{selectedJob.jobNumber}');
+    expect(appointmentForm).toContain('{selectedJob.title}');
+    expect(appointmentForm).toContain(
+      '{isJobLinkedAppointment ? null : useQuickJob ? (',
+    );
+    expect(appointmentForm).toContain(
+      '{!isJobLinkedAppointment && !selectedJob && !useQuickJob ? (',
+    );
+  });
+
+  it('preserves independent appointment creation customer and job selection controls', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain('label="Quick-create customer"');
+    expect(appointmentForm).toContain('label="Search and select a customer"');
+    expect(appointmentForm).toContain('Search results');
+    expect(appointmentForm).toContain('Recent customers');
+    expect(appointmentForm).toContain(
+      'onSelect={(value) => void selectCustomer(value)}',
+    );
+    expect(appointmentForm).toContain(
+      'label="Create job for this appointment"',
+    );
+    expect(appointmentForm).toContain('Create a different job');
+    expect(appointmentForm).toMatch(
+      /onSelect=\{\(value\) => \{\s*setSelectedJobId\(value\);/,
     );
   });
 

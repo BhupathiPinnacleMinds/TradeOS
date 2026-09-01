@@ -319,6 +319,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     () => jobs.find((job) => job.id === selectedJobId),
     [jobs, selectedJobId],
   );
+  const isJobLinkedAppointment = Boolean(jobId);
   const hasSelectedExistingJob = Boolean(selectedJob && !useQuickJob);
   const filteredCustomers = useMemo(() => {
     const search = customerSearch.trim().toLowerCase();
@@ -883,14 +884,28 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Text>
 
         <Section title="1. Customer">
-          {!hasSelectedExistingJob ? (
+          {isJobLinkedAppointment && selectedCustomer ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.label}>Customer</Text>
+              <Text style={styles.summaryTitle}>
+                {selectedCustomer.displayName}
+              </Text>
+              <Text style={styles.muted}>
+                {selectedCustomer.phone ?? 'No phone'}
+              </Text>
+              {selectedCustomer.email ? (
+                <Text style={styles.muted}>{selectedCustomer.email}</Text>
+              ) : null}
+            </View>
+          ) : null}
+          {!isJobLinkedAppointment && !hasSelectedExistingJob ? (
             <Toggle
               active={useQuickCustomer}
               label="Quick-create customer"
               onPress={() => setUseQuickCustomer((current) => !current)}
             />
           ) : null}
-          {useQuickCustomer ? (
+          {isJobLinkedAppointment ? null : useQuickCustomer ? (
             <>
               <Field
                 label="Customer name"
@@ -1056,7 +1071,13 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="3. Job">
-          {selectedJob && !useQuickJob ? (
+          {isJobLinkedAppointment && selectedJob ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.label}>Job</Text>
+              <Text style={styles.summaryTitle}>{selectedJob.jobNumber}</Text>
+              <Text style={styles.muted}>{selectedJob.title}</Text>
+            </View>
+          ) : selectedJob && !useQuickJob ? (
             <View style={styles.summaryBox}>
               <Text style={styles.label}>Selected job</Text>
               <Text style={styles.summaryTitle}>
@@ -1081,7 +1102,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               </Pressable>
             </View>
           ) : null}
-          {useQuickJob ? (
+          {isJobLinkedAppointment ? null : useQuickJob ? (
             <Field
               label="Job title"
               onChangeText={setQuickJobTitle}
@@ -1103,7 +1124,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               }}
             />
           )}
-          {!selectedJob && !useQuickJob ? (
+          {!isJobLinkedAppointment && !selectedJob && !useQuickJob ? (
             <Toggle
               active={useQuickJob}
               label="Create job for this appointment"
