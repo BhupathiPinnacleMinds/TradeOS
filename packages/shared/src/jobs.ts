@@ -143,6 +143,7 @@ export interface JobPayload {
   quickCustomer?: {
     name: string;
     phone: string;
+    email?: string;
     addressLine1: string;
     addressLine2?: string;
     suburb: string;

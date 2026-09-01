@@ -34,6 +34,8 @@ import {
   updateJobRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import type { AddressSuggestion } from '../components/AddressAutocompleteInput';
+import { AddressAutocompleteInput } from '../components/AddressAutocompleteInput';
 import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
@@ -305,6 +307,14 @@ export function JobFormScreen({ navigation, route }: Props) {
     );
   }
 
+  function applyAddressSuggestion(suggestion: AddressSuggestion) {
+    update('addressLine1', suggestion.addressLine1);
+    update('addressLine2', suggestion.addressLine2 ?? '');
+    update('suburb', suggestion.suburb);
+    update('state', suggestion.state);
+    update('postcode', suggestion.postcode);
+  }
+
   function validate(input: JobPayload) {
     const next: Record<string, string> = {};
     if (!input.customerId && !input.quickCustomer) {
@@ -315,6 +325,12 @@ export function JobFormScreen({ navigation, route }: Props) {
         next.quickCustomerName = 'Enter a customer name.';
       if (!input.quickCustomer.phone.trim())
         next.quickCustomerPhone = 'Enter a phone number.';
+      if (
+        input.quickCustomer.email?.trim() &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.quickCustomer.email.trim())
+      ) {
+        next.quickCustomerEmail = 'Enter a valid email address.';
+      }
       if (!input.quickCustomer.addressLine1.trim()) {
         next.quickCustomerAddress = 'Enter a customer address.';
       }
@@ -345,6 +361,8 @@ export function JobFormScreen({ navigation, route }: Props) {
         useQuickCustomer && form.quickCustomer
           ? {
               ...form.quickCustomer,
+              email:
+                form.quickCustomer.email?.trim().toLowerCase() || undefined,
               addressLine1: form.addressLine1,
               addressLine2: form.addressLine2,
               postcode: form.postcode,
@@ -432,6 +450,7 @@ export function JobFormScreen({ navigation, route }: Props) {
                     : {
                         addressLine1: current.addressLine1,
                         addressLine2: current.addressLine2,
+                        email: '',
                         name: '',
                         phone: '',
                         postcode: current.postcode,
@@ -483,6 +502,7 @@ export function JobFormScreen({ navigation, route }: Props) {
                     quickCustomer: {
                       ...(current.quickCustomer ?? {
                         addressLine1: '',
+                        email: '',
                         name: '',
                         phone: '',
                         postcode: '',
@@ -496,6 +516,32 @@ export function JobFormScreen({ navigation, route }: Props) {
                 value={form.quickCustomer?.name ?? ''}
               />
               <Field
+                autoCapitalize="none"
+                autoComplete="email"
+                error={errors.quickCustomerEmail}
+                keyboardType="email-address"
+                label="Email address"
+                onChangeText={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    quickCustomer: {
+                      ...(current.quickCustomer ?? {
+                        addressLine1: '',
+                        email: '',
+                        name: '',
+                        phone: '',
+                        postcode: '',
+                        state: 'NSW',
+                        suburb: '',
+                      }),
+                      email: value,
+                    },
+                  }))
+                }
+                textContentType="emailAddress"
+                value={form.quickCustomer?.email ?? ''}
+              />
+              <Field
                 error={errors.quickCustomerPhone}
                 keyboardType="phone-pad"
                 label="Phone"
@@ -505,6 +551,7 @@ export function JobFormScreen({ navigation, route }: Props) {
                     quickCustomer: {
                       ...(current.quickCustomer ?? {
                         addressLine1: '',
+                        email: '',
                         name: '',
                         phone: '',
                         postcode: '',
@@ -603,10 +650,11 @@ export function JobFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="Address">
-          <Field
+          <AddressAutocompleteInput
             error={errors.addressLine1}
             label="Address line 1"
             onChangeText={(value) => update('addressLine1', value)}
+            onSelectSuggestion={applyAddressSuggestion}
             value={form.addressLine1}
           />
           <Field
@@ -753,24 +801,32 @@ function Section({
 }
 
 function Field({
+  autoCapitalize,
+  autoComplete,
   error,
   keyboardType,
   label,
   multiline,
   onChangeText,
+  textContentType,
   value,
 }: {
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  autoComplete?: 'email';
   error?: string;
-  keyboardType?: 'default' | 'number-pad' | 'phone-pad';
+  keyboardType?: 'default' | 'email-address' | 'number-pad' | 'phone-pad';
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
+  textContentType?: 'emailAddress';
   value: string;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
+        autoCapitalize={autoCapitalize}
+        autoComplete={autoComplete}
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
@@ -781,6 +837,7 @@ function Field({
           multiline && styles.textarea,
           error && styles.inputError,
         ]}
+        textContentType={textContentType}
         value={value}
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}

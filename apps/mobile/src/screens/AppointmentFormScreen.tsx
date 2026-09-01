@@ -53,6 +53,8 @@ import {
   membersRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import type { AddressSuggestion } from '../components/AddressAutocompleteInput';
+import { AddressAutocompleteInput } from '../components/AddressAutocompleteInput';
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
@@ -211,6 +213,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [useQuickJob, setUseQuickJob] = useState(!jobId);
   const [quickCustomerName, setQuickCustomerName] = useState('');
   const [quickCustomerPhone, setQuickCustomerPhone] = useState('');
+  const [quickCustomerEmail, setQuickCustomerEmail] = useState('');
   const [quickJobTitle, setQuickJobTitle] = useState('');
   const [manualAddressLine1, setManualAddressLine1] = useState('');
   const [manualAddressLine2, setManualAddressLine2] = useState('');
@@ -316,6 +319,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     () => jobs.find((job) => job.id === selectedJobId),
     [jobs, selectedJobId],
   );
+  const hasSelectedExistingJob = Boolean(selectedJob && !useQuickJob);
   const filteredCustomers = useMemo(() => {
     const search = customerSearch.trim().toLowerCase();
     if (!search) return customers.slice(0, 5);
@@ -365,6 +369,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         manualSuburb,
         notes,
         quickCustomerName,
+        quickCustomerEmail,
         quickCustomerPhone,
         quickJobTitle,
         saveAddressAsSite,
@@ -389,6 +394,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       manualSuburb,
       notes,
       quickCustomerName,
+      quickCustomerEmail,
       quickCustomerPhone,
       quickJobTitle,
       saveAddressAsSite,
@@ -519,14 +525,43 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         if (!mounted) return;
         setCustomers(customerResponse.records);
         setMembers(teamResponse.filter((member) => member.status === 'ACTIVE'));
-        if (customerId) {
+        if (jobId) {
+          const jobResponse = await jobDetailRequest(authToken, jobId);
+          if (!mounted) return;
+          try {
+            await loadCustomer(
+              authToken,
+              jobResponse.job.customerId,
+              mounted,
+              preferredSiteId,
+              false,
+            );
+            if (!mounted) return;
+            setSelectedCustomerId(jobResponse.job.customerId);
+          } catch {
+            if (!mounted) return;
+            clearCustomerSelection();
+            showToast({
+              message:
+                "We couldn't load the customer for that job. Search and select a customer.",
+              tone: 'error',
+            });
+            return;
+          }
+          setSelectedJobId(jobResponse.job.id);
+          setUseQuickJob(false);
+          setQuickJobTitle(jobResponse.job.title);
+          setStartAt(new Date(jobResponse.job.scheduledStart));
+          setDurationMinutes(jobResponse.job.estimatedDurationMinutes ?? 120);
+          setAssignedUserId(jobResponse.job.assignedToUserId);
+        } else if (customerId) {
           try {
             await loadCustomer(
               authToken,
               customerId,
               mounted,
               preferredSiteId,
-              Boolean(jobId),
+              false,
             );
             if (!mounted) return;
             setSelectedCustomerId(customerId);
@@ -539,16 +574,6 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               tone: 'error',
             });
           }
-        }
-        if (jobId) {
-          const jobResponse = await jobDetailRequest(authToken, jobId);
-          if (!mounted) return;
-          setSelectedJobId(jobResponse.job.id);
-          setUseQuickJob(false);
-          setQuickJobTitle(jobResponse.job.title);
-          setStartAt(new Date(jobResponse.job.scheduledStart));
-          setDurationMinutes(jobResponse.job.estimatedDurationMinutes ?? 120);
-          setAssignedUserId(jobResponse.job.assignedToUserId);
         }
       } catch (error) {
         showToast({
@@ -602,6 +627,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     setJobs([]);
     setSelectedJobId('');
     setQuickJobTitle('');
+    setQuickCustomerEmail('');
     setUseQuickJob(true);
     setLocationSource('MANUAL');
     setManualAddressLine1('');
@@ -718,6 +744,14 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       showToast({ message: 'Enter a quick customer name.', tone: 'error' });
       return;
     }
+    if (
+      useQuickCustomer &&
+      quickCustomerEmail.trim() &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(quickCustomerEmail.trim())
+    ) {
+      showToast({ message: 'Enter a valid email address.', tone: 'error' });
+      return;
+    }
     if (useQuickJob && !quickJobTitle.trim()) {
       showToast({ message: 'Enter a job title.', tone: 'error' });
       return;
@@ -737,6 +771,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           allowDuplicate: true,
           contactPreference: 'ANY',
           customerType: 'RESIDENTIAL',
+          email: quickCustomerEmail.trim().toLowerCase() || undefined,
           firstName: quickCustomerName.trim(),
           phone: quickCustomerPhone.trim(),
           postcode: resolvedLocation.postcode,
@@ -815,6 +850,14 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     }
   }
 
+  function applyManualAddressSuggestion(suggestion: AddressSuggestion) {
+    setManualAddressLine1(suggestion.addressLine1);
+    setManualAddressLine2(suggestion.addressLine2 ?? '');
+    setManualSuburb(suggestion.suburb);
+    setManualState(suggestion.state);
+    setManualPostcode(suggestion.postcode);
+  }
+
   if (isLoading) {
     return (
       <View style={styles.loadingPage}>
@@ -840,17 +883,28 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Text>
 
         <Section title="1. Customer">
-          <Toggle
-            active={useQuickCustomer}
-            label="Quick-create customer"
-            onPress={() => setUseQuickCustomer((current) => !current)}
-          />
+          {!hasSelectedExistingJob ? (
+            <Toggle
+              active={useQuickCustomer}
+              label="Quick-create customer"
+              onPress={() => setUseQuickCustomer((current) => !current)}
+            />
+          ) : null}
           {useQuickCustomer ? (
             <>
               <Field
                 label="Customer name"
                 onChangeText={setQuickCustomerName}
                 value={quickCustomerName}
+              />
+              <Field
+                autoCapitalize="none"
+                autoComplete="email"
+                keyboardType="email-address"
+                label="Email address"
+                onChangeText={setQuickCustomerEmail}
+                textContentType="emailAddress"
+                value={quickCustomerEmail}
               />
               <Field
                 keyboardType="phone-pad"
@@ -876,13 +930,15 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                     {selectedCustomer.phone ?? 'No phone'} ·{' '}
                     {selectedCustomer.suburb ?? 'No suburb recorded'}
                   </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={clearCustomerSelection}
-                    style={styles.clearButton}
-                  >
-                    <Text style={styles.clearButtonText}>Clear customer</Text>
-                  </Pressable>
+                  {!hasSelectedExistingJob ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={clearCustomerSelection}
+                      style={styles.clearButton}
+                    >
+                      <Text style={styles.clearButtonText}>Clear customer</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : (
                 <>
@@ -893,11 +949,14 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                   </Text>
                   <HorizontalPicker
                     options={filteredCustomers.map((customer) => ({
-                      label:
-                        customer.companyName ??
-                        `${customer.displayName}${
-                          customer.phone ? ` · ${customer.phone}` : ''
-                        }`,
+                      label: [
+                        customer.displayName,
+                        [customer.companyName, customer.phone, customer.suburb]
+                          .filter(Boolean)
+                          .join(' · '),
+                      ]
+                        .filter(Boolean)
+                        .join('\n'),
                       value: customer.id,
                     }))}
                     selected={selectedCustomerId}
@@ -937,9 +996,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
 
           {locationSource === 'MANUAL' ? (
             <>
-              <Field
+              <AddressAutocompleteInput
                 label="Address line 1"
                 onChangeText={setManualAddressLine1}
+                onSelectSuggestion={applyManualAddressSuggestion}
                 value={manualAddressLine1}
               />
               <Field
@@ -1248,28 +1308,37 @@ function Section({
 }
 
 function Field({
+  autoCapitalize,
+  autoComplete,
   keyboardType,
   label: text,
   multiline,
   onChangeText,
+  textContentType,
   value,
 }: {
-  keyboardType?: 'default' | 'phone-pad';
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  autoComplete?: 'email';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad';
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
+  textContentType?: 'emailAddress';
   value: string;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{text}</Text>
       <TextInput
+        autoCapitalize={autoCapitalize}
+        autoComplete={autoComplete}
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
         placeholder={text}
         placeholderTextColor={colours.muted}
         style={[styles.input, multiline && styles.textarea]}
+        textContentType={textContentType}
         value={value}
       />
     </View>

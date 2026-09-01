@@ -40,7 +40,7 @@ type MockPrisma = {
   appointment: { findMany: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
   business: { findUnique: jest.Mock };
-  customer: { findFirst: jest.Mock };
+  customer: { create: jest.Mock; findFirst: jest.Mock };
   job: {
     count: jest.Mock;
     create: jest.Mock;
@@ -154,6 +154,7 @@ function createService() {
       findUnique: jest.fn().mockResolvedValue({ timezone: 'Australia/Sydney' }),
     },
     customer: {
+      create: jest.fn().mockResolvedValue({ id: 'quick-customer-1' }),
       findFirst: jest.fn().mockResolvedValue({ id: 'customer-1' }),
     },
     job: {
@@ -246,6 +247,35 @@ describe('JobsService', () => {
       [{ data: { jobNumber: string } }],
     ];
     expect(createArg.data.jobNumber).toBe('JOB-2026-000007');
+  });
+
+  it('persists optional quick customer email when creating a job', async () => {
+    const { prisma, service } = createService();
+
+    await service.create(
+      owner,
+      payload({
+        customerId: undefined,
+        quickCustomer: {
+          addressLine1: '18 Coffey Street',
+          email: '  Sam.Donald@Example.COM ',
+          name: 'Sam Donald',
+          phone: '0414 303 343',
+          postcode: '3029',
+          state: 'VIC',
+          suburb: 'Tarneit',
+        },
+      }) as never,
+    );
+
+    expect(prisma.customer.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'sam.donald@example.com',
+          emailNormalised: 'sam.donald@example.com',
+        }),
+      }),
+    );
   });
 
   it('repairs stale job sequences before creating jobs', async () => {

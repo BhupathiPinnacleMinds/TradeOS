@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -116,6 +117,11 @@ export class QuickCustomerDto {
   @IsNotEmpty()
   @MaxLength(40)
   phone!: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(160)
+  email?: string;
 
   @IsString()
   @MaxLength(160)

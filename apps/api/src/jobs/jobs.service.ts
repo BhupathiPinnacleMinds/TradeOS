@@ -732,6 +732,7 @@ export class JobsService {
     currentUser: AuthenticatedUser,
     quickCustomer: NonNullable<UpsertJobDto['quickCustomer']>,
   ) {
+    const email = this.clean(quickCustomer.email)?.toLowerCase() ?? null;
     const customer = await tx.customer.create({
       data: {
         addressLine1: quickCustomer.addressLine1.trim(),
@@ -741,6 +742,8 @@ export class JobsService {
         createdBy: currentUser.id,
         customerType: 'RESIDENTIAL',
         displayName: quickCustomer.name.trim(),
+        email,
+        emailNormalised: email,
         firstName: quickCustomer.name.trim(),
         phone: quickCustomer.phone.trim(),
         phoneNormalised: quickCustomer.phone.replace(/\D/g, ''),

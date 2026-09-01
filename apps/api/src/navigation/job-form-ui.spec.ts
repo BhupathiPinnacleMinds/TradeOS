@@ -28,6 +28,35 @@ describe('Job form mobile UI contracts', () => {
     expect(jobForm).toContain("mode: 'time'");
   });
 
+  it('adds optional quick-customer email in Job and Appointment forms', () => {
+    const jobForm = mobileSource('screens/JobFormScreen.tsx');
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+    const sharedJobs = readFileSync(
+      join(repoRoot, 'packages', 'shared', 'src', 'jobs.ts'),
+      'utf8',
+    );
+    const jobsDto = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'jobs', 'dto', 'jobs.dto.ts'),
+      'utf8',
+    );
+
+    expect(sharedJobs).toContain('email?: string;');
+    expect(jobsDto).toContain('@IsEmail()');
+    for (const source of [jobForm, appointmentForm]) {
+      expect(source).toContain('label="Email address"');
+      expect(source).toContain('keyboardType="email-address"');
+      expect(source).toContain('autoCapitalize="none"');
+      expect(source).toContain('autoComplete="email"');
+      expect(source).toContain('textContentType="emailAddress"');
+    }
+    expect(jobForm).toMatch(
+      /email:\s*form\.quickCustomer\.email\?\.trim\(\)\.toLowerCase\(\)\s*\|\|\s*undefined/,
+    );
+    expect(appointmentForm).toMatch(
+      /email:\s*quickCustomerEmail\.trim\(\)\.toLowerCase\(\)\s*\|\|\s*undefined/,
+    );
+  });
+
   it('keeps schedule values human-readable while preserving API ISO payloads', () => {
     const jobForm = mobileSource('screens/JobFormScreen.tsx');
 
@@ -90,6 +119,20 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('keeps appointment customer search labels anchored to displayName', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain('customer.displayName');
+    expect(appointmentForm).toContain('customer.companyName');
+    expect(appointmentForm).toContain('customer.email');
+    expect(appointmentForm).toContain('customer.phone');
+    expect(appointmentForm).toContain('customer.suburb');
+    expect(appointmentForm).toContain(".join('\\n')");
+    expect(appointmentForm).not.toContain(
+      'customer.companyName ??\n                        `${customer.displayName}',
+    );
+  });
+
   it('keeps selected jobs primary and demotes creating another job to an explicit alternative', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
@@ -97,14 +140,37 @@ describe('Job form mobile UI contracts', () => {
       '<Text style={styles.label}>Selected job</Text>',
     );
     expect(appointmentForm).toContain('Create a different job');
+    expect(appointmentForm).toContain('hasSelectedExistingJob');
+    expect(appointmentForm).toContain(
+      'setSelectedCustomerId(jobResponse.job.customerId)',
+    );
     expect(appointmentForm).toContain('setSelectedJobId');
     expect(appointmentForm).toContain('setUseQuickJob(true)');
+    expect(appointmentForm).toContain('{!hasSelectedExistingJob ? (');
     expect(appointmentForm).toContain(
       'label="Create job for this appointment"',
     );
     expect(appointmentForm.indexOf('Selected job')).toBeLessThan(
       appointmentForm.indexOf('label="Create job for this appointment"'),
     );
+  });
+
+  it('wires address entry through an autocomplete-ready manual fallback component', () => {
+    const addressInput = mobileSource(
+      'components/AddressAutocompleteInput.tsx',
+    );
+    const jobForm = mobileSource('screens/JobFormScreen.tsx');
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(addressInput).toContain('export type AddressSuggestionProvider');
+    expect(addressInput).toContain('const MIN_QUERY_LENGTH = 3');
+    expect(addressInput).toContain('const DEBOUNCE_MS = 300');
+    expect(addressInput).toContain('manual');
+    expect(addressInput).toContain('onSelectSuggestion');
+    expect(jobForm).toContain('<AddressAutocompleteInput');
+    expect(jobForm).toContain('applyAddressSuggestion');
+    expect(appointmentForm).toContain('<AddressAutocompleteInput');
+    expect(appointmentForm).toContain('applyManualAddressSuggestion');
   });
 
   it('uses enabled secondary appointment actions instead of disabled-looking chips', () => {
