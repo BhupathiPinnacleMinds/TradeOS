@@ -398,15 +398,27 @@ export class AppointmentsService {
       business.timezone,
     );
 
-    const appointments = await this.prisma.appointment.findMany({
-      where: {
-        assignedUserId: currentUser.id,
-        businessId: currentUser.businessId,
-        scheduledStart: { gte: start, lt: end },
-      },
-      include: this.appointmentInclude(),
-      orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
-    });
+    const [appointments, completedTodayAppointments] = await Promise.all([
+      this.prisma.appointment.findMany({
+        where: {
+          assignedUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          scheduledStart: { gte: start, lt: end },
+        },
+        include: this.appointmentInclude(),
+        orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          assignedUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          completedAt: { gte: start, lt: end },
+          status: 'COMPLETED',
+        },
+        include: this.appointmentInclude(),
+        orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
+      }),
+    ]);
     const now = new Date();
     const mapped = appointments.map((appointment) =>
       this.toAppointment(appointment),
@@ -414,9 +426,21 @@ export class AppointmentsService {
     const remaining = mapped.filter((appointment) =>
       REMAINING_MY_DAY_STATUSES.includes(appointment.status as never),
     );
-    const completedToday = mapped.filter(
-      (appointment) => appointment.status === 'COMPLETED',
-    );
+    const completedToday = [
+      ...new Map(
+        completedTodayAppointments
+          .map((appointment) => this.toAppointment(appointment))
+          .map((appointment) => [appointment.id, appointment]),
+      ).values(),
+    ];
+    const allMyDayAppointments = [
+      ...new Map(
+        [...mapped, ...completedToday].map((appointment) => [
+          appointment.id,
+          appointment,
+        ]),
+      ).values(),
+    ];
     const currentAppointment =
       CURRENT_MY_DAY_STATUSES.map((status) =>
         remaining.find((appointment) => appointment.status === status),
@@ -461,7 +485,7 @@ export class AppointmentsService {
     );
 
     return {
-      appointments: mapped,
+      appointments: allMyDayAppointments,
       businessDate: start.toISOString(),
       businessName: business.name,
       businessTimezone: business.timezone,
@@ -768,6 +792,18 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const existing = await this.getAppointment(currentUser.businessId, id);
+    if (
+      ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(
+        existing.status,
+      )
+    ) {
+      throw this.domainError(
+        'INVALID_STATUS_TRANSITION',
+        'Completed or inactive appointments cannot be reassigned.',
+        HttpStatus.CONFLICT,
+        { status: existing.status },
+      );
+    }
     await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
 
     const availability = await this.checkAvailability(currentUser, {
@@ -1145,6 +1181,12 @@ export class AppointmentsService {
     const appointment = this.toAppointment(updated);
     if (status === 'CANCELLED') {
       await this.notifications.notifyCancelled({
+        actor: currentUser,
+        appointment,
+      });
+    }
+    if (status === 'COMPLETED') {
+      await this.notifications.notifyCompleted({
         actor: currentUser,
         appointment,
       });

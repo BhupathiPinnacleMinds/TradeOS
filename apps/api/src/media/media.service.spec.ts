@@ -209,6 +209,25 @@ describe('MediaService', () => {
     expect(response.media).not.toHaveProperty('objectKey');
   });
 
+  it('keeps upload-start audit internal and does not write noisy job timeline entries', async () => {
+    const { service, tx } = createHarness();
+
+    await service.createUploadTarget(owner, {
+      appointmentId: 'appointment-1',
+      category: 'BEFORE_PHOTO',
+      fileSizeBytes: 4,
+      mediaType: 'IMAGE',
+      mimeType: 'image/png',
+      originalFileName: 'demo.png',
+    });
+
+    const auditActions = tx.auditLog.create.mock.calls.map(
+      (call) => call[0].data.action,
+    );
+    expect(auditActions).toEqual(['MEDIA_UPLOAD_STARTED']);
+    expect(auditActions).not.toContain('JOB_TIMELINE_MEDIA_UPLOAD_STARTED');
+  });
+
   it('blocks read-only users from uploading media', async () => {
     const { service } = createHarness();
 
@@ -309,6 +328,46 @@ describe('MediaService', () => {
     expect(response.records[0].appointmentId).toBe('appointment-1');
   });
 
+  it('lists only completed active media by default', async () => {
+    const { prisma, service } = createHarness();
+
+    await service.findAll(owner, { jobId: 'job-1' });
+
+    expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          archivedAt: null,
+          businessId: 'business-1',
+          jobId: 'job-1',
+          uploadStatus: 'COMPLETED',
+        }),
+      }),
+    );
+    expect(prisma.mediaAsset.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ uploadStatus: 'COMPLETED' }),
+      }),
+    );
+  });
+
+  it('allows callers to explicitly list failed uploads for retry diagnostics', async () => {
+    const { prisma, service } = createHarness();
+
+    await service.findAll(owner, {
+      jobId: 'job-1',
+      uploadStatus: 'FAILED',
+    });
+
+    expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          jobId: 'job-1',
+          uploadStatus: 'FAILED',
+        }),
+      }),
+    );
+  });
+
   it('denies technicians listing media for unrelated appointments', async () => {
     const { prisma, service } = createHarness();
     prisma.appointment.findFirst.mockResolvedValue({
@@ -358,6 +417,23 @@ describe('MediaService', () => {
       }),
     );
     expect(response.media.uploadStatus).toBe('COMPLETED');
+  });
+
+  it('treats repeated multipart completion for the same media as idempotent', async () => {
+    const { prisma, service, storage } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({ uploadStatus: 'COMPLETED' }),
+    );
+
+    const response = await service.localMultipartUpload(technician, 'media-1', {
+      buffer: Buffer.from('demo'),
+      mimetype: 'image/png',
+      originalname: 'demo.png',
+      size: 4,
+    });
+
+    expect(response.media.uploadStatus).toBe('COMPLETED');
+    expect(storage.uploadFile).not.toHaveBeenCalled();
   });
 
   it('rejects multipart uploads above the expected target size with FILE_TOO_LARGE', async () => {

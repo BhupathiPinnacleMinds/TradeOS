@@ -127,12 +127,6 @@ export class MediaService {
           metadata: this.auditMetadata(created),
         },
       });
-      await this.writeTimelineEvents(
-        tx,
-        currentUser,
-        created,
-        'MEDIA_UPLOAD_STARTED',
-      );
       return created;
     });
 
@@ -167,6 +161,10 @@ export class MediaService {
       );
     }
     const media = await this.getMedia(currentUser, id);
+    if (media.uploadStatus === 'COMPLETED') {
+      await this.assertMediaAccess(currentUser, media, 'view');
+      return { media: this.toMedia(media) };
+    }
     this.assertOwnPendingUpload(currentUser, media);
     const content = Buffer.from(dto.contentBase64, 'base64');
     if (content.length !== media.fileSizeBytes) {
@@ -209,6 +207,10 @@ export class MediaService {
       );
     }
     const media = await this.getMedia(currentUser, id);
+    if (media.uploadStatus === 'COMPLETED') {
+      await this.assertMediaAccess(currentUser, media, 'view');
+      return { media: this.toMedia(media) };
+    }
     this.assertOwnPendingUpload(currentUser, media);
     if (file.size !== media.fileSizeBytes) {
       throw this.domainError(
@@ -257,6 +259,10 @@ export class MediaService {
     dto: CompleteUploadDto,
   ) {
     const media = await this.getMedia(currentUser, id);
+    if (media.uploadStatus === 'COMPLETED') {
+      await this.assertMediaAccess(currentUser, media, 'view');
+      return { media: this.toMedia(media) };
+    }
     this.assertOwnPendingUpload(currentUser, media);
     const metadata = await this.storage
       .completeUpload({ objectKey: media.objectKey })
@@ -537,6 +543,7 @@ export class MediaService {
       businessId: currentUser.businessId,
       archivedAt: query.archived === 'true' ? { not: null } : null,
     };
+    if (!query.uploadStatus) where.uploadStatus = 'COMPLETED';
     if (query.customerId) where.customerId = query.customerId;
     if (query.jobId) where.jobId = query.jobId;
     if (query.appointmentId) where.appointmentId = query.appointmentId;

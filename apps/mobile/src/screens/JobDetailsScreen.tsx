@@ -9,6 +9,7 @@ import type {
 import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatAudCents,
+  formatBusinessDate,
   formatBusinessDateTime,
   formatMediaCount,
   formatBusinessTimeRange,
@@ -62,6 +63,7 @@ import {
   canManageJob,
 } from '../permissions/roleVisibility';
 import { colours } from '../theme';
+import { primaryCustomerName } from '../utils/customerDisplay';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'JobDetails'>;
 
@@ -91,6 +93,47 @@ function appointmentTransitionActionId(
     return actionId;
   }
   return 'cancel';
+}
+
+const JOB_TERMINAL_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED'];
+
+type JobStatusAction = {
+  danger?: boolean;
+  label: string;
+  status: JobStatus;
+};
+
+function isJobStatusAction(
+  action: JobStatusAction | null,
+): action is JobStatusAction {
+  return Boolean(action);
+}
+
+function jobStatusActions(job: Job): JobStatusAction[] {
+  if (JOB_TERMINAL_STATUSES.includes(job.status)) return [];
+  const actions: Array<JobStatusAction | null> = [
+    job.status !== 'IN_PROGRESS'
+      ? { label: 'Start Job', status: 'IN_PROGRESS' as const }
+      : null,
+    job.status !== 'COMPLETED'
+      ? { label: 'Complete Job', status: 'COMPLETED' as const }
+      : null,
+    job.status !== 'ON_HOLD'
+      ? { label: 'Put On Hold', status: 'ON_HOLD' as const }
+      : null,
+    { danger: true, label: 'Cancel Job', status: 'CANCELLED' as const },
+  ];
+  return actions.filter(isJobStatusAction);
+}
+
+function completedAppointments(appointments: Appointment[]) {
+  return appointments
+    .filter((appointment) => appointment.status === 'COMPLETED')
+    .sort(
+      (left, right) =>
+        new Date(right.completedAt ?? right.updatedAt).getTime() -
+        new Date(left.completedAt ?? left.updatedAt).getTime(),
+    );
 }
 
 export function JobDetailsScreen({ navigation, route }: Props) {
@@ -123,6 +166,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
+  const availableJobStatusActions = job ? jobStatusActions(job) : [];
+  const latestCompletedAppointment = completedAppointments(appointments)[0];
+  const latestFollowUpWorkLog = appointments.find(
+    (appointment) => appointment.workLog?.followUpRequired,
+  )?.workLog;
   const acceptedQuoteCents = [sourceQuote, ...relatedQuotes]
     .filter((quote) => quote?.status === 'ACCEPTED')
     .reduce((sum, quote) => sum + (quote?.totalCents ?? 0), 0);
@@ -401,28 +449,19 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
       {canUpdateStatus ? (
         <View style={styles.actions}>
-          <ActionButton
-            label="Start Job"
-            onPress={() => void changeStatus('IN_PROGRESS')}
-          />
-          <ActionButton
-            label="Complete Job"
-            onPress={() => void changeStatus('COMPLETED')}
-          />
-          <ActionButton
-            label="Put On Hold"
-            onPress={() => void changeStatus('ON_HOLD')}
-          />
-          <ActionButton
-            danger
-            label="Cancel Job"
-            onPress={() => void changeStatus('CANCELLED')}
-          />
+          {availableJobStatusActions.map((action) => (
+            <ActionButton
+              danger={action.danger}
+              key={action.status}
+              label={action.label}
+              onPress={() => void changeStatus(action.status)}
+            />
+          ))}
         </View>
       ) : null}
 
       <Card title="Customer">
-        <Text style={styles.meta}>{job.customer.displayName}</Text>
+        <Text style={styles.meta}>{primaryCustomerName(job.customer)}</Text>
         <Text style={styles.meta}>
           Phone: {job.customer.phone ?? 'Not recorded'}
         </Text>
@@ -430,6 +469,71 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           Email: {job.customer.email ?? 'Not recorded'}
         </Text>
       </Card>
+
+      {latestFollowUpWorkLog ? (
+        <Card title="Follow-up required">
+          <View style={styles.followUpBadge}>
+            <Text style={styles.followUpBadgeText}>Needs attention</Text>
+          </View>
+          <Text style={styles.meta}>
+            {latestFollowUpWorkLog.followUpNotes ??
+              'A technician marked this job for follow-up.'}
+          </Text>
+          {canScheduleAppointment ? (
+            <ActionButton
+              label="Schedule follow-up"
+              onPress={() =>
+                navigation.navigate('AppointmentForm', {
+                  customerId: job.customerId,
+                  jobId: job.id,
+                })
+              }
+            />
+          ) : null}
+        </Card>
+      ) : null}
+
+      {latestCompletedAppointment ? (
+        <Card title="Latest completion">
+          <Text style={styles.meta}>
+            Technician:{' '}
+            {latestCompletedAppointment.assignedUser
+              ? `${latestCompletedAppointment.assignedUser.firstName} ${latestCompletedAppointment.assignedUser.lastName}`
+              : 'Unassigned'}
+          </Text>
+          <Text style={styles.meta}>
+            Completed:{' '}
+            {formatDateTime(
+              latestCompletedAppointment.completedAt ??
+                latestCompletedAppointment.updatedAt,
+              businessTimezone,
+            )}
+          </Text>
+          <Text style={styles.meta}>
+            Work: {latestCompletedAppointment.workLog?.workCompleted ?? 'Done'}
+          </Text>
+          <Text style={styles.meta}>
+            Notes:{' '}
+            {latestCompletedAppointment.workLog?.technicianNotes ??
+              'No field notes recorded.'}
+          </Text>
+          <Text style={styles.meta}>
+            Follow-up:{' '}
+            {latestCompletedAppointment.workLog?.followUpRequired
+              ? (latestCompletedAppointment.workLog.followUpNotes ?? 'Required')
+              : 'Not required'}
+          </Text>
+          <Text style={styles.meta}>
+            Signature:{' '}
+            {latestCompletedAppointment.signature?.capturedAt
+              ? 'Captured'
+              : latestCompletedAppointment.signature?.skippedAt
+                ? 'Skipped with reason'
+                : 'Not recorded'}
+          </Text>
+          <Text style={styles.meta}>Evidence: {media.length}</Text>
+        </Card>
+      ) : null}
 
       <Card title="Address">
         <Text style={styles.meta}>
@@ -556,7 +660,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 {label(appointment.appointmentType)}
               </Text>
               <Text style={styles.meta}>
-                {formatDateTime(appointment.scheduledStart, businessTimezone)} ·{' '}
+                {formatBusinessDate(
+                  appointment.scheduledStart,
+                  businessTimezone,
+                )}{' '}
+                ·{' '}
                 {formatBusinessTimeRange(
                   appointment.scheduledStart,
                   appointment.scheduledEnd,
@@ -577,7 +685,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               </Text>
               {canUpdateStatus ? (
                 <View style={styles.actions}>
-                  {canEdit ? (
+                  {canEdit &&
+                  ![
+                    'COMPLETED',
+                    'CANCELLED',
+                    'NO_SHOW',
+                    'RESCHEDULED',
+                  ].includes(appointment.status) ? (
                     <ActionButton
                       label="Reassign Technician"
                       onPress={() =>
@@ -1042,6 +1156,21 @@ const styles = StyleSheet.create({
   financialValue: {
     color: colours.ink,
     fontSize: 18,
+    fontWeight: '900',
+  },
+  followUpBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    borderColor: '#F59E0B',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  followUpBadgeText: {
+    color: '#92400E',
+    fontSize: 12,
     fontWeight: '900',
   },
   sourceQuoteCard: {

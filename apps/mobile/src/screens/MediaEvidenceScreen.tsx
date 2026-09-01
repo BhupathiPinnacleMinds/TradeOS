@@ -207,6 +207,7 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
     initialMediaPickerControllerState,
   );
   const [isUploading, setIsUploading] = useState(false);
+  const isUploadingRef = useRef(false);
   const pickerStateRef = useRef(pickerState);
   const isMountedRef = useRef(true);
   const pendingSourceRef = useRef<EvidenceSource | null>(null);
@@ -949,7 +950,7 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
   }
 
   async function uploadEvidence() {
-    if (!token || isUploading) return;
+    if (!token || isUploadingRef.current) return;
     if (!hasMediaContext) {
       showToast({
         message:
@@ -965,14 +966,19 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
       });
       return;
     }
+    isUploadingRef.current = true;
     setIsUploading(true);
     cancelledIds.current.clear();
     let failedCount = 0;
-    for (const file of uploadableFiles) {
-      const ok = await uploadFile(file);
-      if (!ok) failedCount += 1;
+    try {
+      for (const file of uploadableFiles) {
+        const ok = await uploadFile(file);
+        if (!ok) failedCount += 1;
+      }
+    } finally {
+      isUploadingRef.current = false;
+      setIsUploading(false);
     }
-    setIsUploading(false);
 
     if (failedCount > 0) {
       showToast({

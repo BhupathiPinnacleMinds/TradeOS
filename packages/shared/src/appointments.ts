@@ -772,6 +772,14 @@ function canUpdateAppointmentStatus(input: AppointmentQuickActionInput) {
   return true;
 }
 
+function canExecuteAppointmentWork(input: AppointmentQuickActionInput) {
+  if (!input.role || !APPOINTMENT_STATUS_UPDATE_ROLES.includes(input.role)) {
+    return false;
+  }
+
+  return Boolean(input.isAssignedUser);
+}
+
 function canConfirmAppointment(input: AppointmentQuickActionInput) {
   return Boolean(input.role && APPOINTMENT_CONFIRM_ROLES.includes(input.role));
 }
@@ -789,6 +797,7 @@ export function getAllowedAppointmentTransitions(input: {
     status: input.currentStatus,
   };
   const canUpdate = canUpdateAppointmentStatus(quickActionInput);
+  const canExecuteWork = canExecuteAppointmentWork(quickActionInput);
   const canConfirm = canConfirmAppointment(quickActionInput);
   if (!canUpdate) return [];
 
@@ -819,72 +828,84 @@ export function getAllowedAppointmentTransitions(input: {
   }
 
   if (input.currentStatus === 'CONFIRMED') {
-    options.push(
-      {
+    if (canExecuteWork) {
+      options.push({
         action: 'start-travel',
         label: 'Start travel',
         nextStatus: 'ON_THE_WAY',
-      },
-      {
-        action: 'cancel',
-        label: 'Cancel appointment',
-        nextStatus: 'CANCELLED',
-      },
-    );
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
     return options;
   }
   if (input.currentStatus === 'ON_THE_WAY') {
-    return [
-      { action: 'arrive', label: 'Mark arrived', nextStatus: 'ARRIVED' },
-      {
-        action: 'cancel',
-        label: 'Cancel appointment',
-        nextStatus: 'CANCELLED',
-      },
-    ];
+    if (canExecuteWork) {
+      options.push({
+        action: 'arrive',
+        label: 'Mark arrived',
+        nextStatus: 'ARRIVED',
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
+    return options;
   }
   if (input.currentStatus === 'ARRIVED') {
-    return [
-      { action: 'start', label: 'Start work', nextStatus: 'IN_PROGRESS' },
-      {
-        action: 'cancel',
-        label: 'Cancel appointment',
-        nextStatus: 'CANCELLED',
-      },
-    ];
+    if (canExecuteWork) {
+      options.push({
+        action: 'start',
+        label: 'Start work',
+        nextStatus: 'IN_PROGRESS',
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
+    return options;
   }
   if (input.currentStatus === 'IN_PROGRESS') {
-    return [
-      {
+    if (canExecuteWork) {
+      options.push({
         action: 'pause',
         label: 'Pause',
         nextStatus: 'PAUSED',
-      },
-      {
+      });
+      options.push({
         action: 'complete',
         label: 'Complete appointment',
         nextStatus: 'COMPLETED',
-      },
-      {
-        action: 'cancel',
-        label: 'Cancel appointment',
-        nextStatus: 'CANCELLED',
-      },
-    ];
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
+    return options;
   }
   if (input.currentStatus === 'PAUSED') {
-    return [
-      {
+    if (canExecuteWork) {
+      options.push({
         action: 'resume',
         label: 'Resume work',
         nextStatus: 'IN_PROGRESS',
-      },
-      {
-        action: 'cancel',
-        label: 'Cancel appointment',
-        nextStatus: 'CANCELLED',
-      },
-    ];
+      });
+    }
+    options.push({
+      action: 'cancel',
+      label: 'Cancel appointment',
+      nextStatus: 'CANCELLED',
+    });
+    return options;
   }
   return [];
 }
@@ -944,6 +965,7 @@ export function getAppointmentQuickActions(
 
   const actions: AppointmentQuickAction[] = [];
   const canUpdateStatus = canUpdateAppointmentStatus(input);
+  const canExecuteWork = canExecuteAppointmentWork(input);
   const canConfirm = canConfirmAppointment(input);
   const canReschedule = canRescheduleAppointment(input);
   const canReassign = canReassignAppointment(input);
@@ -972,7 +994,7 @@ export function getAppointmentQuickActions(
     });
   }
 
-  if (canUpdateStatus && input.status === 'CONFIRMED') {
+  if (canExecuteWork && input.status === 'CONFIRMED') {
     actions.push({
       id: 'startTravel',
       kind: 'workflow',
@@ -980,26 +1002,26 @@ export function getAppointmentQuickActions(
     });
   }
 
-  if (canUpdateStatus && input.status === 'ARRIVED') {
+  if (canExecuteWork && input.status === 'ARRIVED') {
     actions.push({ id: 'start', kind: 'workflow', label: 'Start work' });
   }
 
-  if (canUpdateStatus && input.status === 'ON_THE_WAY') {
+  if (canExecuteWork && input.status === 'ON_THE_WAY') {
     actions.push({ id: 'arrive', kind: 'workflow', label: 'Arrived' });
   }
 
-  if (canUpdateStatus && input.status === 'IN_PROGRESS') {
+  if (canExecuteWork && input.status === 'IN_PROGRESS') {
     actions.push({ id: 'pause', kind: 'workflow', label: 'Pause' });
     actions.push({ id: 'complete', kind: 'workflow', label: 'Complete' });
   }
 
-  if (canUpdateStatus && input.status === 'PAUSED') {
+  if (canExecuteWork && input.status === 'PAUSED') {
     actions.push({ id: 'resume', kind: 'workflow', label: 'Resume' });
   }
 
   if (
     canReassign &&
-    !['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(input.status)
+    !['COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(input.status)
   ) {
     actions.push({
       id: 'reassign',

@@ -2055,13 +2055,17 @@ function CompletionModal({
             </ScrollView>
 
             <View style={styles.modalActions}>
-              <Pressable style={styles.quickAction} onPress={cancelCompletion}>
+              <Pressable
+                style={[styles.quickAction, styles.modalActionButton]}
+                onPress={cancelCompletion}
+              >
                 <Text style={styles.quickText}>Decide later</Text>
               </Pressable>
               <Pressable
                 disabled={!canComplete}
                 style={[
                   styles.quickAction,
+                  styles.modalActionButton,
                   styles.quickActionPrimary,
                   !canComplete && styles.disabledAction,
                 ]}
@@ -2714,12 +2718,12 @@ const styles = StyleSheet.create({
     borderTopColor: colours.border,
     borderTopWidth: 1,
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
     justifyContent: 'flex-end',
     padding: 18,
     paddingTop: 12,
   },
+  modalActionButton: { flex: 1 },
   modalBackdrop: {
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.32)',

@@ -252,4 +252,38 @@ describe('Job form mobile UI contracts', () => {
     expect(jobDetails).toContain("'Create quote'");
     expect(jobDetails).toContain("'Create invoice'");
   });
+
+  it('hides invalid Job Details status actions and shows completion follow-up context', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('function jobStatusActions');
+    expect(jobDetails).toContain("job.status !== 'IN_PROGRESS'");
+    expect(jobDetails).toContain('availableJobStatusActions.map');
+    expect(jobDetails).toContain('Follow-up required');
+    expect(jobDetails).toContain('Schedule follow-up');
+    expect(jobDetails).toContain('Latest completion');
+  });
+
+  it('formats Job Details appointment cards with one date and a separate time range', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('formatBusinessDate(');
+    expect(jobDetails).toContain('formatBusinessTimeRange(');
+    expect(jobDetails).not.toMatch(
+      /formatDateTime\(appointment\.scheduledStart[\s\S]{0,120}formatBusinessTimeRange\(/,
+    );
+  });
+
+  it('keeps Appointment Details View Job navigation anchored to the canonical jobId', () => {
+    const appointmentDetails = mobileSource(
+      'screens/AppointmentDetailsScreen.tsx',
+    );
+
+    expect(appointmentDetails).toContain(
+      "navigation.navigate('JobDetails', { jobId: appointment.jobId })",
+    );
+    expect(appointmentDetails).not.toContain(
+      "navigation.navigate('JobDetails', { jobId: appointment.job.jobNumber })",
+    );
+  });
 });

@@ -67,6 +67,51 @@ export class AppointmentNotificationsService {
     });
   }
 
+  async notifyCompleted(input: {
+    actor: AuthenticatedUser;
+    appointment: Appointment;
+  }) {
+    const followUpRequired = Boolean(
+      input.appointment.workLog?.followUpRequired,
+    );
+    const body = await this.appointmentBody(
+      input.appointment,
+      followUpRequired
+        ? 'has been completed and needs follow-up.'
+        : 'has been completed.',
+    );
+
+    try {
+      await this.notifications.createForRoles({
+        actorUserId: input.actor.id,
+        body,
+        businessId: input.appointment.businessId,
+        entityId: input.appointment.jobId,
+        entityType: 'job',
+        metadata: {
+          appointmentId: input.appointment.id,
+          appointmentNumber: input.appointment.appointmentNumber,
+          followUpNotes: input.appointment.workLog?.followUpNotes ?? null,
+          followUpRequired,
+          jobId: input.appointment.jobId,
+        },
+        roles: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
+        title: followUpRequired
+          ? 'Appointment completed - follow-up needed'
+          : 'Appointment completed',
+        type: followUpRequired
+          ? 'APPOINTMENT_COMPLETED_FOLLOW_UP'
+          : 'APPOINTMENT_COMPLETED',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Unable to queue appointment completion notification: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+    }
+  }
+
   notifyOldTechnician(input: {
     actor?: AuthenticatedUser;
     appointment: Appointment;

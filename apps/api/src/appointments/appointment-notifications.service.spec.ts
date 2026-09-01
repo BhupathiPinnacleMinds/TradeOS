@@ -72,6 +72,7 @@ function appointment(overrides: Partial<Appointment> = {}): Appointment {
 describe('AppointmentNotificationsService', () => {
   function createService() {
     const notifications = {
+      createForRoles: jest.fn().mockResolvedValue({ count: 2 }),
       create: jest.fn().mockResolvedValue({ id: 'notification-1' }),
     };
     const prisma = {
@@ -144,6 +145,37 @@ describe('AppointmentNotificationsService', () => {
         title: 'Appointment reassigned',
         type: 'APPOINTMENT_REASSIGNED',
         userId: 'tech-2',
+      }),
+    );
+  });
+
+  it('notifies owner and dispatch roles when an appointment is completed with follow-up', async () => {
+    const { notifications, service } = createService();
+
+    await service.notifyCompleted({
+      actor: { ...actor, id: 'tech-1', role: 'TECHNICIAN' },
+      appointment: appointment({
+        completedAt: '2026-08-31T02:00:00.000Z',
+        status: 'COMPLETED',
+        workLog: {
+          followUpNotes: 'Needs return visit with new pump.',
+          followUpRequired: true,
+          id: 'work-log-1',
+          technicianNotes: 'Temporary repair completed.',
+          workCompleted: 'Replaced failed valve.',
+        },
+      } as Partial<Appointment>),
+    });
+
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'tech-1',
+        businessId: 'business-1',
+        entityId: 'job-1',
+        entityType: 'job',
+        roles: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'],
+        title: 'Appointment completed - follow-up needed',
+        type: 'APPOINTMENT_COMPLETED_FOLLOW_UP',
       }),
     );
   });

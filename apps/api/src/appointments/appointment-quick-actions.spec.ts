@@ -55,14 +55,29 @@ describe('getAppointmentQuickActions', () => {
         role: 'ADMIN',
         status: 'CONFIRMED',
       }),
-    ).toEqual([
-      'navigate',
-      'call',
-      'startTravel',
-      'reassign',
-      'reschedule',
-      'cancel',
-    ]);
+    ).toEqual(['navigate', 'call', 'reassign', 'reschedule', 'cancel']);
+  });
+
+  it('hides technician execution actions from owners and admins unless they are assigned', () => {
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: false,
+        role: 'OWNER',
+        status: 'IN_PROGRESS',
+      }),
+    ).toEqual(['call', 'reassign', 'cancel']);
+
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        role: 'OWNER',
+        status: 'IN_PROGRESS',
+      }),
+    ).toEqual(['call', 'pause', 'complete', 'reassign', 'cancel']);
   });
 
   it('shows arrive for on-the-way appointments', () => {

@@ -202,3 +202,17 @@ export const JOB_ARCHIVE_ROLES: BusinessRole[] = [
   'ADMIN',
   'OFFICE_MANAGER',
 ];
+
+export function getAllowedJobStatusTransitions(status: JobStatus): JobStatus[] {
+  if (status === 'COMPLETED' || status === 'CANCELLED') return [];
+  return JOB_STATUSES.filter(
+    (nextStatus) => nextStatus !== status && nextStatus !== 'NEW',
+  );
+}
+
+export function canTransitionJobStatus(
+  currentStatus: JobStatus,
+  nextStatus: JobStatus,
+) {
+  return getAllowedJobStatusTransitions(currentStatus).includes(nextStatus);
+}

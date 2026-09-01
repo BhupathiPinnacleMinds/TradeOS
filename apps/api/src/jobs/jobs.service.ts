@@ -13,6 +13,7 @@ import {
   JOB_STATUS_UPDATE_ROLES,
   JOB_VIEW_ROLES,
   JOB_WRITE_ROLES,
+  canTransitionJobStatus,
   getBusinessDateParts,
   getBusinessDayRangeUtc,
   getInvoiceDisplayStatus,
@@ -416,6 +417,14 @@ export class JobsService {
   ): Promise<JobDetailResponse> {
     this.assertRole(currentUser, JOB_STATUS_UPDATE_ROLES);
     const job = await this.getJobForUser(currentUser, id);
+    if (!canTransitionJobStatus(job.status, dto.status)) {
+      throw this.domainError(
+        'INVALID_JOB_STATUS_TRANSITION',
+        'That job status change is not available from the current state.',
+        HttpStatus.CONFLICT,
+        { from: job.status, to: dto.status },
+      );
+    }
     const now = new Date();
     const statusData: Record<string, unknown> = {
       status: dto.status,

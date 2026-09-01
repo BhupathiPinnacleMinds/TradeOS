@@ -24,6 +24,7 @@ describe('Appointment customer display UI contracts', () => {
       mobileSource('screens/MyDayScreen.tsx'),
       mobileSource('screens/AppointmentDetailsScreen.tsx'),
       mobileSource('screens/AppointmentReassignScreen.tsx'),
+      mobileSource('screens/JobDetailsScreen.tsx'),
     ]) {
       expect(source).toContain('primaryCustomerName');
       expect(source).not.toMatch(
