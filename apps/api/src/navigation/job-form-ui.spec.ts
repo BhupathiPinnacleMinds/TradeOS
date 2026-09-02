@@ -279,8 +279,12 @@ describe('Job form mobile UI contracts', () => {
       'screens/AppointmentDetailsScreen.tsx',
     );
 
+    expect(appointmentDetails).toContain('function openJobDetails()');
     expect(appointmentDetails).toContain(
-      "navigation.navigate('JobDetails', { jobId: appointment.jobId })",
+      'jobIdPassedToJobDetails: selectedAppointment.jobId',
+    );
+    expect(appointmentDetails).toContain(
+      "navigation.navigate('JobDetails', { jobId: selectedAppointment.jobId })",
     );
     expect(appointmentDetails).not.toContain(
       "navigation.navigate('JobDetails', { jobId: appointment.job.jobNumber })",

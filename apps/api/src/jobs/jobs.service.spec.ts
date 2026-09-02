@@ -38,7 +38,7 @@ function userForRole(role: BusinessRole): AuthenticatedUser {
 }
 
 type MockPrisma = {
-  appointment: { findFirst: jest.Mock; findMany: jest.Mock };
+  appointment: { findMany: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
   business: { findUnique: jest.Mock };
   customer: { create: jest.Mock; findFirst: jest.Mock };
@@ -153,10 +153,7 @@ function payload(overrides: Partial<UpsertJobDto> = {}): UpsertJobDto {
 
 function createService() {
   const prisma: MockPrisma = {
-    appointment: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      findMany: jest.fn().mockResolvedValue([]),
-    },
+    appointment: { findMany: jest.fn().mockResolvedValue([]) },
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
@@ -394,22 +391,46 @@ describe('JobsService', () => {
         jobNumber: 'JOB-2026-000003',
       }),
     );
-    prisma.appointment.findFirst.mockResolvedValueOnce({
-      id: 'appointment-completed-1',
-    });
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      {
+        assignedUserId: 'tech-1',
+        appointmentNumber: 'APT-2026-000001',
+        id: 'appointment-completed-1',
+      },
+    ]);
 
     const result = await service.findOne(technician, 'job-1');
 
     expect(result.job.id).toBe('job-1');
     expect(result.job.jobNumber).toBe('JOB-2026-000003');
-    expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+    expect(prisma.appointment.findMany).toHaveBeenNthCalledWith(1, {
       where: {
-        assignedUserId: 'tech-1',
         businessId: 'business-1',
         jobId: 'job-1',
       },
-      select: { id: true },
+      select: {
+        assignedUserId: true,
+        appointmentNumber: true,
+        id: true,
+      },
+      take: 50,
     });
+  });
+
+  it('allows an owner to open the same parent job without technician assignment checks', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(
+      job({
+        assignedToUserId: null,
+        jobNumber: 'JOB-2026-000003',
+      }),
+    );
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.job.id).toBe('job-1');
+    expect(result.job.jobNumber).toBe('JOB-2026-000003');
+    expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('keeps direct job assignment access for technicians without requiring appointment lookup', async () => {
@@ -417,7 +438,7 @@ describe('JobsService', () => {
 
     await service.findOne(technician, 'job-1');
 
-    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+    expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('denies an unrelated technician opening a job they are not assigned through job or appointment', async () => {
@@ -425,7 +446,13 @@ describe('JobsService', () => {
     prisma.job.findFirst.mockResolvedValueOnce(
       job({ assignedToUserId: 'other-tech' }),
     );
-    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      {
+        assignedUserId: 'third-tech',
+        appointmentNumber: 'APT-2026-000009',
+        id: 'appointment-other-tech',
+      },
+    ]);
 
     await service.findOne(technician, 'job-1').catch((error) => {
       expectDomainError(error, 'JOB_NOT_FOUND');
@@ -443,7 +470,7 @@ describe('JobsService', () => {
         expectDomainError(error, 'JOB_NOT_FOUND');
         expect((error as HttpException).getStatus()).toBe(404);
       });
-    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
   });
 
   it('blocks accountant write/archive access', async () => {

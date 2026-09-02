@@ -693,20 +693,59 @@ export class JobsService {
   }
 
   private async getJobForUser(currentUser: AuthenticatedUser, id: string) {
-    const job = await this.getJob(currentUser.businessId, id);
-    if (
-      currentUser.role === TECHNICIAN_ROLE &&
-      job.assignedToUserId !== currentUser.id
-    ) {
-      const assignedAppointment = await this.prisma.appointment.findFirst({
-        where: {
-          assignedUserId: currentUser.id,
-          businessId: currentUser.businessId,
-          jobId: job.id,
-        },
-        select: { id: true },
+    const job = await this.prisma.job.findFirst({
+      where: { businessId: currentUser.businessId, id },
+      include: this.jobInclude(),
+    });
+    if (!job) {
+      this.logJobAccessDiagnostic({
+        allowed: false,
+        appointmentAssignment: false,
+        appointmentDiagnostics: [],
+        directJobAssignment: false,
+        job: null,
+        reason: 'job_not_found_for_business',
+        requestedJobId: id,
+        user: currentUser,
       });
-      if (!assignedAppointment) {
+      throw this.domainError(
+        'JOB_NOT_FOUND',
+        'Job not found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (currentUser.role === TECHNICIAN_ROLE) {
+      const directJobAssignment = job.assignedToUserId === currentUser.id;
+      const appointmentDiagnostics = directJobAssignment
+        ? []
+        : await this.prisma.appointment.findMany({
+            where: {
+              businessId: currentUser.businessId,
+              jobId: job.id,
+            },
+            select: {
+              assignedUserId: true,
+              appointmentNumber: true,
+              id: true,
+            },
+            take: 50,
+          });
+      const appointmentAssignment = appointmentDiagnostics.some(
+        (appointment) => appointment.assignedUserId === currentUser.id,
+      );
+      const allowed = directJobAssignment || appointmentAssignment;
+      this.logJobAccessDiagnostic({
+        allowed,
+        appointmentAssignment,
+        appointmentDiagnostics,
+        directJobAssignment,
+        job,
+        reason: allowed ? 'technician_job_access_allowed' : 'technician_denied',
+        requestedJobId: id,
+        user: currentUser,
+      });
+      if (!allowed) {
         throw this.domainError(
           'JOB_NOT_FOUND',
           'Job not found.',
@@ -715,6 +754,48 @@ export class JobsService {
       }
     }
     return job;
+  }
+
+  private logJobAccessDiagnostic(input: {
+    allowed: boolean;
+    appointmentAssignment: boolean;
+    appointmentDiagnostics: Array<{
+      assignedUserId: string | null;
+      appointmentNumber: string;
+      id: string;
+    }>;
+    directJobAssignment: boolean;
+    job: Pick<JobWithRelations, 'assignedToUserId' | 'id' | 'jobNumber'> | null;
+    reason: string;
+    requestedJobId: string;
+    user: AuthenticatedUser;
+  }) {
+    const payload = {
+      allowed: input.allowed,
+      appointmentAssignment: input.appointmentAssignment,
+      appointmentCount: input.appointmentDiagnostics.length,
+      appointments: input.appointmentDiagnostics.map((appointment) => ({
+        assignedUserId: appointment.assignedUserId,
+        appointmentNumber: appointment.appointmentNumber,
+        id: appointment.id,
+      })),
+      authenticatedBusinessId: input.user.businessId,
+      authenticatedRole: input.user.role,
+      authenticatedUserId: input.user.id,
+      directJobAssignment: input.directJobAssignment,
+      jobAssignedToUserId: input.job?.assignedToUserId ?? null,
+      jobExistsForBusiness: Boolean(input.job),
+      jobId: input.job?.id ?? null,
+      jobNumber: input.job?.jobNumber ?? null,
+      reason: input.reason,
+      requestedJobId: input.requestedJobId,
+    };
+
+    if (input.allowed) {
+      console.info('[TradieOS job access diagnostic]', payload);
+    } else {
+      console.warn('[TradieOS job access diagnostic]', payload);
+    }
   }
 
   private async getJob(businessId: string, id: string) {
