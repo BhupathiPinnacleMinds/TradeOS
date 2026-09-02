@@ -32,8 +32,10 @@ import {
   View,
 } from 'react-native';
 import {
+  ApiRequestError,
   archiveMediaRequest,
   archiveJobRequest,
+  buildApiRequestUrl,
   friendlyAppointmentMutationError,
   jobDetailRequest,
   mediaRequest,
@@ -55,6 +57,7 @@ import {
   MediaRemovalConfirmation,
 } from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
+import { mobileConfig } from '../config/mobileConfig';
 import type { RootStackParamList } from '../navigation/types';
 import {
   canAccessStackRoute,
@@ -192,9 +195,26 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   async function loadJob() {
     if (!token) return;
     setIsLoading(true);
+    const jobEndpoint = `/jobs/${jobId}`;
+    if (mobileConfig.environment !== 'production') {
+      console.info('[TradieOS job details request diagnostic]', {
+        endpoint: buildApiRequestUrl(jobEndpoint),
+        routeJobId: jobId,
+      });
+    }
     try {
       const [response, mediaResponse] = await Promise.all([
-        jobDetailRequest(token, jobId),
+        jobDetailRequest(token, jobId).catch((error) => {
+          if (mobileConfig.environment !== 'production') {
+            console.warn('[TradieOS job details response diagnostic]', {
+              code: error instanceof ApiRequestError ? error.code : null,
+              message: error instanceof Error ? error.message : String(error),
+              routeJobId: jobId,
+              status: error instanceof ApiRequestError ? error.status : null,
+            });
+          }
+          throw error;
+        }),
         mediaRequest(token, {
           archived: showArchivedMedia ? 'true' : undefined,
           jobId,

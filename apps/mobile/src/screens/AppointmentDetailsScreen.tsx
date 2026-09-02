@@ -98,6 +98,7 @@ import {
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
+import { mobileConfig } from '../config/mobileConfig';
 import type { RootStackParamList } from '../navigation/types';
 import {
   canAccessStackRoute,
@@ -926,6 +927,22 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   ]
     .filter(Boolean)
     .join(', ');
+  function openJobDetails() {
+    const selectedAppointment = appointment;
+    if (!selectedAppointment) return;
+    if (mobileConfig.environment !== 'production') {
+      console.info('[TradieOS appointment view job diagnostic]', {
+        appointmentId: selectedAppointment.id,
+        appointmentJobId: selectedAppointment.jobId,
+        appointmentNumber: selectedAppointment.appointmentNumber,
+        jobIdPassedToJobDetails: selectedAppointment.jobId,
+        nestedJobId: selectedAppointment.job?.id,
+        nestedJobNumber: selectedAppointment.job?.jobNumber,
+      });
+    }
+    navigation.navigate('JobDetails', { jobId: selectedAppointment.jobId });
+  }
+
   const quickActions = getAppointmentQuickActions({
     hasAddress: Boolean(address),
     hasPhone: Boolean(customer.phone?.trim()),
@@ -1006,8 +1023,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       ? {
           id: 'job' as const,
           label: 'View Job',
-          onPress: () =>
-            navigation.navigate('JobDetails', { jobId: appointment.jobId }),
+          onPress: openJobDetails,
         }
       : null,
     canCreateQuote
@@ -1057,13 +1073,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
       <View style={styles.quickRow}>
         {terminalStatus ? (
-          <QuickAction
-            label="View Job"
-            onPress={() =>
-              navigation.navigate('JobDetails', { jobId: appointment.jobId })
-            }
-            primary
-          />
+          <QuickAction label="View Job" onPress={openJobDetails} primary />
         ) : null}
         {!terminalStatus
           ? primaryActions.map((action) => (
