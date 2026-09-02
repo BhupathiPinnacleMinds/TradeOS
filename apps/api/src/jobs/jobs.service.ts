@@ -698,11 +698,21 @@ export class JobsService {
       currentUser.role === TECHNICIAN_ROLE &&
       job.assignedToUserId !== currentUser.id
     ) {
-      throw this.domainError(
-        'JOB_NOT_FOUND',
-        'Job not found.',
-        HttpStatus.NOT_FOUND,
-      );
+      const assignedAppointment = await this.prisma.appointment.findFirst({
+        where: {
+          assignedUserId: currentUser.id,
+          businessId: currentUser.businessId,
+          jobId: job.id,
+        },
+        select: { id: true },
+      });
+      if (!assignedAppointment) {
+        throw this.domainError(
+          'JOB_NOT_FOUND',
+          'Job not found.',
+          HttpStatus.NOT_FOUND,
+        );
+      }
     }
     return job;
   }

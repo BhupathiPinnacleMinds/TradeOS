@@ -282,6 +282,29 @@ describe('AppointmentsService', () => {
     expect(findManyCalls[0][0].where.businessId).toBe('business-1');
   });
 
+  it('returns canonical job identifiers for a completed appointment detail', async () => {
+    const { prisma, service } = createService();
+    const completedAppointment = appointment();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        completedAt: new Date('2026-09-03T02:00:00.000Z'),
+        job: {
+          ...completedAppointment.job,
+          id: 'job-db-3',
+          jobNumber: 'JOB-2026-000003',
+        },
+        jobId: 'job-db-3',
+        status: 'COMPLETED',
+      }),
+    );
+
+    const result = await service.findOne(technician, 'appointment-1');
+
+    expect(result.appointment.jobId).toBe('job-db-3');
+    expect(result.appointment.job.id).toBe('job-db-3');
+    expect(result.appointment.job.jobNumber).toBe('JOB-2026-000003');
+  });
+
   it('creates appointments with per-business appointment numbers', async () => {
     const { notificationMocks, prisma, service } = createService();
     prisma.appointment.findMany.mockResolvedValueOnce([]);

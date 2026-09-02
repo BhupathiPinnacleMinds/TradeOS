@@ -38,7 +38,7 @@ function userForRole(role: BusinessRole): AuthenticatedUser {
 }
 
 type MockPrisma = {
-  appointment: { findMany: jest.Mock };
+  appointment: { findFirst: jest.Mock; findMany: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
   business: { findUnique: jest.Mock };
   customer: { create: jest.Mock; findFirst: jest.Mock };
@@ -153,7 +153,10 @@ function payload(overrides: Partial<UpsertJobDto> = {}): UpsertJobDto {
 
 function createService() {
   const prisma: MockPrisma = {
-    appointment: { findMany: jest.fn().mockResolvedValue([]) },
+    appointment: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
@@ -381,6 +384,66 @@ describe('JobsService', () => {
       businessId: owner.businessId,
       relatedJobId: 'job-1',
     });
+  });
+
+  it('allows a technician to open a parent job through their assigned appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(
+      job({
+        assignedToUserId: null,
+        jobNumber: 'JOB-2026-000003',
+      }),
+    );
+    prisma.appointment.findFirst.mockResolvedValueOnce({
+      id: 'appointment-completed-1',
+    });
+
+    const result = await service.findOne(technician, 'job-1');
+
+    expect(result.job.id).toBe('job-1');
+    expect(result.job.jobNumber).toBe('JOB-2026-000003');
+    expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+      where: {
+        assignedUserId: 'tech-1',
+        businessId: 'business-1',
+        jobId: 'job-1',
+      },
+      select: { id: true },
+    });
+  });
+
+  it('keeps direct job assignment access for technicians without requiring appointment lookup', async () => {
+    const { prisma, service } = createService();
+
+    await service.findOne(technician, 'job-1');
+
+    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('denies an unrelated technician opening a job they are not assigned through job or appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(
+      job({ assignedToUserId: 'other-tech' }),
+    );
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    await service.findOne(technician, 'job-1').catch((error) => {
+      expectDomainError(error, 'JOB_NOT_FOUND');
+      expect((error as HttpException).getStatus()).toBe(404);
+    });
+  });
+
+  it('denies cross-business technician access before checking assigned appointments', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(null);
+
+    await service
+      .findOne(technician, 'job-from-other-business')
+      .catch((error) => {
+        expectDomainError(error, 'JOB_NOT_FOUND');
+        expect((error as HttpException).getStatus()).toBe(404);
+      });
+    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
   });
 
   it('blocks accountant write/archive access', async () => {
