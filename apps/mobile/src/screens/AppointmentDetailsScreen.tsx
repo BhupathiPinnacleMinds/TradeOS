@@ -240,6 +240,14 @@ function logAppointmentDetailsNavigation(
   console.info(`[AppointmentDetails] ${event}`, details);
 }
 
+function resolveAppointmentJobId(appointment: Appointment) {
+  const candidates = [appointment.jobId, appointment.job?.id];
+  const resolved = candidates.find(
+    (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+  );
+  return resolved?.trim() ?? null;
+}
+
 export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
@@ -930,17 +938,27 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   function openJobDetails() {
     const selectedAppointment = appointment;
     if (!selectedAppointment) return;
+    const resolvedJobId = resolveAppointmentJobId(selectedAppointment);
     if (mobileConfig.environment !== 'production') {
-      console.info('[TradieOS appointment view job diagnostic]', {
+      console.info('[VIEW_JOB_NAVIGATION]', {
         appointmentId: selectedAppointment.id,
         appointmentJobId: selectedAppointment.jobId,
         appointmentNumber: selectedAppointment.appointmentNumber,
-        jobIdPassedToJobDetails: selectedAppointment.jobId,
         nestedJobId: selectedAppointment.job?.id,
-        nestedJobNumber: selectedAppointment.job?.jobNumber,
+        resolvedJobId,
       });
     }
-    navigation.navigate('JobDetails', { jobId: selectedAppointment.jobId });
+    if (!resolvedJobId) {
+      showToast({
+        message:
+          mobileConfig.environment === 'staging'
+            ? 'Missing job reference for this appointment.'
+            : "We couldn't open this job from this appointment. Refresh and try again.",
+        tone: 'error',
+      });
+      return;
+    }
+    navigation.navigate('JobDetails', { jobId: resolvedJobId });
   }
 
   const quickActions = getAppointmentQuickActions({

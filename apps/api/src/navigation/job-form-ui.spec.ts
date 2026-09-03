@@ -279,15 +279,71 @@ describe('Job form mobile UI contracts', () => {
       'screens/AppointmentDetailsScreen.tsx',
     );
 
+    expect(appointmentDetails).toContain('function resolveAppointmentJobId');
     expect(appointmentDetails).toContain('function openJobDetails()');
     expect(appointmentDetails).toContain(
-      'jobIdPassedToJobDetails: selectedAppointment.jobId',
+      'const resolvedJobId = resolveAppointmentJobId(selectedAppointment)',
     );
     expect(appointmentDetails).toContain(
+      "console.info('[VIEW_JOB_NAVIGATION]'",
+    );
+    expect(appointmentDetails).toContain(
+      'appointmentJobId: selectedAppointment.jobId',
+    );
+    expect(appointmentDetails).toContain(
+      'nestedJobId: selectedAppointment.job?.id',
+    );
+    expect(appointmentDetails).toContain('resolvedJobId');
+    expect(appointmentDetails).toContain(
+      "navigation.navigate('JobDetails', { jobId: resolvedJobId })",
+    );
+    expect(appointmentDetails).toContain('Missing job reference');
+    expect(appointmentDetails).not.toContain(
       "navigation.navigate('JobDetails', { jobId: selectedAppointment.jobId })",
     );
     expect(appointmentDetails).not.toContain(
       "navigation.navigate('JobDetails', { jobId: appointment.job.jobNumber })",
     );
+  });
+
+  it('distinguishes missing Job Details route params from API job-not-found responses', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+    const navigationTypes = mobileSource('navigation/types.ts');
+
+    expect(navigationTypes).toContain(
+      'JobDetails: { jobId?: string } | undefined',
+    );
+    expect(jobDetails).toContain('route.params?.jobId ?? null');
+    expect(jobDetails).toContain("routeJobId?.trim() ?? ''");
+    expect(jobDetails).toContain("console.info('[JOB_DETAILS_ROUTE]'");
+    expect(jobDetails).toContain("console.info('[JOB_DETAILS_REQUEST]'");
+    expect(jobDetails).toContain('if (!token || !jobId) return');
+    expect(jobDetails).toContain('Missing job reference');
+    expect(jobDetails).toContain('Job not found');
+    expect(jobDetails.indexOf('if (!jobId)')).toBeLessThan(
+      jobDetails.indexOf('if (isLoading)'),
+    );
+  });
+
+  it('keeps appointment API responses and mobile DTOs carrying the canonical jobId', () => {
+    const appointmentService = readFileSync(
+      join(
+        repoRoot,
+        'apps',
+        'api',
+        'src',
+        'appointments',
+        'appointments.service.ts',
+      ),
+      'utf8',
+    );
+    const sharedAppointments = readFileSync(
+      join(repoRoot, 'packages', 'shared', 'src', 'appointments.ts'),
+      'utf8',
+    );
+
+    expect(sharedAppointments).toContain('jobId: string;');
+    expect(sharedAppointments).toContain('job: AppointmentJobSummary;');
+    expect(appointmentService).toContain('jobId: appointment.jobId');
   });
 });

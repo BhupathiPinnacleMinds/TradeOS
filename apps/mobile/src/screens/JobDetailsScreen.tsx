@@ -21,7 +21,7 @@ import {
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -140,7 +140,8 @@ function completedAppointments(appointments: Appointment[]) {
 }
 
 export function JobDetailsScreen({ navigation, route }: Props) {
-  const { jobId } = route.params;
+  const routeJobId = route.params?.jobId ?? null;
+  const jobId = routeJobId?.trim() ?? '';
   const { token, user } = useAuth();
   const { showToast } = useToast();
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
@@ -192,14 +193,22 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     },
   );
 
+  useEffect(() => {
+    if (mobileConfig.environment !== 'production') {
+      console.info('[JOB_DETAILS_ROUTE]', {
+        routeJobId,
+      });
+    }
+  }, [routeJobId]);
+
   async function loadJob() {
-    if (!token) return;
+    if (!token || !jobId) return;
     setIsLoading(true);
     const jobEndpoint = `/jobs/${jobId}`;
     if (mobileConfig.environment !== 'production') {
-      console.info('[TradieOS job details request diagnostic]', {
+      console.info('[JOB_DETAILS_REQUEST]', {
         endpoint: buildApiRequestUrl(jobEndpoint),
-        routeJobId: jobId,
+        jobId,
       });
     }
     try {
@@ -364,6 +373,18 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     } finally {
       setIsBusy(false);
     }
+  }
+
+  if (!jobId) {
+    return (
+      <View style={styles.loadingPage}>
+        <Text style={styles.title}>Missing job reference</Text>
+        <Text style={styles.muted}>
+          We couldn't open this job because the appointment did not include a
+          valid job reference. Refresh and try again.
+        </Text>
+      </View>
+    );
   }
 
   if (isLoading) {

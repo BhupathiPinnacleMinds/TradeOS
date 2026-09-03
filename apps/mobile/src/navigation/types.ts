@@ -45,7 +45,7 @@ export type RootStackParamList = {
   TeamMemberProfile: { memberId: string };
   CustomerDetails: { customerId: string };
   CustomerForm: { customerId?: string };
-  JobDetails: { jobId: string };
+  JobDetails: { jobId?: string } | undefined;
   JobForm: { jobId?: string; customerId?: string };
   Jobs: undefined;
   AppointmentDetails: { appointmentId: string };
