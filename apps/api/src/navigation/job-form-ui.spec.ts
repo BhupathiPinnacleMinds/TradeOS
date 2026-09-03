@@ -295,6 +295,17 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(appointmentDetails).toContain('resolvedJobId');
     expect(appointmentDetails).toContain(
+      "const showStagingJobDiagnostic = mobileConfig.environment === 'staging'",
+    );
+    expect(appointmentDetails).toContain('Staging View Job diagnostic');
+    expect(appointmentDetails).toContain('Appointment DB ID');
+    expect(appointmentDetails).toContain('appointment.jobId');
+    expect(appointmentDetails).toContain('appointment.job?.id');
+    expect(appointmentDetails).toContain('appointment.job?.jobNumber');
+    expect(appointmentDetails).toContain('Resolved job ID');
+    expect(appointmentDetails).toContain('View Job navigation');
+    expect(appointmentDetails).toContain('BLOCKED - missing canonical job ID');
+    expect(appointmentDetails).toContain(
       "navigation.navigate('JobDetails', { jobId: resolvedJobId })",
     );
     expect(appointmentDetails).toContain('Missing job reference');
