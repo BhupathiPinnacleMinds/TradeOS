@@ -204,7 +204,17 @@ function createService() {
 }
 
 describe('JobsService', () => {
+  let consoleInfoSpy: jest.SpyInstance;
+  let consoleWarnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation();
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+  });
+
   afterEach(() => {
+    consoleInfoSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
     jest.clearAllMocks();
   });
 

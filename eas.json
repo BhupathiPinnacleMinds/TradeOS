@@ -17,7 +17,8 @@
       "autoIncrement": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging"
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_API_URL": "https://tradieos-staging-api.onrender.com/api"
       },
       "ios": {
         "simulator": false

@@ -5,6 +5,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
+import { mobileConfig } from '../config/mobileConfig';
 import { colours } from '../theme';
 import type {
   MainTabsParamList,
@@ -21,6 +22,7 @@ export function MoreScreen({ navigation }: Props) {
   const { logout, user } = useAuth();
   const visibleDestinations = getMoreDestinationsForRole(user?.role);
   const tabBarHeight = useBottomTabBarHeight();
+  const showEnvironmentDiagnostic = mobileConfig.environment === 'staging';
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
@@ -38,6 +40,21 @@ export function MoreScreen({ navigation }: Props) {
             {user?.email} · {user?.role}
           </Text>
         </View>
+
+        {showEnvironmentDiagnostic ? (
+          <View
+            accessibilityLabel={`Mobile environment ${mobileConfig.environment}. API ${mobileConfig.apiBaseUrl}`}
+            style={styles.diagnosticCard}
+          >
+            <Text style={styles.diagnosticTitle}>Mobile environment</Text>
+            <Text style={styles.diagnosticText}>
+              Environment: {mobileConfig.environment}
+            </Text>
+            <Text style={styles.diagnosticText}>
+              API: {mobileConfig.apiBaseUrl}
+            </Text>
+          </View>
+        ) : null}
 
         {visibleDestinations.map(({ label, route }) => (
           <Pressable
@@ -79,6 +96,20 @@ const styles = StyleSheet.create({
   },
   businessName: { color: colours.ink, fontSize: 20, fontWeight: '800' },
   businessMeta: { color: colours.muted, marginTop: 5 },
+  diagnosticCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 15,
+    borderWidth: 1,
+    padding: 14,
+  },
+  diagnosticText: {
+    color: colours.muted,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  diagnosticTitle: { color: colours.ink, fontSize: 15, fontWeight: '900' },
   row: {
     alignItems: 'center',
     backgroundColor: colours.card,
