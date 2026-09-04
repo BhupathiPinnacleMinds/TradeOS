@@ -326,14 +326,43 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(jobDetails).toContain('route.params?.jobId ?? null');
     expect(jobDetails).toContain("routeJobId?.trim() ?? ''");
+    expect(jobDetails).toContain("useState<JobDetailsRequestState>('IDLE')");
     expect(jobDetails).toContain("console.info('[JOB_DETAILS_ROUTE]'");
     expect(jobDetails).toContain("console.info('[JOB_DETAILS_REQUEST]'");
-    expect(jobDetails).toContain('if (!token || !jobId) return');
+    expect(jobDetails).toContain('if (!jobId)');
+    expect(jobDetails).toContain('if (!token)');
+    expect(jobDetails).toContain("setRequestState('REQUESTED')");
+    expect(jobDetails).toContain("setRequestState('SUCCESS')");
+    expect(jobDetails).toContain(
+      "setRequestState(status === 404 ? '404' : 'ERROR')",
+    );
     expect(jobDetails).toContain('Missing job reference');
     expect(jobDetails).toContain('Job not found');
+    expect(jobDetails).toContain("We couldn't load this job");
     expect(jobDetails.indexOf('if (!jobId)')).toBeLessThan(
       jobDetails.indexOf('if (isLoading)'),
     );
+    expect(jobDetails.indexOf('if (isLoading)')).toBeLessThan(
+      jobDetails.indexOf('if (!job)'),
+    );
+  });
+
+  it('shows a staging-only Job Details request lifecycle diagnostic', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain(
+      "const showStagingDiagnostic = mobileConfig.environment === 'staging'",
+    );
+    expect(jobDetails).toContain('function JobDetailsDiagnosticCard');
+    expect(jobDetails).toContain('Staging Job Details diagnostic');
+    expect(jobDetails).toContain('Route job ID');
+    expect(jobDetails).toContain('Request state');
+    expect(jobDetails).toContain('Request attempted');
+    expect(jobDetails).toContain('Endpoint');
+    expect(jobDetails).toContain('HTTP status');
+    expect(jobDetails).toContain("value={requestAttempted ? 'YES' : 'NO'}");
+    expect(jobDetails).toContain('endpoint={jobRequestEndpoint}');
+    expect(jobDetails).toContain('httpStatus={httpStatus}');
   });
 
   it('keeps appointment API responses and mobile DTOs carrying the canonical jobId', () => {

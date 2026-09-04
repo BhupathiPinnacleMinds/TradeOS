@@ -20,8 +20,7 @@ import {
   roleCanCreateQuotes,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -69,6 +68,8 @@ import { colours } from '../theme';
 import { primaryCustomerName } from '../utils/customerDisplay';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'JobDetails'>;
+type JobDetailsRequestState =
+  'IDLE' | 'LOADING' | 'REQUESTED' | 'SUCCESS' | '404' | 'ERROR';
 
 function label(value: string) {
   return value.replaceAll('_', ' ');
@@ -142,6 +143,10 @@ function completedAppointments(appointments: Appointment[]) {
 export function JobDetailsScreen({ navigation, route }: Props) {
   const routeJobId = route.params?.jobId ?? null;
   const jobId = routeJobId?.trim() ?? '';
+  const jobEndpoint = jobId ? `/jobs/${jobId}` : '';
+  const jobRequestEndpoint = jobEndpoint
+    ? buildApiRequestUrl(jobEndpoint)
+    : null;
   const { token, user } = useAuth();
   const { showToast } = useToast();
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
@@ -162,6 +167,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [mediaToRemove, setMediaToRemove] = useState<MediaAsset | null>(null);
   const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
+  const [requestState, setRequestState] =
+    useState<JobDetailsRequestState>('IDLE');
+  const [requestAttempted, setRequestAttempted] = useState(false);
+  const [httpStatus, setHttpStatus] = useState<number | null>(null);
+  const showStagingDiagnostic = mobileConfig.environment === 'staging';
 
   const canEdit = canManageJob(user?.role);
   const canArchive = canArchiveJob(user?.role);
@@ -202,53 +212,84 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   }, [routeJobId]);
 
   async function loadJob() {
-    if (!token || !jobId) return;
+    if (!jobId) {
+      setJob(null);
+      setIsLoading(false);
+      setRequestState('IDLE');
+      setRequestAttempted(false);
+      setHttpStatus(null);
+      return;
+    }
+    if (!token) {
+      setRequestState('IDLE');
+      setRequestAttempted(false);
+      return;
+    }
     setIsLoading(true);
-    const jobEndpoint = `/jobs/${jobId}`;
+    setJob(null);
+    setRequestState('LOADING');
+    setRequestAttempted(true);
+    setHttpStatus(null);
     if (mobileConfig.environment !== 'production') {
       console.info('[JOB_DETAILS_REQUEST]', {
-        endpoint: buildApiRequestUrl(jobEndpoint),
+        endpoint: jobRequestEndpoint,
         jobId,
       });
     }
     try {
-      const [response, mediaResponse] = await Promise.all([
-        jobDetailRequest(token, jobId).catch((error) => {
-          if (mobileConfig.environment !== 'production') {
-            console.warn('[TradieOS job details response diagnostic]', {
-              code: error instanceof ApiRequestError ? error.code : null,
-              message: error instanceof Error ? error.message : String(error),
-              routeJobId: jobId,
-              status: error instanceof ApiRequestError ? error.status : null,
-            });
-          }
-          throw error;
-        }),
-        mediaRequest(token, {
-          archived: showArchivedMedia ? 'true' : undefined,
-          jobId,
-        }),
-      ]);
+      setRequestState('REQUESTED');
+      const response = await jobDetailRequest(token, jobId);
+      setHttpStatus(200);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
       setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
-      setMedia(mediaResponse.records);
+      setRequestState('SUCCESS');
       navigation.setOptions({ title: response.job.jobNumber });
-    } catch {
-      showToast({ message: "We couldn't load this job.", tone: 'error' });
+
+      try {
+        const mediaResponse = await mediaRequest(token, {
+          archived: showArchivedMedia ? 'true' : undefined,
+          jobId,
+        });
+        setMedia(mediaResponse.records);
+      } catch (mediaError) {
+        setMedia([]);
+        showToast({
+          message:
+            mediaError instanceof Error
+              ? mediaError.message
+              : "We couldn't load job media.",
+          tone: 'error',
+        });
+      }
+    } catch (error) {
+      const status = error instanceof ApiRequestError ? error.status : null;
+      setHttpStatus(status);
+      setRequestState(status === 404 ? '404' : 'ERROR');
+      if (mobileConfig.environment !== 'production') {
+        console.warn('[TradieOS job details response diagnostic]', {
+          code: error instanceof ApiRequestError ? error.code : null,
+          message: error instanceof Error ? error.message : String(error),
+          routeJobId: jobId,
+          status,
+        });
+      }
+      showToast({
+        message:
+          status === 404 ? 'Job not found.' : "We couldn't load this job.",
+        tone: 'error',
+      });
     } finally {
       setIsLoading(false);
     }
   }
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadJob();
-    }, [jobId, showArchivedMedia, token]),
-  );
+  useEffect(() => {
+    void loadJob();
+  }, [jobId, showArchivedMedia, token]);
 
   async function changeStatus(status: JobStatus) {
     if (!token || !job || isBusy) return;
@@ -378,6 +419,14 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (!jobId) {
     return (
       <View style={styles.loadingPage}>
+        <JobDetailsDiagnosticCard
+          endpoint={jobRequestEndpoint}
+          httpStatus={httpStatus}
+          requestAttempted={requestAttempted}
+          requestState={requestState}
+          routeJobId={routeJobId}
+          visible={showStagingDiagnostic}
+        />
         <Text style={styles.title}>Missing job reference</Text>
         <Text style={styles.muted}>
           We couldn't open this job because the appointment did not include a
@@ -390,6 +439,14 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (isLoading) {
     return (
       <View style={styles.loadingPage}>
+        <JobDetailsDiagnosticCard
+          endpoint={jobRequestEndpoint}
+          httpStatus={httpStatus}
+          requestAttempted={requestAttempted}
+          requestState={requestState}
+          routeJobId={routeJobId}
+          visible={showStagingDiagnostic}
+        />
         <ActivityIndicator color={colours.primary} />
         <Text style={styles.muted}>Loading job...</Text>
       </View>
@@ -399,13 +456,33 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (!job) {
     return (
       <View style={styles.loadingPage}>
-        <Text style={styles.title}>Job not found</Text>
+        <JobDetailsDiagnosticCard
+          endpoint={jobRequestEndpoint}
+          httpStatus={httpStatus}
+          requestAttempted={requestAttempted}
+          requestState={requestState}
+          routeJobId={routeJobId}
+          visible={showStagingDiagnostic}
+        />
+        <Text style={styles.title}>
+          {requestState === '404'
+            ? 'Job not found'
+            : "We couldn't load this job"}
+        </Text>
       </View>
     );
   }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
+      <JobDetailsDiagnosticCard
+        endpoint={jobRequestEndpoint}
+        httpStatus={httpStatus}
+        requestAttempted={requestAttempted}
+        requestState={requestState}
+        routeJobId={routeJobId}
+        visible={showStagingDiagnostic}
+      />
       <Text style={styles.eyebrow}>{job.jobNumber}</Text>
       <Text style={styles.title}>{job.title}</Text>
       <Text style={styles.subtitle}>
@@ -960,6 +1037,60 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   );
 }
 
+function diagnosticValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 'NOT SENT';
+  const text = String(value).trim();
+  return text || 'NOT SENT';
+}
+
+function JobDetailsDiagnosticCard({
+  endpoint,
+  httpStatus,
+  requestAttempted,
+  requestState,
+  routeJobId,
+  visible,
+}: {
+  endpoint: string | null;
+  httpStatus: number | null;
+  requestAttempted: boolean;
+  requestState: JobDetailsRequestState;
+  routeJobId: string | null;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <View style={styles.diagnosticCard}>
+      <Text style={styles.diagnosticTitle}>Staging Job Details diagnostic</Text>
+      <DiagnosticRow label="Route job ID" value={routeJobId ?? 'MISSING'} />
+      <DiagnosticRow label="Request state" value={requestState} />
+      <DiagnosticRow
+        label="Request attempted"
+        value={requestAttempted ? 'YES' : 'NO'}
+      />
+      <DiagnosticRow label="Endpoint" value={endpoint ?? 'NOT SENT'} />
+      <DiagnosticRow label="HTTP status" value={httpStatus ?? 'NOT SENT'} />
+    </View>
+  );
+}
+
+function DiagnosticRow({
+  label: rowLabel,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <View style={styles.diagnosticRow}>
+      <Text style={styles.diagnosticLabel}>{rowLabel}:</Text>
+      <Text selectable style={styles.diagnosticValue}>
+        {diagnosticValue(value)}
+      </Text>
+    </View>
+  );
+}
+
 function QuickAction({
   disabled,
   label: text,
@@ -1241,6 +1372,34 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   dangerText: { color: '#FFFFFF', fontWeight: '900' },
+  diagnosticCard: {
+    alignSelf: 'stretch',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    marginBottom: 16,
+    padding: 14,
+  },
+  diagnosticLabel: {
+    color: colours.muted,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  diagnosticRow: {
+    borderBottomColor: colours.border,
+    borderBottomWidth: 1,
+    gap: 4,
+    paddingVertical: 8,
+  },
+  diagnosticTitle: { color: colours.ink, fontSize: 15, fontWeight: '900' },
+  diagnosticValue: {
+    color: colours.ink,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
   eyebrow: {
     color: colours.primary,
     fontSize: 12,
