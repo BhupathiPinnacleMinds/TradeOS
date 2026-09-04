@@ -706,6 +706,21 @@ export interface AppointmentQuickActionInput {
   role?: BusinessRole | null;
   isAssignedUser?: boolean;
   hasRescheduledToAppointment?: boolean;
+  isExpired?: boolean;
+}
+
+export function isExpiredUnstartedAppointment(input: {
+  now?: Date | string;
+  scheduledEnd: Date | string;
+  status: AppointmentStatus;
+}) {
+  if (!['SCHEDULED', 'CONFIRMED'].includes(input.status)) return false;
+  const now = input.now ? new Date(input.now) : new Date();
+  const scheduledEnd = new Date(input.scheduledEnd);
+  if (Number.isNaN(now.getTime()) || Number.isNaN(scheduledEnd.getTime())) {
+    return false;
+  }
+  return scheduledEnd.getTime() < now.getTime();
 }
 
 export type AppointmentTransitionAction =
@@ -969,6 +984,7 @@ export function getAppointmentQuickActions(
   const canConfirm = canConfirmAppointment(input);
   const canReschedule = canRescheduleAppointment(input);
   const canReassign = canReassignAppointment(input);
+  const isExpired = Boolean(input.isExpired);
 
   if (
     input.hasAddress &&
@@ -986,7 +1002,7 @@ export function getAppointmentQuickActions(
     actions.push({ id: 'call', kind: 'contact', label: 'Call' });
   }
 
-  if (canConfirm && input.status === 'SCHEDULED') {
+  if (canConfirm && input.status === 'SCHEDULED' && !isExpired) {
     actions.push({
       id: 'confirm',
       kind: 'workflow',
@@ -994,7 +1010,7 @@ export function getAppointmentQuickActions(
     });
   }
 
-  if (canExecuteWork && input.status === 'CONFIRMED') {
+  if (canExecuteWork && input.status === 'CONFIRMED' && !isExpired) {
     actions.push({
       id: 'startTravel',
       kind: 'workflow',
@@ -1002,20 +1018,20 @@ export function getAppointmentQuickActions(
     });
   }
 
-  if (canExecuteWork && input.status === 'ARRIVED') {
+  if (canExecuteWork && input.status === 'ARRIVED' && !isExpired) {
     actions.push({ id: 'start', kind: 'workflow', label: 'Start work' });
   }
 
-  if (canExecuteWork && input.status === 'ON_THE_WAY') {
+  if (canExecuteWork && input.status === 'ON_THE_WAY' && !isExpired) {
     actions.push({ id: 'arrive', kind: 'workflow', label: 'Arrived' });
   }
 
-  if (canExecuteWork && input.status === 'IN_PROGRESS') {
+  if (canExecuteWork && input.status === 'IN_PROGRESS' && !isExpired) {
     actions.push({ id: 'pause', kind: 'workflow', label: 'Pause' });
     actions.push({ id: 'complete', kind: 'workflow', label: 'Complete' });
   }
 
-  if (canExecuteWork && input.status === 'PAUSED') {
+  if (canExecuteWork && input.status === 'PAUSED' && !isExpired) {
     actions.push({ id: 'resume', kind: 'workflow', label: 'Resume' });
   }
 

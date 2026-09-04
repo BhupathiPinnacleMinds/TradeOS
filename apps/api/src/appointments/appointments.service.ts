@@ -83,6 +83,8 @@ const DISPATCHER_MANAGE_ROLES = [
 const DISPATCHER_TECHNICIAN_ROLES = APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES;
 const WORKDAY_MINUTES = 8 * 60;
 const TRAVEL_PLACEHOLDER_MINUTES = 10;
+const APPOINTMENT_CREATION_CLOCK_SKEW_MS = 2 * 60 * 1000;
+const APPOINTMENT_EXECUTION_GRACE_MS = 60 * 60 * 1000;
 
 type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
   include: ReturnType<AppointmentsService['appointmentInclude']>;
@@ -423,8 +425,10 @@ export class AppointmentsService {
     const mapped = appointments.map((appointment) =>
       this.toAppointment(appointment),
     );
-    const remaining = mapped.filter((appointment) =>
-      REMAINING_MY_DAY_STATUSES.includes(appointment.status as never),
+    const remaining = mapped.filter(
+      (appointment) =>
+        REMAINING_MY_DAY_STATUSES.includes(appointment.status as never) &&
+        !this.isExpiredUnstartedAppointment(appointment, now),
     );
     const completedToday = [
       ...new Map(
@@ -450,11 +454,7 @@ export class AppointmentsService {
         (appointment) =>
           ['SCHEDULED', 'CONFIRMED'].includes(appointment.status) &&
           new Date(appointment.scheduledEnd) >= now,
-      ) ??
-      remaining.find((appointment) =>
-        ['SCHEDULED', 'CONFIRMED'].includes(appointment.status),
-      ) ??
-      null;
+      ) ?? null;
     let nextAppointment = currentAppointment ?? nextUpcomingAppointment;
     if (!nextAppointment) {
       const futureAppointment = await this.prisma.appointment.findFirst({
@@ -502,7 +502,8 @@ export class AppointmentsService {
       urgentCount: mapped.filter(
         (appointment) =>
           appointment.job.priority === 'URGENT' &&
-          REMAINING_MY_DAY_STATUSES.includes(appointment.status as never),
+          REMAINING_MY_DAY_STATUSES.includes(appointment.status as never) &&
+          !this.isExpiredUnstartedAppointment(appointment, now),
       ).length,
     };
   }
@@ -515,6 +516,7 @@ export class AppointmentsService {
     const job = await this.assertJob(currentUser.businessId, dto.jobId);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
     const data = await this.normalise(currentUser.businessId, dto, job);
+    this.assertNewAppointmentIsNotInPast(data.scheduledStart);
     await this.assertNoConflictOrOverride(currentUser, data, dto);
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -1077,6 +1079,7 @@ export class AppointmentsService {
       );
     }
     const now = new Date();
+    this.assertTransitionWindow(existing, status, now);
     const data: Prisma.AppointmentUncheckedUpdateInput = {
       status,
       updatedBy: currentUser.id,
@@ -1699,6 +1702,68 @@ export class AppointmentsService {
         'Scheduled end must be after scheduled start.',
       );
     }
+  }
+
+  private assertNewAppointmentIsNotInPast(start: Date, now = new Date()) {
+    if (start.getTime() < now.getTime() - APPOINTMENT_CREATION_CLOCK_SKEW_MS) {
+      throw this.domainError(
+        'APPOINTMENT_START_IN_PAST',
+        'Appointment start time must be in the future.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  private isExpiredUnstartedAppointment(
+    appointment: Pick<Appointment, 'scheduledEnd' | 'status'>,
+    now = new Date(),
+  ) {
+    return (
+      ['SCHEDULED', 'CONFIRMED'].includes(appointment.status) &&
+      new Date(appointment.scheduledEnd).getTime() < now.getTime()
+    );
+  }
+
+  private assertTransitionWindow(
+    appointment: AppointmentWithRelations,
+    nextStatus: AppointmentStatus,
+    now = new Date(),
+  ) {
+    const action = this.transitionActionForStatus(
+      appointment.status,
+      nextStatus,
+    );
+    const scheduledEnd = appointment.scheduledEnd.getTime();
+
+    if (action === 'confirm' && now.getTime() > scheduledEnd) {
+      throw this.domainError(
+        'APPOINTMENT_CONFIRMATION_WINDOW_EXPIRED',
+        'This appointment has already passed. Reschedule it before confirming.',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    if (
+      ['start-travel', 'arrive', 'start'].includes(action ?? '') &&
+      !this.hasStartedExecution(appointment) &&
+      now.getTime() > scheduledEnd + APPOINTMENT_EXECUTION_GRACE_MS
+    ) {
+      throw this.domainError(
+        'APPOINTMENT_EXECUTION_WINDOW_EXPIRED',
+        'This appointment is too far past its scheduled time to start. Reschedule it before beginning work.',
+        HttpStatus.CONFLICT,
+      );
+    }
+  }
+
+  private hasStartedExecution(appointment: AppointmentWithRelations) {
+    return Boolean(
+      appointment.travelStartedAt ||
+      appointment.arrivedAt ||
+      appointment.workStartedAt ||
+      appointment.currentWorkStartedAt ||
+      appointment.actualStart,
+    );
   }
 
   private async getAppointmentForUser(

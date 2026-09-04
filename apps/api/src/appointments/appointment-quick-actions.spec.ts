@@ -239,6 +239,30 @@ describe('getAppointmentQuickActions', () => {
     ).toContain('startTravel');
   });
 
+  it('hides normal workflow actions for expired unstarted appointments', () => {
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: false,
+        isExpired: true,
+        role: 'OWNER',
+        status: 'SCHEDULED',
+      }),
+    ).toEqual(['navigate', 'call', 'reassign', 'reschedule', 'cancel']);
+
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        isExpired: true,
+        role: 'TECHNICIAN',
+        status: 'CONFIRMED',
+      }),
+    ).toEqual(['navigate', 'call', 'cancel']);
+  });
+
   it('never shows confirm for terminal statuses', () => {
     for (const status of [
       'CANCELLED',

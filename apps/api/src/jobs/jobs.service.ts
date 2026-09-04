@@ -1185,14 +1185,28 @@ export class JobsService {
   ) {
     const hiddenActions = new Set([
       'APPOINTMENT_WORK_LOG_UPDATED',
+      'JOB_TIMELINE_APPOINTMENT_CONFIRMED',
+      'JOB_TIMELINE_APPOINTMENT_CREATED',
       'MEDIA_UPLOAD_FAILED',
       'MEDIA_UPLOAD_STARTED',
     ]);
+    const collapseLatestOnlyActions = new Set(['FOLLOW_UP_REQUIRED']);
     const meaningful = entries.filter(
       (entry) => !hiddenActions.has(entry.action),
     );
+    const seenLatestOnlyKeys = new Set<string>();
 
     return meaningful.filter((entry, index) => {
+      const latestOnlyKey = [
+        entry.action,
+        entry.entityId ?? '',
+        entry.entityType,
+      ].join(':');
+      if (collapseLatestOnlyActions.has(entry.action)) {
+        if (seenLatestOnlyKeys.has(latestOnlyKey)) return false;
+        seenLatestOnlyKeys.add(latestOnlyKey);
+      }
+
       const previous = meaningful[index - 1];
       if (!previous) return true;
       const secondsApart = Math.abs(

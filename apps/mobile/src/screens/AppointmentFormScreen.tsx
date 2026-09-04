@@ -144,6 +144,7 @@ function initialStart(
   if (!selectedDate) return nextStart(timezone);
   const date = new Date(selectedDate);
   if (Number.isNaN(date.getTime())) return nextStart(timezone);
+  if (date.getTime() < Date.now() - 2 * 60 * 1000) return nextStart(timezone);
   return date;
 }
 
@@ -318,6 +319,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId),
     [jobs, selectedJobId],
+  );
+  const selectedTechnician = useMemo(
+    () => members.find((member) => member.userId === assignedUserId),
+    [assignedUserId, members],
   );
   const isJobLinkedAppointment = Boolean(jobId);
   const hasSelectedExistingJob = Boolean(selectedJob && !useQuickJob);
@@ -759,6 +764,13 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     }
     if (!selectedJobId && !useQuickJob) {
       showToast({ message: 'Choose or create a job.', tone: 'error' });
+      return;
+    }
+    if (startAt.getTime() < Date.now() - 2 * 60 * 1000) {
+      showToast({
+        message: 'Appointment start time must be in the future.',
+        tone: 'error',
+      });
       return;
     }
 
@@ -1232,6 +1244,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           </Text>
           <Text style={styles.muted}>
             Location: {formatLocation(resolvedLocation) || 'Not selected'}
+          </Text>
+          <Text style={styles.muted}>
+            Technician: {selectedTechnician?.name ?? 'Unassigned'}
+          </Text>
+          <Text style={styles.muted}>
+            Type: {label(appointmentType)} · Duration: {durationMinutes} min
           </Text>
         </Section>
 

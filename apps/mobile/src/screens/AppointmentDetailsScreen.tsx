@@ -26,6 +26,7 @@ import {
   getAppointmentQuickActions,
   hasAppointmentSignatureStrokes,
   hasAppointmentValidationErrors,
+  isExpiredUnstartedAppointment,
   isAppointmentFieldNotesDirty,
   isAppointmentCompletionSignatureScrollEnabled,
   mediaCategoryLabel,
@@ -964,6 +965,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const quickActions = getAppointmentQuickActions({
     hasAddress: Boolean(address),
     hasPhone: Boolean(customer.phone?.trim()),
+    isExpired: isExpiredUnstartedAppointment({
+      scheduledEnd: appointment.scheduledEnd,
+      status: appointment.status,
+    }),
     isAssignedUser: appointment.assignedUserId === user?.id,
     role: user?.role,
     status: appointment.status,

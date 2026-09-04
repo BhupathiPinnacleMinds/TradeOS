@@ -20,6 +20,7 @@ import {
   getBusinessDayRangeUtc,
   normaliseBusinessTimezone,
   getAppointmentQuickActions,
+  isExpiredUnstartedAppointment,
   zonedTimeToUtc,
 } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -1332,6 +1333,10 @@ function DispatcherAppointmentCard({
   const actions = getAppointmentQuickActions({
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
+    isExpired: isExpiredUnstartedAppointment({
+      scheduledEnd: appointment.scheduledEnd,
+      status: appointment.status,
+    }),
     isAssignedUser: appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,
@@ -1544,6 +1549,10 @@ function AppointmentCard({
   const actions = getAppointmentQuickActions({
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
+    isExpired: isExpiredUnstartedAppointment({
+      scheduledEnd: appointment.scheduledEnd,
+      status: appointment.status,
+    }),
     isAssignedUser: appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,
@@ -1644,6 +1653,10 @@ function AppointmentMoreMenu({
   const actions = getAppointmentQuickActions({
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
+    isExpired: isExpiredUnstartedAppointment({
+      scheduledEnd: appointment.scheduledEnd,
+      status: appointment.status,
+    }),
     isAssignedUser: appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,

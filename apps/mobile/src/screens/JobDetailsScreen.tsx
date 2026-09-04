@@ -14,6 +14,7 @@ import {
   formatMediaCount,
   formatBusinessTimeRange,
   getAppointmentQuickActions,
+  isExpiredUnstartedAppointment,
   mediaDisplayTitle,
   normaliseBusinessTimezone,
   roleCanCreateInvoices,
@@ -100,6 +101,13 @@ function appointmentTransitionActionId(
 }
 
 const JOB_TERMINAL_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED'];
+const CLOSED_APPOINTMENT_STATUSES = [
+  'COMPLETED',
+  'CANCELLED',
+  'NO_SHOW',
+  'RESCHEDULED',
+] as const;
+const JOB_TIMELINE_PREVIEW_LIMIT = 5;
 
 type JobStatusAction = {
   danger?: boolean;
@@ -175,6 +183,18 @@ function completionEvidenceCount(
   ).length;
 }
 
+function hasOpenAssignedAppointment(
+  appointments: Appointment[],
+  userId?: string,
+) {
+  if (!userId) return false;
+  return appointments.some(
+    (appointment) =>
+      appointment.assignedUserId === userId &&
+      !CLOSED_APPOINTMENT_STATUSES.includes(appointment.status as never),
+  );
+}
+
 function followUpDisplay(workLog: Appointment['workLog']) {
   if (!workLog) return 'Not recorded';
   if (!workLog.followUpRequired) return 'No';
@@ -208,6 +228,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [mediaToRemove, setMediaToRemove] = useState<MediaAsset | null>(null);
   const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
+  const [showAllTimeline, setShowAllTimeline] = useState(false);
   const [requestState, setRequestState] =
     useState<JobDetailsRequestState>('IDLE');
 
@@ -215,7 +236,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canArchive = canArchiveJob(user?.role);
   const canScheduleAppointment = canCreateAppointment(user?.role);
   const canUpdateStatus = canEdit;
-  const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
+  const isTechnician = user?.role === 'TECHNICIAN';
+  const canAddMedia =
+    canAccessStackRoute(user?.role, 'MediaEvidence') &&
+    (!isTechnician || hasOpenAssignedAppointment(appointments, user?.id));
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const availableJobStatusActions = job ? jobStatusActions(job) : [];
@@ -227,6 +251,12 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     latestCompletedAppointment,
   );
   const canNavigateToJob = job ? hasUsableAddress(job) : false;
+  const canUseEmailAction = Boolean(job?.customer.email && !isTechnician);
+  const canShowGenericScheduleAction =
+    canScheduleAppointment && !latestFollowUpWorkLog;
+  const timelinePreview = showAllTimeline
+    ? timeline
+    : timeline.slice(0, JOB_TIMELINE_PREVIEW_LIMIT);
   const acceptedQuoteCents = [sourceQuote, ...relatedQuotes]
     .filter((quote) => quote?.status === 'ACCEPTED')
     .reduce((sum, quote) => sum + (quote?.totalCents ?? 0), 0);
@@ -492,8 +522,25 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         {label(job.status)} · {label(job.priority)} priority
       </Text>
       {jobHasFollowUpRequired ? (
-        <View style={styles.followUpBadge}>
-          <Text style={styles.followUpBadgeText}>Follow-up required</Text>
+        <View style={styles.followUpContextCard}>
+          <View style={styles.followUpBadge}>
+            <Text style={styles.followUpBadgeText}>Follow-up required</Text>
+          </View>
+          <Text style={styles.statusContext}>
+            {latestFollowUpWorkLog?.followUpNotes ??
+              'A technician marked this job for follow-up.'}
+          </Text>
+          {canScheduleAppointment ? (
+            <ActionButton
+              label="Schedule follow-up"
+              onPress={() =>
+                navigation.navigate('AppointmentForm', {
+                  customerId: job.customerId,
+                  jobId: job.id,
+                })
+              }
+            />
+          ) : null}
         </View>
       ) : null}
       {job.status !== 'COMPLETED' && latestCompletedAppointment ? (
@@ -517,11 +564,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           label="SMS"
           onPress={() => void Linking.openURL(`sms:${job.customer.phone}`)}
         />
-        <QuickAction
-          disabled={!job.customer.email}
-          label="Email"
-          onPress={() => void Linking.openURL(`mailto:${job.customer.email}`)}
-        />
+        {!isTechnician ? (
+          <QuickAction
+            disabled={!canUseEmailAction}
+            label="Email"
+            onPress={() => void Linking.openURL(`mailto:${job.customer.email}`)}
+          />
+        ) : null}
         <QuickAction
           disabled={!canNavigateToJob}
           label="Navigate"
@@ -541,7 +590,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             onPress={() => navigation.navigate('JobForm', { jobId: job.id })}
           />
         ) : null}
-        {canScheduleAppointment ? (
+        {canShowGenericScheduleAction ? (
           <QuickAction
             label="Schedule Appointment"
             onPress={() =>
@@ -602,29 +651,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           Email: {job.customer.email ?? 'Not recorded'}
         </Text>
       </Card>
-
-      {latestFollowUpWorkLog ? (
-        <Card title="Follow-up required">
-          <View style={styles.followUpBadge}>
-            <Text style={styles.followUpBadgeText}>Needs attention</Text>
-          </View>
-          <Text style={styles.meta}>
-            {latestFollowUpWorkLog.followUpNotes ??
-              'A technician marked this job for follow-up.'}
-          </Text>
-          {canScheduleAppointment ? (
-            <ActionButton
-              label="Schedule follow-up"
-              onPress={() =>
-                navigation.navigate('AppointmentForm', {
-                  customerId: job.customerId,
-                  jobId: job.id,
-                })
-              }
-            />
-          ) : null}
-        </Card>
-      ) : null}
 
       {latestCompletedAppointment ? (
         <Card title="Latest completion">
@@ -766,6 +792,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           const appointmentActions = getAppointmentQuickActions({
             hasAddress: Boolean(appointment.addressLine1),
             hasPhone: Boolean(appointment.job.customer.phone),
+            isExpired: isExpiredUnstartedAppointment({
+              scheduledEnd: appointment.scheduledEnd,
+              status: appointment.status,
+            }),
             isAssignedUser: appointment.assignedUserId === user?.id,
             role: user?.role,
             status: appointment.status,
@@ -909,110 +939,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
-      <Card title="Future sections">
-        {sourceQuote ? (
-          <View style={styles.sourceQuoteCard}>
-            <Text style={styles.cardTitle}>Source Quote</Text>
-            <Text style={styles.meta}>{sourceQuote.quoteNumber}</Text>
-            <Text style={styles.meta}>
-              Accepted total: {formatAudCents(sourceQuote.totalCents)}
-            </Text>
-            <ActionButton
-              label="View Quote"
-              onPress={() =>
-                navigation.navigate('QuoteDetails', { quoteId: sourceQuote.id })
-              }
-            />
-          </View>
-        ) : null}
-        {relatedQuotes.length ? (
-          <View style={styles.sourceQuoteCard}>
-            <Text style={styles.cardTitle}>Related Quotes</Text>
-            {relatedQuotes.map((quote) => (
-              <View key={quote.id} style={styles.relatedQuoteRow}>
-                <View style={styles.relatedQuoteContent}>
-                  <Text style={styles.meta}>
-                    {quote.quoteNumber} · {quote.status}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {quote.title} · {formatAudCents(quote.totalCents)}
-                  </Text>
-                </View>
-                <ActionButton
-                  label="View"
-                  onPress={() =>
-                    navigation.navigate('QuoteDetails', { quoteId: quote.id })
-                  }
-                />
-              </View>
-            ))}
-          </View>
-        ) : null}
-        <Text style={styles.meta}>
-          Quotes: {job.quoteCreated ? 'Created' : 'Not created yet'}
-        </Text>
-        {canCreateQuote ? (
-          <ActionButton
-            label={
-              sourceQuote || relatedQuotes.length ? 'New quote' : 'Create quote'
-            }
-            onPress={() =>
-              navigation.navigate('QuoteForm', {
-                customerId: job.customerId,
-                jobId: job.id,
-              })
-            }
-          />
-        ) : null}
-        <Text style={styles.meta}>
-          Invoices: {job.invoiceCreated ? 'Created' : 'Not created yet'}
-        </Text>
-        {invoices.length ? (
-          <View style={styles.sourceQuoteCard}>
-            <Text style={styles.cardTitle}>Invoices</Text>
-            {invoices.map((invoice) => (
-              <View key={invoice.id} style={styles.relatedQuoteRow}>
-                <View style={styles.relatedQuoteContent}>
-                  <Text style={styles.meta}>
-                    {invoice.invoiceNumber} · {invoice.displayStatus}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {invoice.title} · {formatAudCents(invoice.totalCents)} ·
-                    Balance {formatAudCents(invoice.balanceDueCents)}
-                  </Text>
-                </View>
-                <ActionButton
-                  label="View"
-                  onPress={() =>
-                    navigation.navigate('InvoiceDetails', {
-                      invoiceId: invoice.id,
-                    })
-                  }
-                />
-              </View>
-            ))}
-          </View>
-        ) : null}
-        {canCreateInvoice ? (
-          <ActionButton
-            label={invoices.length ? 'New invoice' : 'Create invoice'}
-            onPress={() =>
-              navigation.navigate('InvoiceForm', {
-                customerId: job.customerId,
-                jobId: job.id,
-                sourceQuoteId:
-                  sourceQuote?.id ?? job.sourceQuoteId ?? undefined,
-              })
-            }
-          />
-        ) : null}
-      </Card>
-
       <Card title="Timeline">
         {timeline.length === 0 ? (
           <Text style={styles.meta}>No job timeline yet.</Text>
         ) : null}
-        {timeline.map((entry) => (
+        {timelinePreview.map((entry) => (
           <Text
             key={`${entry.entityType}-${entry.action}-${entry.createdAt}`}
             style={styles.meta}
@@ -1021,6 +952,17 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             {label(entry.action)}
           </Text>
         ))}
+        {timeline.length > JOB_TIMELINE_PREVIEW_LIMIT ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowAllTimeline((value) => !value)}
+            style={styles.inlineTextButton}
+          >
+            <Text style={styles.inlineTextButtonText}>
+              {showAllTimeline ? 'Show less' : 'Show all timeline'}
+            </Text>
+          </Pressable>
+        ) : null}
       </Card>
 
       {canArchive ? (
@@ -1305,6 +1247,24 @@ const styles = StyleSheet.create({
   followUpBadgeText: {
     color: '#92400E',
     fontSize: 12,
+    fontWeight: '900',
+  },
+  followUpContextCard: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74',
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    marginTop: 12,
+    padding: 12,
+  },
+  inlineTextButton: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  inlineTextButtonText: {
+    color: colours.primary,
     fontWeight: '900',
   },
   sourceQuoteCard: {

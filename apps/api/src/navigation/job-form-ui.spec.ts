@@ -249,8 +249,8 @@ describe('Job form mobile UI contracts', () => {
     expect(jobDetails).toContain("textAlign: 'center'");
     expect(jobDetails).toContain('label="Add photo evidence"');
     expect(jobDetails).toContain('label="Add document"');
-    expect(jobDetails).toContain("'Create quote'");
-    expect(jobDetails).toContain("'Create invoice'");
+    expect(jobDetails).toContain("'Create Quote'");
+    expect(jobDetails).toContain("'Create Invoice'");
   });
 
   it('hides invalid Job Details status actions and shows completion follow-up context', () => {
@@ -262,6 +262,8 @@ describe('Job form mobile UI contracts', () => {
     expect(jobDetails).toContain('Follow-up required');
     expect(jobDetails).toContain('Schedule follow-up');
     expect(jobDetails).toContain('Latest completion');
+    expect(jobDetails).not.toContain('<Card title="Follow-up required">');
+    expect(jobDetails).not.toContain('<Card title="Future sections">');
   });
 
   it('formats Job Details appointment cards with one date and a separate time range', () => {
@@ -405,10 +407,11 @@ describe('Job form mobile UI contracts', () => {
 
     expect(jobDetails).toContain('function hasUsableAddress');
     expect(jobDetails).toContain('disabled={!job.customer.phone}');
-    expect(jobDetails).toContain('disabled={!job.customer.email}');
+    expect(jobDetails).toContain('{!isTechnician ? (');
+    expect(jobDetails).toContain('disabled={!canUseEmailAction}');
     expect(jobDetails).toContain('disabled={!canNavigateToJob}');
     expect(jobDetails).toContain('{canEdit ? (');
-    expect(jobDetails).toContain('{canScheduleAppointment ? (');
+    expect(jobDetails).toContain('{canShowGenericScheduleAction ? (');
     expect(jobDetails).toContain('{canCreateQuote ? (');
     expect(jobDetails).toContain('{canCreateInvoice ? (');
   });
@@ -425,6 +428,37 @@ describe('Job form mobile UI contracts', () => {
     expect(jobService).toContain('presentableTimeline');
     expect(jobService).toContain("'MEDIA_UPLOAD_STARTED'");
     expect(jobService).toContain("'APPOINTMENT_WORK_LOG_UPDATED'");
+    expect(jobService).toContain("'JOB_TIMELINE_APPOINTMENT_CREATED'");
+    expect(jobService).toContain("'JOB_TIMELINE_APPOINTMENT_CONFIRMED'");
+    expect(jobService).toContain("new Set(['FOLLOW_UP_REQUIRED'])");
     expect(jobService).toContain('secondsApart <= 60_000');
+    expect(jobDetails).toContain('JOB_TIMELINE_PREVIEW_LIMIT');
+    expect(jobDetails).toContain('timelinePreview.map');
+    expect(jobDetails).toContain('Show all timeline');
+  });
+
+  it('prevents stale follow-up appointments and includes technician in appointment review', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain(
+      'if (date.getTime() < Date.now() - 2 * 60 * 1000) return nextStart(timezone);',
+    );
+    expect(appointmentForm).toContain(
+      "message: 'Appointment start time must be in the future.'",
+    );
+    expect(appointmentForm).toContain('selectedTechnician');
+    expect(appointmentForm).toContain(
+      "Technician: {selectedTechnician?.name ?? 'Unassigned'}",
+    );
+  });
+
+  it('hides completed-appointment evidence mutation for technicians on Job Details', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('function hasOpenAssignedAppointment');
+    expect(jobDetails).toContain("user?.role === 'TECHNICIAN'");
+    expect(jobDetails).toContain('!isTechnician || hasOpenAssignedAppointment');
+    expect(jobDetails).toContain('label="Add photo evidence"');
+    expect(jobDetails).toContain('label="Add document"');
   });
 });

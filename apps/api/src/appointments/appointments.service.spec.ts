@@ -260,6 +260,10 @@ function createService() {
 }
 
 describe('AppointmentsService', () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-14T00:00:00.000Z'));
+  });
+
   afterEach(() => {
     jest.useRealTimers();
     jest.clearAllMocks();
@@ -337,6 +341,21 @@ describe('AppointmentsService', () => {
     ];
     expect(notificationInput.actor).toBe(owner);
     expect(notificationInput.appointment.assignedUserId).toBe('tech-1');
+  });
+
+  it('rejects new appointments scheduled in the past', async () => {
+    const { service } = createService();
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        jobId: 'job-1',
+        locationSource: 'CUSTOMER_DEFAULT',
+        scheduledEnd: '2026-07-13T23:30:00.000Z',
+        scheduledStart: '2026-07-13T22:30:00.000Z',
+        status: 'SCHEDULED',
+      })
+      .catch((error) => expectDomainError(error, 'APPOINTMENT_START_IN_PAST'));
   });
 
   it('repairs stale appointment sequences before creating appointments', async () => {
@@ -1100,6 +1119,34 @@ describe('AppointmentsService', () => {
     jest.useRealTimers();
   });
 
+  it('does not show expired unstarted appointments as the next My Day appointment', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-15T03:15:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Sydney',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        id: 'expired-confirmed',
+        scheduledEnd: new Date('2026-07-15T01:00:00.000Z'),
+        scheduledStart: new Date('2026-07-15T00:30:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    const result = await service.myDay(technician);
+
+    expect(result.appointments.map((item) => item.id)).toContain(
+      'expired-confirmed',
+    );
+    expect(result.nextAppointment).toBeNull();
+    expect(result.remainingCount).toBe(0);
+    expect(result.laterToday).toEqual([]);
+  });
+
   it('shows a today appointment as the next My Day appointment before checking future work', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:15:00.000Z'));
     const { prisma, service } = createService();
@@ -1416,6 +1463,22 @@ describe('AppointmentsService', () => {
     ).toMatchObject({ from: 'SCHEDULED', to: 'CONFIRMED' });
   });
 
+  it('rejects confirming an appointment after its scheduled end time', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-15T02:00:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'SCHEDULED' }),
+    );
+
+    await service
+      .transition(owner, 'appointment-1', 'CONFIRMED')
+      .catch((error) =>
+        expectDomainError(error, 'APPOINTMENT_CONFIRMATION_WINDOW_EXPIRED'),
+      );
+
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+  });
+
   it.each<BusinessRole>(['TECHNICIAN', 'READ_ONLY', 'ACCOUNTANT', 'SALES'])(
     'blocks %s from confirming appointments',
     async (role) => {
@@ -1611,6 +1674,22 @@ describe('AppointmentsService', () => {
     );
 
     expect(result.appointment.status).toBe('ON_THE_WAY');
+  });
+
+  it('rejects starting travel after the execution grace window expires', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-15T02:30:01.000Z'));
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ assignedUserId: 'tech-1', status: 'CONFIRMED' }),
+    );
+
+    await service
+      .transition(technician, 'appointment-1', 'ON_THE_WAY')
+      .catch((error) =>
+        expectDomainError(error, 'APPOINTMENT_EXECUTION_WINDOW_EXPIRED'),
+      );
+
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
   });
 
   it('blocks non-assigned owners from technician execution transitions', async () => {

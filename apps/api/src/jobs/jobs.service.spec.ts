@@ -614,12 +614,20 @@ describe('JobsService', () => {
           createdAt: new Date('2026-07-14T10:43:00.000Z'),
           id: 'media-started-1',
         }),
+        audit('JOB_TIMELINE_APPOINTMENT_CREATED', {
+          createdAt: new Date('2026-07-14T10:43:30.000Z'),
+          id: 'appointment-created-wrapper',
+        }),
+        audit('JOB_TIMELINE_APPOINTMENT_CONFIRMED', {
+          createdAt: new Date('2026-07-14T10:43:45.000Z'),
+          id: 'appointment-confirmed-wrapper',
+        }),
         audit('APPOINTMENT_WORK_LOG_UPDATED', {
           createdAt: new Date('2026-07-14T10:44:00.000Z'),
           id: 'work-log-updated-1',
         }),
         audit('FOLLOW_UP_REQUIRED', {
-          createdAt: new Date('2026-07-14T10:45:00.000Z'),
+          createdAt: new Date('2026-07-14T10:55:00.000Z'),
           id: 'follow-up-1',
         }),
         audit('FOLLOW_UP_REQUIRED', {

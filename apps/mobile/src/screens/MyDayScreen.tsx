@@ -9,6 +9,7 @@ import {
   formatBusinessTimeRange,
   getAllowedAppointmentTransitions,
   getBusinessGreeting,
+  isExpiredUnstartedAppointment,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import { useFocusEffect } from '@react-navigation/native';
@@ -362,6 +363,10 @@ function AppointmentCard({
     appointment,
     busy,
     canNavigate: Boolean(address),
+    isExpired: isExpiredUnstartedAppointment({
+      scheduledEnd: appointment.scheduledEnd,
+      status: appointment.status,
+    }),
     onCall,
     onEvidence,
     onNavigate,
@@ -431,6 +436,7 @@ function myDayCardActions({
   appointment,
   busy,
   canNavigate,
+  isExpired,
   onCall,
   onEvidence,
   onNavigate,
@@ -441,6 +447,7 @@ function myDayCardActions({
   appointment: Appointment;
   busy: boolean;
   canNavigate: boolean;
+  isExpired: boolean;
   onCall(): void;
   onEvidence(): void;
   onNavigate(): void;
@@ -484,6 +491,14 @@ function myDayCardActions({
     label: appointment.status === 'COMPLETED' ? 'View summary' : 'Details',
     onPress: onOpen,
   };
+
+  if (isExpired) {
+    const expiredActions: Array<MyDayCardAction | null> = [
+      navigateAction,
+      detailAction,
+    ];
+    return expiredActions.filter(isMyDayCardAction).slice(0, 2);
+  }
 
   if (appointment.status === 'SCHEDULED') {
     const scheduledActions: Array<MyDayCardAction | null> = [
