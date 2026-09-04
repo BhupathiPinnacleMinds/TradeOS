@@ -571,6 +571,16 @@ export class MediaService {
         { uploadedByUserId: currentUser.id },
         { appointment: { assignedUserId: currentUser.id } },
         { job: { assignedToUserId: currentUser.id } },
+        {
+          job: {
+            appointments: {
+              some: {
+                assignedUserId: currentUser.id,
+                businessId: currentUser.businessId,
+              },
+            },
+          },
+        },
       ];
     }
     if (currentUser.role === 'ACCOUNTANT') {
@@ -627,7 +637,7 @@ export class MediaService {
       }
       if (
         currentUser.role === 'TECHNICIAN' &&
-        job.assignedToUserId !== currentUser.id
+        !(await this.canTechnicianAccessJobMedia(currentUser, job.id, job))
       ) {
         throw this.domainError(
           'MEDIA_ACCESS_DENIED',
@@ -763,15 +773,11 @@ export class MediaService {
       return;
     }
     if (context.jobId) {
-      const job = await this.prisma.job.findFirst({
-        where: {
-          assignedToUserId: currentUser.id,
-          businessId: currentUser.businessId,
-          id: context.jobId,
-        },
-        select: { id: true },
-      });
-      if (!job) {
+      const canAccess = await this.canTechnicianAccessJobMedia(
+        currentUser,
+        context.jobId,
+      );
+      if (!canAccess) {
         throw this.domainError(
           'MEDIA_ACCESS_DENIED',
           'You can only access media for assigned jobs.',
@@ -779,6 +785,30 @@ export class MediaService {
         );
       }
     }
+  }
+
+  private async canTechnicianAccessJobMedia(
+    currentUser: AuthenticatedUser,
+    jobId: string,
+    job?: { assignedToUserId: string | null; id: string },
+  ) {
+    const scopedJob =
+      job ??
+      (await this.prisma.job.findFirst({
+        where: { businessId: currentUser.businessId, id: jobId },
+        select: { assignedToUserId: true, id: true },
+      }));
+    if (!scopedJob) return false;
+    if (scopedJob.assignedToUserId === currentUser.id) return true;
+    const assignedAppointment = await this.prisma.appointment.findFirst({
+      where: {
+        assignedUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        jobId: scopedJob.id,
+      },
+      select: { id: true },
+    });
+    return Boolean(assignedAppointment);
   }
 
   private async assertMediaAccess(

@@ -350,6 +350,89 @@ describe('MediaService', () => {
     );
   });
 
+  it('lists job media for a directly assigned technician', async () => {
+    const { prisma, service } = createHarness();
+
+    await service.findAll(technician, { jobId: 'job-1' });
+
+    expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          businessId: 'business-1',
+          jobId: 'job-1',
+          uploadStatus: 'COMPLETED',
+        }),
+      }),
+    );
+  });
+
+  it('lists job media for a technician assigned through an appointment on the job', async () => {
+    const { prisma, service } = createHarness();
+    prisma.job.findFirst.mockResolvedValueOnce({
+      assignedToUserId: 'other-tech',
+      customerId: 'customer-1',
+      id: 'job-1',
+    });
+    prisma.appointment.findFirst.mockResolvedValueOnce({
+      assignedUserId: 'tech-1',
+      id: 'appointment-1',
+      jobId: 'job-1',
+    });
+
+    await service.findAll(technician, { jobId: 'job-1' });
+
+    expect(prisma.appointment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          assignedUserId: 'tech-1',
+          businessId: 'business-1',
+          jobId: 'job-1',
+        }),
+      }),
+    );
+    expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          businessId: 'business-1',
+          jobId: 'job-1',
+          uploadStatus: 'COMPLETED',
+        }),
+      }),
+    );
+  });
+
+  it('denies job media to unrelated technicians', async () => {
+    const { prisma, service } = createHarness();
+    prisma.job.findFirst.mockResolvedValueOnce({
+      assignedToUserId: 'another-tech',
+      customerId: 'customer-1',
+      id: 'job-1',
+    });
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      service.findAll(technician, { jobId: 'job-1' }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MEDIA_ACCESS_DENIED' }),
+      status: 403,
+    });
+  });
+
+  it('denies cross-business technicians job media access', async () => {
+    const { prisma, service } = createHarness();
+    prisma.job.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      service.findAll(
+        { ...technician, businessId: 'business-2' },
+        { jobId: 'job-1' },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'INVALID_MEDIA_CONTEXT' }),
+      status: 404,
+    });
+  });
+
   it('allows callers to explicitly list failed uploads for retry diagnostics', async () => {
     const { prisma, service } = createHarness();
 
