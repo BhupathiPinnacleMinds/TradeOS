@@ -248,11 +248,6 @@ function resolveAppointmentJobId(appointment: Appointment) {
   return resolved?.trim() ?? null;
 }
 
-function diagnosticValue(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : 'MISSING';
-}
-
 export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
@@ -1078,9 +1073,6 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     timerNow,
   );
   const workLogEditable = canEditCurrentWorkLog;
-  const resolvedJobId = resolveAppointmentJobId(appointment);
-  const showStagingJobDiagnostic = mobileConfig.environment === 'staging';
-
   return (
     <ScrollView contentContainerStyle={styles.container} ref={pageScrollRef}>
       <Text style={styles.eyebrow}>{appointment.appointmentNumber}</Text>
@@ -1114,32 +1106,6 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           <QuickAction label="More" onPress={openMoreActions} />
         ) : null}
       </View>
-
-      {showStagingJobDiagnostic ? (
-        <Card title="Staging View Job diagnostic">
-          <DiagnosticRow label="Appointment DB ID" value={appointment.id} />
-          <DiagnosticRow
-            label="Appointment number"
-            value={appointment.appointmentNumber}
-          />
-          <DiagnosticRow label="appointment.jobId" value={appointment.jobId} />
-          <DiagnosticRow
-            label="appointment.job?.id"
-            value={appointment.job?.id}
-          />
-          <DiagnosticRow
-            label="appointment.job?.jobNumber"
-            value={appointment.job?.jobNumber}
-          />
-          <DiagnosticRow label="Resolved job ID" value={resolvedJobId} />
-          <DiagnosticRow
-            label="View Job navigation"
-            value={
-              resolvedJobId ? 'READY' : 'BLOCKED - missing canonical job ID'
-            }
-          />
-        </Card>
-      ) : null}
 
       <Card title="Customer">
         <Text style={styles.meta}>{primaryCustomerName(customer)}</Text>
@@ -1303,9 +1269,13 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
               {appointment.workLog?.workCompleted ?? 'Not recorded yet.'}
             </Text>
             {appointment.workLog?.followUpRequired ? (
-              <Text style={styles.meta}>
-                Follow-up required: {appointment.workLog.followUpNotes ?? 'Yes'}
-              </Text>
+              <>
+                <Text style={styles.meta}>Follow-up required: Yes</Text>
+                <Text style={styles.meta}>
+                  Follow-up notes:{' '}
+                  {appointment.workLog.followUpNotes ?? 'Not recorded yet.'}
+                </Text>
+              </>
             ) : null}
           </>
         )}
@@ -2605,23 +2575,6 @@ function Card({
   );
 }
 
-function DiagnosticRow({
-  label: rowLabel,
-  value,
-}: {
-  label: string;
-  value: string | null | undefined;
-}) {
-  return (
-    <View style={styles.diagnosticRow}>
-      <Text style={styles.diagnosticLabel}>{rowLabel}:</Text>
-      <Text selectable style={styles.diagnosticValue}>
-        {diagnosticValue(value)}
-      </Text>
-    </View>
-  );
-}
-
 function BlockingLoader({ text }: { text: string | null }) {
   return (
     <Modal animationType="fade" transparent visible={Boolean(text)}>
@@ -2780,24 +2733,6 @@ const styles = StyleSheet.create({
     paddingRight: 60,
   },
   disabledAction: { opacity: 0.55 },
-  diagnosticLabel: {
-    color: colours.muted,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  diagnosticRow: {
-    borderBottomColor: colours.border,
-    borderBottomWidth: 1,
-    gap: 4,
-    paddingVertical: 8,
-  },
-  diagnosticValue: {
-    color: colours.ink,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
-  },
   inputLabel: {
     color: colours.ink,
     fontSize: 13,

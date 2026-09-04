@@ -134,6 +134,92 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function appointment(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    accessInstructions: null,
+    actualEnd: new Date('2026-07-14T10:45:00.000Z'),
+    actualStart: new Date('2026-07-14T09:10:00.000Z'),
+    addressLine1: '12 King Street',
+    addressLine2: null,
+    appointmentNumber: 'APT-2026-000001',
+    appointmentType: 'MAINTENANCE',
+    arrivedAt: new Date('2026-07-14T09:00:00.000Z'),
+    assignedUser: {
+      email: 'tech@example.com',
+      firstName: 'Tess',
+      id: 'tech-1',
+      lastName: 'Tech',
+    },
+    assignedUserId: 'tech-1',
+    businessId: 'business-1',
+    completedAt: new Date('2026-07-14T10:45:00.000Z'),
+    createdAt: new Date('2026-07-14T00:00:00.000Z'),
+    createdBy: 'owner-1',
+    currentWorkStartedAt: null,
+    customerSiteId: null,
+    estimatedDurationMinutes: 120,
+    id: 'appointment-1',
+    job: {
+      addressLine1: '12 King Street',
+      addressLine2: null,
+      customer: {
+        companyName: null,
+        displayName: 'Priya Sharma',
+        email: 'priya@example.test',
+        id: 'customer-1',
+        phone: '0400 111 222',
+      },
+      id: 'job-1',
+      jobNumber: 'JOB-2026-000001',
+      postcode: '2150',
+      priority: 'NORMAL',
+      state: 'NSW',
+      suburb: 'Parramatta',
+      title: 'Replace power point',
+    },
+    jobId: 'job-1',
+    locationSource: 'CUSTOMER_DEFAULT',
+    notes: null,
+    pausedAt: null,
+    postcode: '2150',
+    scheduledEnd: new Date('2026-07-14T11:00:00.000Z'),
+    scheduledStart: new Date('2026-07-14T09:00:00.000Z'),
+    signatures: [],
+    state: 'NSW',
+    status: 'COMPLETED',
+    suburb: 'Parramatta',
+    totalPausedMinutes: 0,
+    totalTravelMinutes: 15,
+    totalWorkMinutes: 95,
+    travelDistanceKm: null,
+    travelDurationMinutes: null,
+    travelStartedAt: new Date('2026-07-14T08:45:00.000Z'),
+    updatedAt: new Date('2026-07-14T10:45:00.000Z'),
+    updatedBy: 'tech-1',
+    workLogs: [],
+    workStartedAt: new Date('2026-07-14T09:10:00.000Z'),
+    ...overrides,
+  };
+}
+
+function audit(
+  action: string,
+  overrides: Partial<Record<string, unknown>> = {},
+) {
+  return {
+    action,
+    actorUserId: 'tech-1',
+    businessId: 'business-1',
+    createdAt: new Date('2026-07-14T10:45:00.000Z'),
+    entityId: 'appointment-1',
+    entityType: 'Appointment',
+    id: `${action.toLowerCase()}-1`,
+    metadata: null,
+    updatedAt: new Date('2026-07-14T10:45:00.000Z'),
+    ...overrides,
+  };
+}
+
 function payload(overrides: Partial<UpsertJobDto> = {}): UpsertJobDto {
   return {
     customerId: 'customer-1',
@@ -441,6 +527,113 @@ describe('JobsService', () => {
     expect(result.job.id).toBe('job-1');
     expect(result.job.jobNumber).toBe('JOB-2026-000003');
     expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps completed appointment follow-up work logs in Job Details', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        workLogs: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            createdAt: new Date('2026-07-14T10:40:00.000Z'),
+            followUpNotes: 'Return with a replacement valve.',
+            followUpRequired: true,
+            id: 'work-log-1',
+            jobId: 'job-1',
+            technicianNotes: 'Found leaking pipe under kitchen sink.',
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-07-14T10:45:00.000Z'),
+            workCompleted: 'Replaced damaged pipe section and tested for leak.',
+          },
+        ],
+      }),
+    ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.job.status).toBe('SCHEDULED');
+    expect(result.appointments[0]?.status).toBe('COMPLETED');
+    expect(result.appointments[0]?.workLog).toMatchObject({
+      followUpNotes: 'Return with a replacement valve.',
+      followUpRequired: true,
+      technicianNotes: 'Found leaking pipe under kitchen sink.',
+      workCompleted: 'Replaced damaged pipe section and tested for leak.',
+    });
+  });
+
+  it('maps latest appointment signature status into Job Details appointments', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        signatures: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            capturedAt: new Date('2026-07-14T10:44:00.000Z'),
+            capturedByUserId: 'tech-1',
+            consentText: 'I confirm this appointment is complete.',
+            createdAt: new Date('2026-07-14T10:43:00.000Z'),
+            customerName: 'Priya Sharma',
+            id: 'signature-1',
+            jobId: 'job-1',
+            signatureData: { strokes: [[{ x: 1, y: 1 }]] },
+            signerTitle: 'Owner',
+            skippedAt: null,
+            skipReason: null,
+            updatedAt: new Date('2026-07-14T10:44:00.000Z'),
+          },
+        ],
+      }),
+    ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.appointments[0]?.signature).toMatchObject({
+      capturedAt: '2026-07-14T10:44:00.000Z',
+      customerName: 'Priya Sharma',
+      id: 'signature-1',
+    });
+  });
+
+  it('hides noisy transient timeline entries and collapses near-duplicates', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([appointment()]);
+    prisma.auditLog.findMany
+      .mockResolvedValueOnce([
+        audit('JOB_CREATED', {
+          createdAt: new Date('2026-07-14T08:00:00.000Z'),
+          entityId: 'job-1',
+          entityType: 'Job',
+          id: 'job-created-1',
+        }),
+      ])
+      .mockResolvedValueOnce([
+        audit('MEDIA_UPLOAD_STARTED', {
+          createdAt: new Date('2026-07-14T10:43:00.000Z'),
+          id: 'media-started-1',
+        }),
+        audit('APPOINTMENT_WORK_LOG_UPDATED', {
+          createdAt: new Date('2026-07-14T10:44:00.000Z'),
+          id: 'work-log-updated-1',
+        }),
+        audit('FOLLOW_UP_REQUIRED', {
+          createdAt: new Date('2026-07-14T10:45:00.000Z'),
+          id: 'follow-up-1',
+        }),
+        audit('FOLLOW_UP_REQUIRED', {
+          createdAt: new Date('2026-07-14T10:44:30.000Z'),
+          id: 'follow-up-duplicate',
+        }),
+      ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.timeline.map((entry) => entry.action)).toEqual([
+      'FOLLOW_UP_REQUIRED',
+      'JOB_CREATED',
+    ]);
   });
 
   it('keeps direct job assignment access for technicians without requiring appointment lookup', async () => {

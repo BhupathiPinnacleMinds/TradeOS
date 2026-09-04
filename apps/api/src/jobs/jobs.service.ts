@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type {
   Appointment,
+  AppointmentSignature,
   AuthenticatedUser,
   Job,
   JobDetailResponse,
@@ -241,8 +242,10 @@ export class JobsService {
           })
         : Promise.resolve([]),
     ]);
-    const timeline = [...activity, ...appointmentActivity].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    const timeline = this.presentableTimeline(
+      [...activity, ...appointmentActivity].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      ),
     );
 
     return {
@@ -976,6 +979,14 @@ export class JobsService {
           title: true,
         },
       },
+      signatures: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+      },
+      workLogs: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+      },
     } satisfies Prisma.AppointmentInclude;
   }
 
@@ -1023,6 +1034,7 @@ export class JobsService {
 
   private toAppointment(appointment: AppointmentWithRelations): Appointment {
     const executionDurations = this.appointmentExecutionDurations(appointment);
+    const signature = appointment.signatures?.[0] ?? null;
     return {
       actualEnd: appointment.actualEnd?.toISOString() ?? null,
       actualStart: appointment.actualStart?.toISOString() ?? null,
@@ -1058,7 +1070,7 @@ export class JobsService {
       state: appointment.state as Appointment['state'],
       status: appointment.status,
       suburb: appointment.suburb,
-      signature: null,
+      signature: signature ? this.toSignature(signature) : null,
       totalPausedMinutes: appointment.totalPausedMinutes,
       totalTravelMinutes: appointment.totalTravelMinutes,
       totalWorkMinutes: appointment.totalWorkMinutes,
@@ -1070,7 +1082,47 @@ export class JobsService {
       updatedAt: appointment.updatedAt.toISOString(),
       updatedBy: appointment.updatedBy,
       workStartedAt: appointment.workStartedAt?.toISOString() ?? null,
-      workLog: null,
+      workLog: appointment.workLogs?.[0]
+        ? {
+            appointmentId: appointment.workLogs[0].appointmentId,
+            businessId: appointment.workLogs[0].businessId,
+            createdAt: appointment.workLogs[0].createdAt.toISOString(),
+            followUpNotes: appointment.workLogs[0].followUpNotes,
+            followUpRequired: appointment.workLogs[0].followUpRequired,
+            id: appointment.workLogs[0].id,
+            jobId: appointment.workLogs[0].jobId,
+            technicianNotes: appointment.workLogs[0].technicianNotes,
+            technicianUserId: appointment.workLogs[0].technicianUserId,
+            updatedAt: appointment.workLogs[0].updatedAt.toISOString(),
+            workCompleted: appointment.workLogs[0].workCompleted,
+          }
+        : null,
+    };
+  }
+
+  private toSignature(
+    signature: NonNullable<AppointmentWithRelations['signatures']>[number],
+  ): AppointmentSignature {
+    return {
+      appointmentId: signature.appointmentId,
+      businessId: signature.businessId,
+      capturedAt: signature.capturedAt?.toISOString() ?? null,
+      capturedByUserId: signature.capturedByUserId,
+      consentText: signature.consentText,
+      createdAt: signature.createdAt.toISOString(),
+      customerName: signature.customerName,
+      id: signature.id,
+      jobId: signature.jobId,
+      signatureData:
+        signature.signatureData &&
+        typeof signature.signatureData === 'object' &&
+        !Array.isArray(signature.signatureData)
+          ? (signature.signatureData as unknown as AppointmentSignature['signatureData'])
+          : null,
+      signerTitle: signature.signerTitle,
+      skippedAt: signature.skippedAt?.toISOString() ?? null,
+      skipReason: signature.skipReason,
+      updatedAt: signature.updatedAt.toISOString(),
     };
   }
 
@@ -1119,6 +1171,39 @@ export class JobsService {
       travelMinutes,
       workMinutes,
     };
+  }
+
+  private presentableTimeline(
+    entries: Array<{
+      action: string;
+      createdAt: Date;
+      entityId: string | null;
+      entityType: string;
+      id: string;
+      metadata: unknown;
+    }>,
+  ) {
+    const hiddenActions = new Set([
+      'APPOINTMENT_WORK_LOG_UPDATED',
+      'MEDIA_UPLOAD_FAILED',
+      'MEDIA_UPLOAD_STARTED',
+    ]);
+    const meaningful = entries.filter(
+      (entry) => !hiddenActions.has(entry.action),
+    );
+
+    return meaningful.filter((entry, index) => {
+      const previous = meaningful[index - 1];
+      if (!previous) return true;
+      const secondsApart = Math.abs(
+        previous.createdAt.getTime() - entry.createdAt.getTime(),
+      );
+      const isDuplicate =
+        previous.action === entry.action &&
+        previous.entityId === entry.entityId &&
+        previous.entityType === entry.entityType;
+      return !(isDuplicate && secondsApart <= 60_000);
+    });
   }
 
   private clean(value?: string | null) {

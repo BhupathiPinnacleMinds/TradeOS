@@ -295,20 +295,10 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(appointmentDetails).toContain('resolvedJobId');
     expect(appointmentDetails).toContain(
-      "const showStagingJobDiagnostic = mobileConfig.environment === 'staging'",
-    );
-    expect(appointmentDetails).toContain('Staging View Job diagnostic');
-    expect(appointmentDetails).toContain('Appointment DB ID');
-    expect(appointmentDetails).toContain('appointment.jobId');
-    expect(appointmentDetails).toContain('appointment.job?.id');
-    expect(appointmentDetails).toContain('appointment.job?.jobNumber');
-    expect(appointmentDetails).toContain('Resolved job ID');
-    expect(appointmentDetails).toContain('View Job navigation');
-    expect(appointmentDetails).toContain('BLOCKED - missing canonical job ID');
-    expect(appointmentDetails).toContain(
       "navigation.navigate('JobDetails', { jobId: resolvedJobId })",
     );
     expect(appointmentDetails).toContain('Missing job reference');
+    expect(appointmentDetails).not.toContain('Staging View Job diagnostic');
     expect(appointmentDetails).not.toContain(
       "navigation.navigate('JobDetails', { jobId: selectedAppointment.jobId })",
     );
@@ -347,22 +337,18 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
-  it('shows a staging-only Job Details request lifecycle diagnostic', () => {
+  it('removes temporary staging diagnostics from pilot detail screens', () => {
     const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
-
-    expect(jobDetails).toContain(
-      "const showStagingDiagnostic = mobileConfig.environment === 'staging'",
+    const appointmentDetails = mobileSource(
+      'screens/AppointmentDetailsScreen.tsx',
     );
-    expect(jobDetails).toContain('function JobDetailsDiagnosticCard');
-    expect(jobDetails).toContain('Staging Job Details diagnostic');
-    expect(jobDetails).toContain('Route job ID');
-    expect(jobDetails).toContain('Request state');
-    expect(jobDetails).toContain('Request attempted');
-    expect(jobDetails).toContain('Endpoint');
-    expect(jobDetails).toContain('HTTP status');
-    expect(jobDetails).toContain("value={requestAttempted ? 'YES' : 'NO'}");
-    expect(jobDetails).toContain('endpoint={jobRequestEndpoint}');
-    expect(jobDetails).toContain('httpStatus={httpStatus}');
+
+    expect(jobDetails).not.toContain('Staging Job Details diagnostic');
+    expect(jobDetails).not.toContain('function JobDetailsDiagnosticCard');
+    expect(appointmentDetails).not.toContain('Staging View Job diagnostic');
+    expect(appointmentDetails).not.toContain(
+      'BLOCKED - missing canonical job ID',
+    );
   });
 
   it('keeps appointment API responses and mobile DTOs carrying the canonical jobId', () => {
@@ -385,5 +371,60 @@ describe('Job form mobile UI contracts', () => {
     expect(sharedAppointments).toContain('jobId: string;');
     expect(sharedAppointments).toContain('job: AppointmentJobSummary;');
     expect(appointmentService).toContain('jobId: appointment.jobId');
+  });
+
+  it('uses appointment completion work logs and signatures in Job Details', () => {
+    const jobService = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'jobs', 'jobs.service.ts'),
+      'utf8',
+    );
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobService).toContain('workLogs:');
+    expect(jobService).toContain('signatures:');
+    expect(jobService).toContain('workLog: appointment.workLogs?.[0]');
+    expect(jobService).toContain('signature: signature ? this.toSignature');
+    expect(jobDetails).toContain('Work completed:');
+    expect(jobDetails).toContain('Field notes:');
+    expect(jobDetails).toContain('followUpDisplay');
+    expect(jobDetails).toContain('Finalized evidence:');
+  });
+
+  it('makes Job Details status/follow-up context explicit without auto-completing jobs', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('jobHasFollowUpRequired');
+    expect(jobDetails).toContain('Follow-up required');
+    expect(jobDetails).toContain(
+      'Latest appointment is completed, but this job remains open',
+    );
+  });
+
+  it('shows only valid Job Details contact and navigation actions', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('function hasUsableAddress');
+    expect(jobDetails).toContain('disabled={!job.customer.phone}');
+    expect(jobDetails).toContain('disabled={!job.customer.email}');
+    expect(jobDetails).toContain('disabled={!canNavigateToJob}');
+    expect(jobDetails).toContain('{canEdit ? (');
+    expect(jobDetails).toContain('{canScheduleAppointment ? (');
+    expect(jobDetails).toContain('{canCreateQuote ? (');
+    expect(jobDetails).toContain('{canCreateInvoice ? (');
+  });
+
+  it('keeps finalized evidence and timeline presentation focused on business events', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+    const jobService = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'jobs', 'jobs.service.ts'),
+      'utf8',
+    );
+
+    expect(jobDetails).toContain('completionEvidenceCount');
+    expect(jobDetails).toContain('item.appointmentId === appointment.id');
+    expect(jobService).toContain('presentableTimeline');
+    expect(jobService).toContain("'MEDIA_UPLOAD_STARTED'");
+    expect(jobService).toContain("'APPOINTMENT_WORK_LOG_UPDATED'");
+    expect(jobService).toContain('secondsApart <= 60_000');
   });
 });

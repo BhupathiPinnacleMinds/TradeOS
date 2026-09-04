@@ -140,6 +140,47 @@ function completedAppointments(appointments: Appointment[]) {
     );
 }
 
+function hasUsableAddress(job: Job) {
+  return Boolean(
+    job.addressLine1?.trim() &&
+    job.suburb?.trim() &&
+    job.state?.trim() &&
+    job.postcode?.trim(),
+  );
+}
+
+function hasFollowUpRequired(appointments: Appointment[]) {
+  return appointments.some(
+    (appointment) => appointment.workLog?.followUpRequired,
+  );
+}
+
+function latestFollowUpLog(appointments: Appointment[]) {
+  return [...appointments]
+    .filter((appointment) => appointment.workLog?.followUpRequired)
+    .sort(
+      (left, right) =>
+        new Date(right.workLog?.updatedAt ?? right.updatedAt).getTime() -
+        new Date(left.workLog?.updatedAt ?? left.updatedAt).getTime(),
+    )[0]?.workLog;
+}
+
+function completionEvidenceCount(
+  media: MediaAsset[],
+  appointment: Appointment | undefined,
+) {
+  if (!appointment) return 0;
+  return media.filter(
+    (item) => item.appointmentId === appointment.id && !item.archivedAt,
+  ).length;
+}
+
+function followUpDisplay(workLog: Appointment['workLog']) {
+  if (!workLog) return 'Not recorded';
+  if (!workLog.followUpRequired) return 'No';
+  return workLog.followUpNotes ? `Yes — ${workLog.followUpNotes}` : 'Yes';
+}
+
 export function JobDetailsScreen({ navigation, route }: Props) {
   const routeJobId = route.params?.jobId ?? null;
   const jobId = routeJobId?.trim() ?? '';
@@ -169,9 +210,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [requestState, setRequestState] =
     useState<JobDetailsRequestState>('IDLE');
-  const [requestAttempted, setRequestAttempted] = useState(false);
-  const [httpStatus, setHttpStatus] = useState<number | null>(null);
-  const showStagingDiagnostic = mobileConfig.environment === 'staging';
 
   const canEdit = canManageJob(user?.role);
   const canArchive = canArchiveJob(user?.role);
@@ -182,9 +220,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const availableJobStatusActions = job ? jobStatusActions(job) : [];
   const latestCompletedAppointment = completedAppointments(appointments)[0];
-  const latestFollowUpWorkLog = appointments.find(
-    (appointment) => appointment.workLog?.followUpRequired,
-  )?.workLog;
+  const latestFollowUpWorkLog = latestFollowUpLog(appointments);
+  const jobHasFollowUpRequired = hasFollowUpRequired(appointments);
+  const jobCompletionEvidenceCount = completionEvidenceCount(
+    media,
+    latestCompletedAppointment,
+  );
+  const canNavigateToJob = job ? hasUsableAddress(job) : false;
   const acceptedQuoteCents = [sourceQuote, ...relatedQuotes]
     .filter((quote) => quote?.status === 'ACCEPTED')
     .reduce((sum, quote) => sum + (quote?.totalCents ?? 0), 0);
@@ -216,20 +258,15 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       setJob(null);
       setIsLoading(false);
       setRequestState('IDLE');
-      setRequestAttempted(false);
-      setHttpStatus(null);
       return;
     }
     if (!token) {
       setRequestState('IDLE');
-      setRequestAttempted(false);
       return;
     }
     setIsLoading(true);
     setJob(null);
     setRequestState('LOADING');
-    setRequestAttempted(true);
-    setHttpStatus(null);
     if (mobileConfig.environment !== 'production') {
       console.info('[JOB_DETAILS_REQUEST]', {
         endpoint: jobRequestEndpoint,
@@ -239,7 +276,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     try {
       setRequestState('REQUESTED');
       const response = await jobDetailRequest(token, jobId);
-      setHttpStatus(200);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
@@ -267,7 +303,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       }
     } catch (error) {
       const status = error instanceof ApiRequestError ? error.status : null;
-      setHttpStatus(status);
       setRequestState(status === 404 ? '404' : 'ERROR');
       if (mobileConfig.environment !== 'production') {
         console.warn('[TradieOS job details response diagnostic]', {
@@ -419,14 +454,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (!jobId) {
     return (
       <View style={styles.loadingPage}>
-        <JobDetailsDiagnosticCard
-          endpoint={jobRequestEndpoint}
-          httpStatus={httpStatus}
-          requestAttempted={requestAttempted}
-          requestState={requestState}
-          routeJobId={routeJobId}
-          visible={showStagingDiagnostic}
-        />
         <Text style={styles.title}>Missing job reference</Text>
         <Text style={styles.muted}>
           We couldn't open this job because the appointment did not include a
@@ -439,14 +466,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (isLoading) {
     return (
       <View style={styles.loadingPage}>
-        <JobDetailsDiagnosticCard
-          endpoint={jobRequestEndpoint}
-          httpStatus={httpStatus}
-          requestAttempted={requestAttempted}
-          requestState={requestState}
-          routeJobId={routeJobId}
-          visible={showStagingDiagnostic}
-        />
         <ActivityIndicator color={colours.primary} />
         <Text style={styles.muted}>Loading job...</Text>
       </View>
@@ -456,14 +475,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   if (!job) {
     return (
       <View style={styles.loadingPage}>
-        <JobDetailsDiagnosticCard
-          endpoint={jobRequestEndpoint}
-          httpStatus={httpStatus}
-          requestAttempted={requestAttempted}
-          requestState={requestState}
-          routeJobId={routeJobId}
-          visible={showStagingDiagnostic}
-        />
         <Text style={styles.title}>
           {requestState === '404'
             ? 'Job not found'
@@ -475,19 +486,22 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <JobDetailsDiagnosticCard
-        endpoint={jobRequestEndpoint}
-        httpStatus={httpStatus}
-        requestAttempted={requestAttempted}
-        requestState={requestState}
-        routeJobId={routeJobId}
-        visible={showStagingDiagnostic}
-      />
       <Text style={styles.eyebrow}>{job.jobNumber}</Text>
       <Text style={styles.title}>{job.title}</Text>
       <Text style={styles.subtitle}>
         {label(job.status)} · {label(job.priority)} priority
       </Text>
+      {jobHasFollowUpRequired ? (
+        <View style={styles.followUpBadge}>
+          <Text style={styles.followUpBadgeText}>Follow-up required</Text>
+        </View>
+      ) : null}
+      {job.status !== 'COMPLETED' && latestCompletedAppointment ? (
+        <Text style={styles.statusContext}>
+          Latest appointment is completed, but this job remains open
+          {jobHasFollowUpRequired ? ' because follow-up is required.' : '.'}
+        </Text>
+      ) : null}
       {job.isArchived ? (
         <Text style={styles.archived}>Archived job</Text>
       ) : null}
@@ -509,6 +523,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           onPress={() => void Linking.openURL(`mailto:${job.customer.email}`)}
         />
         <QuickAction
+          disabled={!canNavigateToJob}
           label="Navigate"
           onPress={() =>
             void Linking.openURL(
@@ -628,18 +643,17 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             )}
           </Text>
           <Text style={styles.meta}>
-            Work: {latestCompletedAppointment.workLog?.workCompleted ?? 'Done'}
+            Work completed:{' '}
+            {latestCompletedAppointment.workLog?.workCompleted ??
+              'No work summary recorded.'}
           </Text>
           <Text style={styles.meta}>
-            Notes:{' '}
+            Field notes:{' '}
             {latestCompletedAppointment.workLog?.technicianNotes ??
               'No field notes recorded.'}
           </Text>
           <Text style={styles.meta}>
-            Follow-up:{' '}
-            {latestCompletedAppointment.workLog?.followUpRequired
-              ? (latestCompletedAppointment.workLog.followUpNotes ?? 'Required')
-              : 'Not required'}
+            Follow-up: {followUpDisplay(latestCompletedAppointment.workLog)}
           </Text>
           <Text style={styles.meta}>
             Signature:{' '}
@@ -649,7 +663,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 ? 'Skipped with reason'
                 : 'Not recorded'}
           </Text>
-          <Text style={styles.meta}>Evidence: {media.length}</Text>
+          <Text style={styles.meta}>
+            Finalized evidence: {jobCompletionEvidenceCount}
+          </Text>
         </Card>
       ) : null}
 
@@ -1037,60 +1053,6 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   );
 }
 
-function diagnosticValue(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return 'NOT SENT';
-  const text = String(value).trim();
-  return text || 'NOT SENT';
-}
-
-function JobDetailsDiagnosticCard({
-  endpoint,
-  httpStatus,
-  requestAttempted,
-  requestState,
-  routeJobId,
-  visible,
-}: {
-  endpoint: string | null;
-  httpStatus: number | null;
-  requestAttempted: boolean;
-  requestState: JobDetailsRequestState;
-  routeJobId: string | null;
-  visible: boolean;
-}) {
-  if (!visible) return null;
-  return (
-    <View style={styles.diagnosticCard}>
-      <Text style={styles.diagnosticTitle}>Staging Job Details diagnostic</Text>
-      <DiagnosticRow label="Route job ID" value={routeJobId ?? 'MISSING'} />
-      <DiagnosticRow label="Request state" value={requestState} />
-      <DiagnosticRow
-        label="Request attempted"
-        value={requestAttempted ? 'YES' : 'NO'}
-      />
-      <DiagnosticRow label="Endpoint" value={endpoint ?? 'NOT SENT'} />
-      <DiagnosticRow label="HTTP status" value={httpStatus ?? 'NOT SENT'} />
-    </View>
-  );
-}
-
-function DiagnosticRow({
-  label: rowLabel,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) {
-  return (
-    <View style={styles.diagnosticRow}>
-      <Text style={styles.diagnosticLabel}>{rowLabel}:</Text>
-      <Text selectable style={styles.diagnosticValue}>
-        {diagnosticValue(value)}
-      </Text>
-    </View>
-  );
-}
-
 function QuickAction({
   disabled,
   label: text,
@@ -1372,34 +1334,6 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   dangerText: { color: '#FFFFFF', fontWeight: '900' },
-  diagnosticCard: {
-    alignSelf: 'stretch',
-    backgroundColor: '#F8FAFC',
-    borderColor: colours.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    marginBottom: 16,
-    padding: 14,
-  },
-  diagnosticLabel: {
-    color: colours.muted,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  diagnosticRow: {
-    borderBottomColor: colours.border,
-    borderBottomWidth: 1,
-    gap: 4,
-    paddingVertical: 8,
-  },
-  diagnosticTitle: { color: colours.ink, fontSize: 15, fontWeight: '900' },
-  diagnosticValue: {
-    color: colours.ink,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
-  },
   eyebrow: {
     color: colours.primary,
     fontSize: 12,
@@ -1438,5 +1372,10 @@ const styles = StyleSheet.create({
   quickText: { color: '#FFFFFF', fontWeight: '900' },
   restoreButton: { backgroundColor: colours.primary },
   subtitle: { color: colours.muted, lineHeight: 22, marginTop: 8 },
+  statusContext: {
+    color: colours.muted,
+    lineHeight: 21,
+    marginTop: 8,
+  },
   title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 4 },
 });
