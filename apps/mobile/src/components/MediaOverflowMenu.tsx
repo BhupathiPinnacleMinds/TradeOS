@@ -233,10 +233,19 @@ export function MediaOverflowMenu({
     setTimeout(action, ACTION_DELAY_MS);
   }
 
-  function handleActionPress(actionKey: (typeof actionConfig.keys)[number]) {
-    if (
-      !isMediaMenuActionForSelectedMedia(selectedMediaIdRef.current, media.id)
-    ) {
+  function handleActionPress(
+    actionKey: (typeof actionConfig.keys)[number],
+    event?: GestureResponderEvent,
+  ) {
+    event?.stopPropagation();
+    const selectedMediaId = selectedMediaIdRef.current;
+
+    if (!isMediaMenuActionForSelectedMedia(selectedMediaId, media.id)) {
+      logMediaMenu('MEDIA_MENU_ACTION_FAILED', {
+        actionName: actionKey,
+        mediaId: media.id,
+        reason: 'STALE_MEDIA_SELECTION',
+      });
       closeMenu();
       return;
     }
@@ -384,7 +393,6 @@ export function MediaOverflowMenu({
           onPress={() => {
             if (backdropEnabled) closeMenu();
           }}
-          onTouchMove={closeMenu}
           style={styles.backdrop}
         >
           <Pressable
@@ -411,7 +419,7 @@ export function MediaOverflowMenu({
                   destructive={index === actionConfig.destructiveButtonIndex}
                   key={actionKey}
                   label={label}
-                  onPress={() => handleActionPress(actionKey)}
+                  onPress={(event) => handleActionPress(actionKey, event)}
                 />
               );
             })}
@@ -483,13 +491,16 @@ function MenuAction({
 }: {
   destructive?: boolean;
   label: string;
-  onPress(): void;
+  onPress(event: GestureResponderEvent): void;
 }) {
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="menuitem"
-      onPress={onPress}
+      onPress={(event) => {
+        event.stopPropagation();
+        onPress(event);
+      }}
       style={styles.menuAction}
     >
       <Text style={[styles.menuActionText, destructive && styles.destructive]}>

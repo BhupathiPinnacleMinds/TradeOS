@@ -16,6 +16,8 @@ import {
   canArchiveMediaInUi,
   mediaArchiveUnavailableReason,
 } from '../../../mobile/src/api/mediaActions';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 const imageMedia = {
   archivedAt: null,
@@ -32,6 +34,12 @@ const documentMedia = {
   mediaType: 'PDF',
   originalFileName: 'certificate.pdf',
 } as const;
+
+const repoRoot = resolve(__dirname, '..', '..', '..', '..');
+
+function mobileSource(path: string) {
+  return readFileSync(join(repoRoot, 'apps', 'mobile', 'src', path), 'utf8');
+}
 
 describe('media menu action configuration', () => {
   it('builds View, Remove photo and Cancel options for removable photos', () => {
@@ -339,6 +347,40 @@ describe('media overflow menu interaction guards', () => {
         selectedMediaId: 'media-2',
       }),
     ).toBe(false);
+  });
+
+  it('keeps Android menu item taps from bubbling to backdrop dismissal before action dispatch', () => {
+    const menu = mobileSource('components/MediaOverflowMenu.tsx');
+
+    expect(menu).toContain(
+      'function handleActionPress(\n    actionKey: (typeof actionConfig.keys)[number],\n    event?: GestureResponderEvent,',
+    );
+    expect(menu).toContain('event?.stopPropagation();');
+    expect(menu).toContain(
+      'const selectedMediaId = selectedMediaIdRef.current;',
+    );
+    expect(menu).not.toContain('onTouchMove={closeMenu}');
+    expect(menu).toContain('event.stopPropagation();\n        onPress(event);');
+  });
+
+  it('routes Appointment Details menu View and Remove through the existing thumbnail and remove handlers', () => {
+    const appointmentDetails = mobileSource(
+      'screens/AppointmentDetailsScreen.tsx',
+    );
+
+    expect(appointmentDetails).toContain(
+      "onPress={() =>\n                    navigation.navigate('MediaViewer', { mediaId: item.id })\n                  }",
+    );
+    expect(appointmentDetails).toContain(
+      'onRemove={() => setMediaToRemove(item)}',
+    );
+    expect(appointmentDetails).toContain('onView={() => {');
+    expect(appointmentDetails).toContain('onPress();');
+    expect(appointmentDetails).toContain('onArchive={() => {');
+    expect(appointmentDetails).toContain('onRemove();');
+    expect(appointmentDetails).toContain(
+      'onConfirm={() => mediaToRemove && void archiveMedia(mediaToRemove)}',
+    );
   });
 });
 
