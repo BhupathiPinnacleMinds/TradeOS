@@ -12,10 +12,14 @@ import {
   APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP,
   APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP,
   APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING,
+  APPOINTMENT_SIGNATURE_SKIP_REASONS,
   APPOINTMENT_SIGNATURE_STROKE_COLOUR,
   APPOINTMENT_SIGNATURE_STROKE_WIDTH,
+  APPOINTMENT_STATUS_UPDATE_ROLES,
   DEFAULT_BUSINESS_TIMEZONE,
+  appointmentSignaturePointFromEvent,
   buildAppointmentSignatureStrokeSegments,
+  buildAppointmentSignatureSkipReason,
   clearAppointmentSignatureData,
   createUnsavedChangesNavigationGuard,
   formatBusinessDate,
@@ -40,6 +44,7 @@ import {
   validateAppointmentCompletion,
   validateAppointmentFieldWork,
 } from '@tradieos/shared';
+import type { AppointmentSignatureSkipReason } from '@tradieos/shared';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import type { AppointmentFieldValidationErrors } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -68,6 +73,7 @@ import {
   Text,
   TextInput,
   View,
+  type GestureResponderEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -111,6 +117,8 @@ import { primaryCustomerName } from '../utils/customerDisplay';
 const MORE_ACTION_DISMISS_DELAY_MS = 180;
 const RESCHEDULE_DURATIONS = [30, 60, 90, 120, 180, 240];
 const ACTIVE_NOTE_STATUSES = ['ARRIVED', 'IN_PROGRESS', 'PAUSED'] as const;
+const SIGNATURE_SKIP_OPTION = 'SKIP';
+const SIGNATURE_CAPTURE_OPTION = 'SIGN';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentDetails'>;
 type AppointmentDetailsAction =
@@ -557,7 +565,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
   const validateCompletion = useCallback(() => {
     const errors = validateAppointmentCompletion({
-      canSkipSignature: ['OWNER', 'ADMIN'].includes(user?.role ?? ''),
+      canSkipSignature: APPOINTMENT_STATUS_UPDATE_ROLES.includes(
+        user?.role as never,
+      ),
       followUpNotes,
       followUpRequired,
       hasSignature: Boolean(
@@ -1407,7 +1417,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         technicianNotes={technicianNotes}
         visible={isCompletionOpen}
         workCompleted={workCompleted}
-        canSkipSignature={['OWNER', 'ADMIN'].includes(user?.role ?? '')}
+        canSkipSignature={APPOINTMENT_STATUS_UPDATE_ROLES.includes(
+          user?.role as never,
+        )}
       />
       <MediaRemovalConfirmation
         busy={Boolean(busyMediaId)}
@@ -1462,7 +1474,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     if (action.id === 'complete') {
       setCompletionErrors(
         validateAppointmentCompletion({
-          canSkipSignature: ['OWNER', 'ADMIN'].includes(user?.role ?? ''),
+          canSkipSignature: APPOINTMENT_STATUS_UPDATE_ROLES.includes(
+            user?.role as never,
+          ),
           followUpNotes,
           followUpRequired,
           hasSignature: Boolean(
@@ -1751,9 +1765,20 @@ function CompletionModal({
     strokes: [],
     width: 320,
   });
-  const [skipReason, setSkipReason] = useState(
-    appointment.signature?.skipReason ?? '',
+  const [skipReason, setSkipReason] = useState<
+    AppointmentSignatureSkipReason | ''
+  >(
+    APPOINTMENT_SIGNATURE_SKIP_REASONS.includes(
+      appointment.signature?.skipReason as AppointmentSignatureSkipReason,
+    )
+      ? (appointment.signature?.skipReason as AppointmentSignatureSkipReason)
+      : '',
   );
+  const [skipReasonExplanation, setSkipReasonExplanation] = useState('');
+  const [signOffMode, setSignOffMode] = useState<
+    typeof SIGNATURE_CAPTURE_OPTION | typeof SIGNATURE_SKIP_OPTION
+  >(SIGNATURE_CAPTURE_OPTION);
+  const [skipReasonError, setSkipReasonError] = useState('');
   const [signatureActive, setSignatureActive] = useState(false);
   useEffect(() => {
     setCustomerName(
@@ -1767,7 +1792,16 @@ function CompletionModal({
       strokes: [],
       width: 320,
     });
-    setSkipReason(appointment.signature?.skipReason ?? '');
+    setSkipReason(
+      APPOINTMENT_SIGNATURE_SKIP_REASONS.includes(
+        appointment.signature?.skipReason as AppointmentSignatureSkipReason,
+      )
+        ? (appointment.signature?.skipReason as AppointmentSignatureSkipReason)
+        : '',
+    );
+    setSkipReasonExplanation('');
+    setSignOffMode(SIGNATURE_CAPTURE_OPTION);
+    setSkipReasonError('');
     setSignatureActive(false);
   }, [
     appointment.id,
@@ -1795,6 +1829,11 @@ function CompletionModal({
   }, [errors.followUpNotes, errors.signature, errors.workCompleted, visible]);
 
   const hasPendingSignature = hasAppointmentSignatureStrokes(signatureData);
+  const resolvedSkipReason = buildAppointmentSignatureSkipReason({
+    explanation: skipReasonExplanation,
+    reason: skipReason || null,
+  });
+  const canSaveSkipReason = Boolean(resolvedSkipReason);
   const checklist = [
     {
       label: 'Work completed summary entered',
@@ -1805,11 +1844,11 @@ function CompletionModal({
       state: mediaCount > 0 ? 'Complete' : 'Optional warning',
     },
     {
-      label: 'Customer signature captured',
+      label: 'Customer sign-off',
       state: appointment.signature?.capturedAt
-        ? 'Complete'
+        ? 'Signed'
         : appointment.signature?.skippedAt
-          ? 'Skipped with reason'
+          ? `Skipped: ${appointment.signature.skipReason ?? 'Reason recorded'}`
           : 'Missing',
     },
     { label: 'Materials used reviewed', state: 'Optional' },
@@ -1822,6 +1861,29 @@ function CompletionModal({
     setSignatureActive(false);
     setSignatureData(clearAppointmentSignatureData);
   }, []);
+  const chooseSignaturePath = useCallback(() => {
+    setSignOffMode(SIGNATURE_CAPTURE_OPTION);
+    setSkipReason('');
+    setSkipReasonExplanation('');
+    setSkipReasonError('');
+  }, []);
+  const chooseSkipPath = useCallback(() => {
+    setSignOffMode(SIGNATURE_SKIP_OPTION);
+    setSignatureActive(false);
+    setSignatureData(clearAppointmentSignatureData);
+  }, []);
+  const saveSkipReason = useCallback(() => {
+    if (!canSaveSkipReason) {
+      setSkipReasonError(
+        skipReason === 'Other'
+          ? 'Enter a short explanation for Other.'
+          : 'Choose a reason before skipping the customer signature.',
+      );
+      return;
+    }
+    setSkipReasonError('');
+    onSkipSignature(resolvedSkipReason);
+  }, [canSaveSkipReason, onSkipSignature, resolvedSkipReason, skipReason]);
   const cancelCompletion = useCallback(() => {
     setSignatureActive(false);
     onCancel();
@@ -1979,56 +2041,115 @@ function CompletionModal({
                     <Text style={styles.consentText}>
                       I confirm the work described above has been completed.
                     </Text>
-                    <SignaturePad
-                      disabled={busy}
-                      onBeginSignature={() => setSignatureActive(true)}
-                      onChange={setSignatureData}
-                      onEndSignature={() => setSignatureActive(false)}
-                      signatureData={signatureData}
-                    />
-                    <View style={styles.signatureActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={busy || !hasPendingSignature}
-                        onPress={clearSignature}
-                        style={[
-                          styles.quickAction,
-                          styles.signatureActionButton,
-                          (busy || !hasPendingSignature) &&
-                            styles.disabledAction,
-                        ]}
-                      >
-                        <Text style={styles.quickText}>Clear signature</Text>
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={
-                          busy || !hasPendingSignature || !customerName.trim()
-                        }
-                        onPress={() =>
-                          onSaveSignature({
-                            consentText:
-                              'I confirm the work described above has been completed.',
-                            customerName,
-                            signatureData,
-                            signerTitle,
-                          })
-                        }
-                        style={[
-                          styles.quickAction,
-                          styles.quickActionPrimary,
-                          styles.signatureActionButton,
-                          (busy ||
-                            !hasPendingSignature ||
-                            !customerName.trim()) &&
-                            styles.disabledAction,
-                        ]}
-                      >
-                        <Text style={styles.quickTextPrimary}>
-                          Save signature
-                        </Text>
-                      </Pressable>
-                    </View>
+                    {canSkipSignature ? (
+                      <View style={styles.signOffChoiceRow}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            selected: signOffMode === SIGNATURE_CAPTURE_OPTION,
+                          }}
+                          onPress={chooseSignaturePath}
+                          style={[
+                            styles.signOffChoice,
+                            signOffMode === SIGNATURE_CAPTURE_OPTION &&
+                              styles.signOffChoiceActive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.signOffChoiceText,
+                              signOffMode === SIGNATURE_CAPTURE_OPTION &&
+                                styles.signOffChoiceTextActive,
+                            ]}
+                          >
+                            Capture signature
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            selected: signOffMode === SIGNATURE_SKIP_OPTION,
+                          }}
+                          onPress={chooseSkipPath}
+                          style={[
+                            styles.signOffChoice,
+                            signOffMode === SIGNATURE_SKIP_OPTION &&
+                              styles.signOffChoiceActive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.signOffChoiceText,
+                              signOffMode === SIGNATURE_SKIP_OPTION &&
+                                styles.signOffChoiceTextActive,
+                            ]}
+                          >
+                            Skip signature
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                    {signOffMode === SIGNATURE_CAPTURE_OPTION ? (
+                      <>
+                        <SignaturePad
+                          disabled={busy}
+                          onBeginSignature={() => {
+                            chooseSignaturePath();
+                            setSignatureActive(true);
+                          }}
+                          onChange={setSignatureData}
+                          onEndSignature={() => setSignatureActive(false)}
+                          signatureData={signatureData}
+                        />
+                        <View style={styles.signatureActions}>
+                          <Pressable
+                            accessibilityRole="button"
+                            disabled={busy || !hasPendingSignature}
+                            onPress={clearSignature}
+                            style={[
+                              styles.quickAction,
+                              styles.signatureActionButton,
+                              (busy || !hasPendingSignature) &&
+                                styles.disabledAction,
+                            ]}
+                          >
+                            <Text style={styles.quickText}>
+                              Clear signature
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="button"
+                            disabled={
+                              busy ||
+                              !hasPendingSignature ||
+                              !customerName.trim()
+                            }
+                            onPress={() =>
+                              onSaveSignature({
+                                consentText:
+                                  'I confirm the work described above has been completed.',
+                                customerName,
+                                signatureData,
+                                signerTitle,
+                              })
+                            }
+                            style={[
+                              styles.quickAction,
+                              styles.quickActionPrimary,
+                              styles.signatureActionButton,
+                              (busy ||
+                                !hasPendingSignature ||
+                                !customerName.trim()) &&
+                                styles.disabledAction,
+                            ]}
+                          >
+                            <Text style={styles.quickTextPrimary}>
+                              Save signature
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </>
+                    ) : null}
                     {errors.signature ? (
                       <Text
                         accessibilityLiveRegion="polite"
@@ -2037,36 +2158,84 @@ function CompletionModal({
                         {errors.signature}
                       </Text>
                     ) : null}
-                    {canSkipSignature ? (
+                    {canSkipSignature &&
+                    signOffMode === SIGNATURE_SKIP_OPTION ? (
                       <View style={styles.skipSignatureSection}>
                         <Text
                           style={[styles.inputLabel, styles.skipReasonLabel]}
                         >
-                          Skip reason
+                          Why are you skipping the signature?
                         </Text>
-                        <TextInput
-                          multiline
-                          onChangeText={setSkipReason}
-                          placeholder="Why is the customer signature unavailable?"
-                          placeholderTextColor={colours.muted}
-                          style={[styles.textArea, styles.skipReasonInput]}
-                          value={skipReason}
-                        />
+                        <View style={styles.skipReasonOptions}>
+                          {APPOINTMENT_SIGNATURE_SKIP_REASONS.map((reason) => (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityState={{
+                                selected: skipReason === reason,
+                              }}
+                              disabled={busy}
+                              key={reason}
+                              onPress={() => {
+                                setSkipReason(reason);
+                                setSkipReasonError('');
+                              }}
+                              style={[
+                                styles.skipReasonOption,
+                                skipReason === reason &&
+                                  styles.skipReasonOptionActive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.skipReasonOptionText,
+                                  skipReason === reason &&
+                                    styles.skipReasonOptionTextActive,
+                                ]}
+                              >
+                                {reason}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        {skipReason === 'Other' ? (
+                          <TextInput
+                            multiline
+                            onChangeText={(value) => {
+                              setSkipReasonExplanation(value);
+                              setSkipReasonError('');
+                            }}
+                            placeholder="Briefly explain the reason"
+                            placeholderTextColor={colours.muted}
+                            style={[styles.textArea, styles.skipReasonInput]}
+                            value={skipReasonExplanation}
+                          />
+                        ) : null}
+                        {skipReasonError || errors.signatureSkipReason ? (
+                          <Text
+                            accessibilityLiveRegion="polite"
+                            style={styles.errorText}
+                          >
+                            {skipReasonError || errors.signatureSkipReason}
+                          </Text>
+                        ) : null}
+                        {resolvedSkipReason ? (
+                          <Text style={styles.skipReasonSummary}>
+                            Selected: {resolvedSkipReason}
+                          </Text>
+                        ) : null}
                         <Pressable
                           accessibilityRole="button"
-                          disabled={busy || !skipReason.trim()}
-                          onPress={() => onSkipSignature(skipReason)}
+                          disabled={busy || !canSaveSkipReason}
+                          onPress={saveSkipReason}
                           style={[
                             styles.quickAction,
                             styles.skipSignatureButton,
-                            busy || !skipReason.trim()
+                            busy || !canSaveSkipReason
                               ? styles.disabledAction
                               : undefined,
                           ]}
                         >
-                          <Text style={styles.quickText}>
-                            Skip signature with reason
-                          </Text>
+                          <Text style={styles.quickText}>Save skip reason</Text>
                         </Pressable>
                       </View>
                     ) : null}
@@ -2449,36 +2618,51 @@ function SignaturePad({
     typeof captureAppointmentSignatureRequest
   >[2]['signatureData'];
 }) {
+  const padRef = useRef<View | null>(null);
   const [layout, setLayout] = useState({
     height: signatureData.height,
     width: signatureData.width,
   });
   const strokesRef = useRef(signatureData.strokes);
   const layoutRef = useRef(layout);
+  const padFrameRef = useRef<{
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const disabledRef = useRef(disabled);
+  const measurePad = useCallback(() => {
+    padRef.current?.measureInWindow((x, y, width, height) => {
+      if (width > 0 && height > 0) {
+        padFrameRef.current = { height, width, x, y };
+      }
+    });
+  }, []);
+  const eventPoint = useCallback((event: GestureResponderEvent) => {
+    return appointmentSignaturePointFromEvent({
+      frame: padFrameRef.current,
+      locationX: event.nativeEvent.locationX,
+      locationY: event.nativeEvent.locationY,
+      pageX: event.nativeEvent.pageX,
+      pageY: event.nativeEvent.pageY,
+    });
+  }, []);
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: () => !disabledRef.current,
       onStartShouldSetPanResponder: () => !disabledRef.current,
       onPanResponderGrant: (event) => {
         onBeginSignature();
-        const point = {
-          x: Math.max(0, event.nativeEvent.locationX),
-          y: Math.max(0, event.nativeEvent.locationY),
-        };
+        measurePad();
+        const point = eventPoint(event);
         strokesRef.current = [...strokesRef.current, [point]];
         onChange({ ...layoutRef.current, strokes: strokesRef.current });
       },
       onPanResponderMove: (event) => {
         const currentStroke =
           strokesRef.current[strokesRef.current.length - 1] ?? [];
-        const nextStroke = [
-          ...currentStroke,
-          {
-            x: Math.max(0, event.nativeEvent.locationX),
-            y: Math.max(0, event.nativeEvent.locationY),
-          },
-        ];
+        const nextStroke = [...currentStroke, eventPoint(event)];
         strokesRef.current = [...strokesRef.current.slice(0, -1), nextStroke];
         onChange({ ...layoutRef.current, strokes: strokesRef.current });
       },
@@ -2519,8 +2703,10 @@ function SignaturePad({
               width: Math.round(event.nativeEvent.layout.width),
             };
             setLayout(nextLayout);
+            requestAnimationFrame(measurePad);
             onChange({ ...nextLayout, strokes: signatureData.strokes });
           }}
+          ref={padRef}
           style={styles.signaturePad}
           {...panResponder.panHandlers}
         >
@@ -2970,11 +3156,71 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     marginTop: 4,
   },
+  signOffChoice: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  signOffChoiceActive: {
+    backgroundColor: '#EEF2FF',
+    borderColor: colours.primary,
+  },
+  signOffChoiceRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  signOffChoiceText: {
+    color: colours.muted,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  signOffChoiceTextActive: {
+    color: colours.primary,
+  },
   skipReasonInput: {
     marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP,
   },
   skipReasonLabel: {
     marginTop: 0,
+  },
+  skipReasonOption: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  skipReasonOptionActive: {
+    backgroundColor: '#EEF2FF',
+    borderColor: colours.primary,
+  },
+  skipReasonOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  skipReasonOptionText: {
+    color: colours.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  skipReasonOptionTextActive: {
+    color: colours.primary,
+  },
+  skipReasonSummary: {
+    color: colours.ink,
+    fontWeight: '800',
+    marginTop: 10,
   },
   skipSignatureButton: {
     marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP,

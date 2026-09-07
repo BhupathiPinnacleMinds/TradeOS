@@ -71,7 +71,7 @@ const CURRENT_MY_DAY_STATUSES = [
   'ARRIVED',
   'ON_THE_WAY',
 ] as const;
-const SIGNATURE_SKIP_ROLES = ['OWNER', 'ADMIN'] as const;
+const SIGNATURE_SKIP_ROLES = APPOINTMENT_STATUS_UPDATE_ROLES;
 const SIGNATURE_CONSENT_TEXT =
   'I confirm the work described above has been completed.';
 const DISPATCHER_MANAGE_ROLES = [
@@ -1022,10 +1022,10 @@ export class AppointmentsService {
     id: string,
     dto: SkipAppointmentSignatureDto,
   ): Promise<AppointmentDetailResponse> {
-    if (!SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)) {
+    if (!SIGNATURE_SKIP_ROLES.includes(currentUser.role)) {
       throw this.domainError(
         'SIGNATURE_SKIP_NOT_ALLOWED',
-        'Only an owner or admin can skip customer signature capture.',
+        'Only appointment operators can skip customer signature capture.',
         HttpStatus.FORBIDDEN,
       );
     }
@@ -1122,7 +1122,7 @@ export class AppointmentsService {
           status === 'COMPLETED' &&
           !this.hasCompletionSignature(existing) &&
           completion.signatureSkipReason &&
-          SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)
+          SIGNATURE_SKIP_ROLES.includes(currentUser.role)
         ) {
           await this.upsertSkippedSignature(
             tx,
@@ -1995,7 +1995,7 @@ export class AppointmentsService {
     if (this.hasCompletionSignature(appointment)) return;
     if (
       completion?.signatureSkipReason &&
-      SIGNATURE_SKIP_ROLES.includes(currentUser.role as never)
+      SIGNATURE_SKIP_ROLES.includes(currentUser.role)
     ) {
       return;
     }
@@ -2081,9 +2081,7 @@ export class AppointmentsService {
     completion?: CompleteAppointmentPayload,
   ) {
     const errors = validateAppointmentCompletion({
-      canSkipSignature: SIGNATURE_SKIP_ROLES.includes(
-        currentUser.role as never,
-      ),
+      canSkipSignature: SIGNATURE_SKIP_ROLES.includes(currentUser.role),
       followUpNotes: completion?.followUpNotes,
       followUpRequired: completion?.followUpRequired,
       hasSignature: this.hasCompletionSignature(appointment),

@@ -1832,21 +1832,66 @@ describe('AppointmentsService', () => {
     });
   });
 
-  it('allows owners to skip signature only with a reason', async () => {
+  it('allows appointment operators to skip signature only with a reason', async () => {
     const { prisma, service } = createService();
     prisma.appointment.findFirst.mockResolvedValueOnce(
       appointment({ status: 'IN_PROGRESS' }),
     );
 
-    await service.skipSignature(owner, 'appointment-1', {
-      reason: 'Customer was unavailable for sign-off.',
+    await service.skipSignature(technician, 'appointment-1', {
+      reason: 'Customer unavailable',
     });
 
     const signatureCalls = prisma.appointmentSignature.upsert.mock
       .calls as unknown as Array<[{ create: Record<string, unknown> }]>;
     expect(signatureCalls[0][0].create).toMatchObject({
-      skipReason: 'Customer was unavailable for sign-off.',
+      capturedByUserId: 'tech-1',
+      skipReason: 'Customer unavailable',
     });
+  });
+
+  it('rejects empty signature skip reasons', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service
+      .skipSignature(technician, 'appointment-1', {
+        reason: '   ',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'SIGNATURE_SKIP_REASON_REQUIRED');
+      });
+  });
+
+  it('persists an authorised technician signature skip during completion', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({ status: 'IN_PROGRESS' }),
+    );
+
+    await service.transition(technician, 'appointment-1', 'COMPLETED', {
+      followUpRequired: false,
+      signatureSkipReason: 'Remote job / customer not present',
+      workCompleted: 'Completed repairs and tested the installation.',
+    });
+
+    const signatureCalls = prisma.appointmentSignature.upsert.mock
+      .calls as unknown as Array<[{ create: Record<string, unknown> }]>;
+    expect(signatureCalls[0][0].create).toMatchObject({
+      appointmentId: 'appointment-1',
+      businessId: 'business-1',
+      capturedByUserId: 'tech-1',
+      jobId: 'job-1',
+      skipReason: 'Remote job / customer not present',
+    });
+    const auditCalls = prisma.auditLog.create.mock.calls as unknown as Array<
+      [{ data: { action: string; metadata?: Record<string, unknown> } }]
+    >;
+    expect(auditCalls.map((call) => call[0].data.action)).toContain(
+      'APPOINTMENT_SIGNATURE_SKIPPED',
+    );
   });
 
   it('saves work logs and writes follow-up audit events', async () => {

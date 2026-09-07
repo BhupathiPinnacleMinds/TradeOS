@@ -183,6 +183,66 @@ export const APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING = 24;
 export const APPOINTMENT_SIGNATURE_SKIP_REASON_INPUT_GAP = 10;
 export const APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP = 14;
 
+export const APPOINTMENT_SIGNATURE_SKIP_REASONS = [
+  'Customer unavailable',
+  'Customer declined to sign',
+  'Remote job / customer not present',
+  'Signature not required',
+  'Other',
+] as const;
+
+export type AppointmentSignatureSkipReason =
+  (typeof APPOINTMENT_SIGNATURE_SKIP_REASONS)[number];
+
+export interface AppointmentSignaturePadFrame {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}
+
+export function appointmentSignaturePointFromEvent(input: {
+  frame?: AppointmentSignaturePadFrame | null;
+  locationX?: number | null;
+  locationY?: number | null;
+  pageX?: number | null;
+  pageY?: number | null;
+}) {
+  const hasMeasuredFrame =
+    input.frame &&
+    Number.isFinite(input.frame.x) &&
+    Number.isFinite(input.frame.y) &&
+    input.frame.width > 0 &&
+    input.frame.height > 0 &&
+    Number.isFinite(input.pageX) &&
+    Number.isFinite(input.pageY);
+
+  const rawX = hasMeasuredFrame
+    ? Number(input.pageX) - input.frame!.x
+    : Number(input.locationX ?? 0);
+  const rawY = hasMeasuredFrame
+    ? Number(input.pageY) - input.frame!.y
+    : Number(input.locationY ?? 0);
+  const maxX = input.frame?.width ?? Number.POSITIVE_INFINITY;
+  const maxY = input.frame?.height ?? Number.POSITIVE_INFINITY;
+
+  return {
+    x: Math.max(0, Math.min(rawX, maxX)),
+    y: Math.max(0, Math.min(rawY, maxY)),
+  };
+}
+
+export function buildAppointmentSignatureSkipReason(input: {
+  explanation?: string | null;
+  reason?: AppointmentSignatureSkipReason | null;
+}) {
+  const reason = input.reason?.trim();
+  if (!reason) return '';
+  if (reason !== 'Other') return reason;
+  const explanation = input.explanation?.trim();
+  return explanation ? `Other: ${explanation}` : '';
+}
+
 export interface AppointmentSignatureStrokeSegment {
   angleDegrees: number;
   from: { x: number; y: number };
