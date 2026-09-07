@@ -502,6 +502,30 @@ describe('MediaService', () => {
     expect(response.media.uploadStatus).toBe('COMPLETED');
   });
 
+  it('allows Android picker metadata mismatches when the upload target uses the actual multipart byte size', async () => {
+    const { prisma, service, storage } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        fileSizeBytes: 6,
+        mimeType: 'image/jpeg',
+        originalFileName: 'android-gallery.jpg',
+      }),
+    );
+    const actualPayload = Buffer.from('actual');
+
+    const response = await service.localMultipartUpload(technician, 'media-1', {
+      buffer: actualPayload,
+      mimetype: 'image/jpeg',
+      originalname: 'android-gallery.jpg',
+      size: actualPayload.length,
+    });
+
+    expect(storage.uploadFile).toHaveBeenCalledWith(
+      expect.objectContaining({ content: actualPayload }),
+    );
+    expect(response.media.uploadStatus).toBe('COMPLETED');
+  });
+
   it('treats repeated multipart completion for the same media as idempotent', async () => {
     const { prisma, service, storage } = createHarness();
     prisma.mediaAsset.findFirst.mockResolvedValue(
@@ -517,6 +541,31 @@ describe('MediaService', () => {
 
     expect(response.media.uploadStatus).toBe('COMPLETED');
     expect(storage.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects genuinely truncated multipart uploads when actual bytes do not match the target', async () => {
+    const { prisma, service } = createHarness();
+    prisma.mediaAsset.findFirst.mockResolvedValue(
+      media({
+        fileSizeBytes: 8,
+        mimeType: 'image/jpeg',
+        originalFileName: 'truncated.jpg',
+      }),
+    );
+
+    await expect(
+      service.localMultipartUpload(technician, 'media-1', {
+        buffer: Buffer.from('short'),
+        mimetype: 'image/jpeg',
+        originalname: 'truncated.jpg',
+        size: 5,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'FILE_SIZE_MISMATCH',
+      }),
+      status: 400,
+    });
   });
 
   it('rejects multipart uploads above the expected target size with FILE_TOO_LARGE', async () => {

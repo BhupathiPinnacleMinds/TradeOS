@@ -11,6 +11,8 @@ import {
   uploadButtonLabel,
   validateMediaSelection,
 } from '../../../mobile/src/api/mediaSelection';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   closeEvidenceSourceMenu,
   initialMediaPickerControllerState,
@@ -24,6 +26,12 @@ import {
 } from '../../../mobile/src/api/mediaPickerController';
 
 describe('mobile media selection helpers', () => {
+  const repoRoot = resolve(__dirname, '..', '..', '..', '..');
+
+  function mobileSource(path: string) {
+    return readFileSync(join(repoRoot, 'apps', 'mobile', 'src', path), 'utf8');
+  }
+
   it('normalises mime types and file extensions before upload', () => {
     expect(normaliseMimeType('image/jpg', 'switchboard.JPG')).toBe(
       'image/jpeg',
@@ -107,6 +115,47 @@ describe('mobile media selection helpers', () => {
     expect(isPickerCancelled({ assets: null, canceled: true })).toBe(true);
     expect(isPickerCancelled({ assets: [], type: 'cancel' })).toBe(true);
     expect(isPickerCancelled({ assets: [{}], canceled: false })).toBe(false);
+  });
+
+  it('derives upload target size from the actual selected URI before picker metadata', () => {
+    const mediaEvidenceScreen = mobileSource('screens/MediaEvidenceScreen.tsx');
+
+    expect(mediaEvidenceScreen).toContain('async function fileSizeForUri');
+    expect(
+      mediaEvidenceScreen.indexOf('FileSystem.getInfoAsync(uri)'),
+    ).toBeLessThan(
+      mediaEvidenceScreen.indexOf('return fallback && fallback > 0'),
+    );
+    expect(mediaEvidenceScreen.indexOf('await fetch(uri)')).toBeLessThan(
+      mediaEvidenceScreen.indexOf('return fallback && fallback > 0'),
+    );
+    expect(mediaEvidenceScreen).toContain(
+      "developmentMediaLog('picker-file-size-corrected'",
+    );
+    expect(mediaEvidenceScreen).toContain('fileSizeBytes: file.fileSizeBytes');
+  });
+
+  it('keeps one category selector for a single file and per-file overrides for multiple files', () => {
+    const mediaEvidenceScreen = mobileSource('screens/MediaEvidenceScreen.tsx');
+
+    expect(mediaEvidenceScreen).toContain(
+      'activeFiles.length > 1\n                ?',
+    );
+    expect(mediaEvidenceScreen).toContain(
+      'activeFiles.length > 1 ? (\n                  <View style={styles.smallChips}>',
+    );
+    expect(mediaEvidenceScreen).toContain('updateSharedCategory(item)');
+    expect(mediaEvidenceScreen).toContain('updateFileCategory(file.id, item)');
+  });
+
+  it('guards rapid repeated upload taps with the existing upload-in-progress ref', () => {
+    const mediaEvidenceScreen = mobileSource('screens/MediaEvidenceScreen.tsx');
+
+    expect(mediaEvidenceScreen).toContain(
+      'if (!token || isUploadingRef.current) return;',
+    );
+    expect(mediaEvidenceScreen).toContain('isUploadingRef.current = true;');
+    expect(mediaEvidenceScreen).toContain('isUploadingRef.current = false;');
   });
 
   it('maps raw infrastructure upload errors to friendly messages', () => {

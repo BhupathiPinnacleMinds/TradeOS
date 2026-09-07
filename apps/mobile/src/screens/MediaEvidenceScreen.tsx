@@ -153,14 +153,24 @@ function statusBadgeStyle(status: EvidenceStatus) {
 }
 
 async function fileSizeForUri(uri: string, fallback?: number | null) {
-  if (fallback && fallback > 0) return fallback;
   try {
     const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists) return null;
-    return 'size' in info ? info.size : null;
+    if (info.exists && 'size' in info && info.size && info.size > 0) {
+      return info.size;
+    }
   } catch {
-    return null;
+    // Some Android picker URIs cannot be inspected through FileSystem.
   }
+
+  try {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    if (blob.size > 0) return blob.size;
+  } catch {
+    // Fall through to picker metadata when direct URI inspection is unavailable.
+  }
+
+  return fallback && fallback > 0 ? fallback : null;
 }
 
 function developmentMediaLog(event: string, details: Record<string, unknown>) {
@@ -385,6 +395,18 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
   }): Promise<EvidenceFile | null> {
     const fileName = input.fileName || uriFileName(input.uri);
     const fileSizeBytes = await fileSizeForUri(input.uri, input.fileSizeBytes);
+    if (
+      input.fileSizeBytes &&
+      fileSizeBytes &&
+      input.fileSizeBytes !== fileSizeBytes
+    ) {
+      developmentMediaLog('picker-file-size-corrected', {
+        actualByteSize: fileSizeBytes,
+        fileName,
+        pickerReportedByteSize: input.fileSizeBytes,
+        uriScheme: input.uri.split(':')[0],
+      });
+    }
     const validation = validateMediaSelection({
       fileName,
       fileSizeBytes,
@@ -1079,8 +1101,9 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
           <View style={styles.card}>
             <Text style={styles.label}>Category</Text>
             <Text style={styles.muted}>
-              Categories adapt to the first selected file type. You can adjust
-              each file below.
+              {activeFiles.length > 1
+                ? 'Categories adapt to the first selected file type. You can adjust each file below.'
+                : 'Categories adapt to the selected file type.'}
             </Text>
             <View style={styles.chips}>
               {visibleCategories.map((item) => (
@@ -1156,30 +1179,34 @@ export function MediaEvidenceScreen({ navigation, route }: Props) {
                 {file.error ? (
                   <Text style={styles.errorText}>{file.error}</Text>
                 ) : null}
-                <View style={styles.smallChips}>
-                  {categoriesForMediaType(file.mediaType).map((item) => (
-                    <Pressable
-                      key={item}
-                      disabled={isUploading}
-                      onPress={() => updateFileCategory(file.id, item)}
-                      style={[
-                        styles.smallChip,
-                        file.category === item ? styles.smallChipActive : null,
-                      ]}
-                    >
-                      <Text
+                {activeFiles.length > 1 ? (
+                  <View style={styles.smallChips}>
+                    {categoriesForMediaType(file.mediaType).map((item) => (
+                      <Pressable
+                        key={item}
+                        disabled={isUploading}
+                        onPress={() => updateFileCategory(file.id, item)}
                         style={[
-                          styles.smallChipText,
+                          styles.smallChip,
                           file.category === item
-                            ? styles.smallChipTextActive
+                            ? styles.smallChipActive
                             : null,
                         ]}
                       >
-                        {mediaCategoryLabel(item)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
+                        <Text
+                          style={[
+                            styles.smallChipText,
+                            file.category === item
+                              ? styles.smallChipTextActive
+                              : null,
+                          ]}
+                        >
+                          {mediaCategoryLabel(item)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
                 <View style={styles.fileActions}>
                   {file.status === 'failed' ? (
                     <Pressable
