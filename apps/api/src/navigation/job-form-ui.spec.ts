@@ -440,8 +440,12 @@ describe('Job form mobile UI contracts', () => {
   it('prevents stale follow-up appointments and includes technician in appointment review', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
+    expect(appointmentForm).toContain('function normalizeFutureStart');
     expect(appointmentForm).toContain(
-      'if (date.getTime() < Date.now() - 2 * 60 * 1000) return nextStart(timezone);',
+      'return normalizeFutureStart(new Date(selectedDate), timezone);',
+    );
+    expect(appointmentForm).toContain(
+      'normalizeFutureStart(\n              new Date(jobResponse.job.scheduledStart),\n              businessTimezone,',
     );
     expect(appointmentForm).toContain(
       "message: 'Appointment start time must be in the future.'",

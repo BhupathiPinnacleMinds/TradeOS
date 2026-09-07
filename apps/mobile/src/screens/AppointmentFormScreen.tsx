@@ -137,15 +137,21 @@ function nextStart(timezone = DEFAULT_BUSINESS_TIMEZONE) {
   );
 }
 
+function normalizeFutureStart(
+  date: Date,
+  timezone = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  if (Number.isNaN(date.getTime())) return nextStart(timezone);
+  if (date.getTime() < Date.now() - 2 * 60 * 1000) return nextStart(timezone);
+  return date;
+}
+
 function initialStart(
   selectedDate?: string,
   timezone = DEFAULT_BUSINESS_TIMEZONE,
 ) {
   if (!selectedDate) return nextStart(timezone);
-  const date = new Date(selectedDate);
-  if (Number.isNaN(date.getTime())) return nextStart(timezone);
-  if (date.getTime() < Date.now() - 2 * 60 * 1000) return nextStart(timezone);
-  return date;
+  return normalizeFutureStart(new Date(selectedDate), timezone);
 }
 
 function formatDate(value: Date, timezone: string = DEFAULT_BUSINESS_TIMEZONE) {
@@ -557,7 +563,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           setSelectedJobId(jobResponse.job.id);
           setUseQuickJob(false);
           setQuickJobTitle(jobResponse.job.title);
-          setStartAt(new Date(jobResponse.job.scheduledStart));
+          setStartAt(
+            normalizeFutureStart(
+              new Date(jobResponse.job.scheduledStart),
+              businessTimezone,
+            ),
+          );
           setDurationMinutes(jobResponse.job.estimatedDurationMinutes ?? 120);
           setAssignedUserId(jobResponse.job.assignedToUserId);
         } else if (customerId) {
@@ -597,7 +608,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     return () => {
       mounted = false;
     };
-  }, [customerId, jobId, preferredSiteId, showToast, token]);
+  }, [businessTimezone, customerId, jobId, preferredSiteId, showToast, token]);
 
   async function loadCustomer(
     authToken: string,
