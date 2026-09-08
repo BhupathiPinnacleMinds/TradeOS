@@ -80,6 +80,7 @@ const DISPATCHER_MANAGE_ROLES = [
   'OFFICE_MANAGER',
   'SCHEDULER',
 ] as const;
+const BUSINESS_MY_DAY_ROLES = APPOINTMENT_WRITE_ROLES;
 const DISPATCHER_TECHNICIAN_ROLES = APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES;
 const WORKDAY_MINUTES = 8 * 60;
 const TRAVEL_PLACEHOLDER_MINUTES = 10;
@@ -399,11 +400,16 @@ export class AppointmentsService {
       new Date(),
       business.timezone,
     );
+    const appointmentOwnerFilter = BUSINESS_MY_DAY_ROLES.includes(
+      currentUser.role,
+    )
+      ? {}
+      : { assignedUserId: currentUser.id };
 
     const [appointments, completedTodayAppointments] = await Promise.all([
       this.prisma.appointment.findMany({
         where: {
-          assignedUserId: currentUser.id,
+          ...appointmentOwnerFilter,
           businessId: currentUser.businessId,
           scheduledStart: { gte: start, lt: end },
         },
@@ -412,7 +418,7 @@ export class AppointmentsService {
       }),
       this.prisma.appointment.findMany({
         where: {
-          assignedUserId: currentUser.id,
+          ...appointmentOwnerFilter,
           businessId: currentUser.businessId,
           completedAt: { gte: start, lt: end },
           status: 'COMPLETED',
@@ -459,7 +465,7 @@ export class AppointmentsService {
     if (!nextAppointment) {
       const futureAppointment = await this.prisma.appointment.findFirst({
         where: {
-          assignedUserId: currentUser.id,
+          ...appointmentOwnerFilter,
           businessId: currentUser.businessId,
           scheduledStart: { gte: end },
           status: { in: [...REMAINING_MY_DAY_STATUSES] },
@@ -472,8 +478,9 @@ export class AppointmentsService {
         : null;
       nextAppointment =
         mappedFutureAppointment &&
-        mappedFutureAppointment.assignedUserId === currentUser.id &&
         mappedFutureAppointment.businessId === currentUser.businessId &&
+        (BUSINESS_MY_DAY_ROLES.includes(currentUser.role) ||
+          mappedFutureAppointment.assignedUserId === currentUser.id) &&
         REMAINING_MY_DAY_STATUSES.includes(
           mappedFutureAppointment.status as never,
         )

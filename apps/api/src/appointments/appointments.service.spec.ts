@@ -1374,6 +1374,135 @@ describe('AppointmentsService', () => {
     ]);
   });
 
+  it('keeps technician My Day completed appointments scoped to the assigned technician', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-08T02:00:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUserId: 'tech-1',
+        completedAt: new Date('2026-09-08T01:30:00.000Z'),
+        id: 'tech-completed-today',
+        scheduledStart: new Date('2026-09-07T23:00:00.000Z'),
+        status: 'COMPLETED',
+      }),
+    ]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    const result = await service.myDay(technician);
+
+    expect(result.completedToday.map((item) => item.id)).toEqual([
+      'tech-completed-today',
+    ]);
+    const findManyCalls = prisma.appointment.findMany.mock.calls as Array<
+      [
+        {
+          where: {
+            assignedUserId?: string;
+            completedAt?: { gte: Date; lt: Date };
+            scheduledStart?: { gte: Date; lt: Date };
+          };
+        },
+      ]
+    >;
+    expect(findManyCalls[0][0].where.assignedUserId).toBe('tech-1');
+    expect(findManyCalls[1][0].where.assignedUserId).toBe('tech-1');
+  });
+
+  it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(
+    'shows %s business appointments completed today without requiring self-assignment',
+    async (role) => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-08T02:00:00.000Z'));
+      const { prisma, service } = createService();
+      prisma.business.findUnique.mockResolvedValueOnce({
+        name: 'Demo Tradie Co',
+        timezone: 'Australia/Melbourne',
+      });
+      prisma.appointment.findMany.mockResolvedValueOnce([]);
+      prisma.appointment.findMany.mockResolvedValueOnce([
+        appointment({
+          assignedUserId: 'tech-2',
+          completedAt: new Date('2026-09-08T01:30:00.000Z'),
+          id: `${role.toLowerCase()}-business-completed-today`,
+          scheduledEnd: new Date('2026-09-07T01:00:00.000Z'),
+          scheduledStart: new Date('2026-09-06T23:00:00.000Z'),
+          status: 'COMPLETED',
+        }),
+      ]);
+      prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+      const result = await service.myDay(userForRole(role));
+
+      expect(result.completedToday.map((item) => item.id)).toEqual([
+        `${role.toLowerCase()}-business-completed-today`,
+      ]);
+      const findManyCalls = prisma.appointment.findMany.mock.calls as Array<
+        [
+          {
+            where: {
+              assignedUserId?: string;
+              businessId: string;
+              completedAt?: { gte: Date; lt: Date };
+              scheduledStart?: { gte: Date; lt: Date };
+            };
+          },
+        ]
+      >;
+      expect(findManyCalls[0][0].where).not.toHaveProperty('assignedUserId');
+      expect(findManyCalls[1][0].where).not.toHaveProperty('assignedUserId');
+      expect(findManyCalls[1][0].where.completedAt).toBeDefined();
+    },
+  );
+
+  it('keeps scheduled-today appointments out of Completed Today until the business day they are actually completed', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-08T02:00:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    const todayResult = await service.myDay(owner);
+
+    expect(todayResult.completedToday).toEqual([]);
+    const todayFindManyCalls = prisma.appointment.findMany.mock.calls as Array<
+      [{ where: { completedAt?: { gte: Date; lt: Date } } }]
+    >;
+    expect(todayFindManyCalls[1][0].where.completedAt).toBeDefined();
+
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-09T02:00:00.000Z'));
+    const tomorrowCompletedAppointment = appointment({
+      assignedUserId: 'tech-2',
+      completedAt: new Date('2026-09-09T01:15:00.000Z'),
+      id: 'completed-tomorrow',
+      scheduledEnd: new Date('2026-09-08T01:00:00.000Z'),
+      scheduledStart: new Date('2026-09-07T23:00:00.000Z'),
+      status: 'COMPLETED',
+    });
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      tomorrowCompletedAppointment,
+    ]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(null);
+
+    const tomorrowResult = await service.myDay(owner);
+
+    expect(tomorrowResult.completedToday.map((item) => item.id)).toEqual([
+      'completed-tomorrow',
+    ]);
+  });
+
   it('does not count appointments completed outside the business day', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-01T02:00:00.000Z'));
     const { prisma, service } = createService();

@@ -81,8 +81,18 @@ describe('staging mobile regression UI contracts', () => {
 
   it('shows date plus scheduled time only for My Day completed-today cards', () => {
     const myDayScreen = mobileSource('screens/MyDayScreen.tsx');
+    const laterTodayIndex = myDayScreen.indexOf(
+      '<Section title="Later today">',
+    );
+    const completedTodayIndex = myDayScreen.indexOf(
+      '<Section title="Completed today">',
+    );
+    const showScheduledDateIndex = myDayScreen.indexOf('showScheduledDate');
 
     expect(myDayScreen).toContain('showScheduledDate');
+    expect(laterTodayIndex).toBeGreaterThan(-1);
+    expect(completedTodayIndex).toBeGreaterThan(laterTodayIndex);
+    expect(showScheduledDateIndex).toBeGreaterThan(completedTodayIndex);
     expect(myDayScreen).toContain(
       '`${formatBusinessDate(\n                appointment.scheduledStart,\n                timezone,\n              )} · ${formatBusinessTime(appointment.scheduledStart, timezone)}`',
     );

@@ -217,7 +217,6 @@ export function MyDayScreen({ navigation }: Props) {
                       void runTransition(appointment, action)
                     }
                     role={user?.role}
-                    showScheduledDate
                     timezone={timezone}
                     userId={user?.id}
                   />
@@ -260,6 +259,7 @@ export function MyDayScreen({ navigation }: Props) {
                       void runTransition(appointment, action)
                     }
                     role={user?.role}
+                    showScheduledDate
                     timezone={timezone}
                     userId={user?.id}
                   />
