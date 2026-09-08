@@ -12,7 +12,6 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Modal,
   PanResponder,
   Pressable,
@@ -27,7 +26,10 @@ import {
   mediaDownloadRequest,
   mediaPreviewRequest,
 } from '../api/client';
-import { downloadAuthenticatedMediaFile } from '../api/mediaFiles';
+import {
+  downloadAuthenticatedMediaFile,
+  openDownloadedMediaFile,
+} from '../api/mediaFiles';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
@@ -221,7 +223,7 @@ export function MediaViewerScreen({ navigation, route }: Props) {
         media,
         'attachment',
       );
-      await Linking.openURL(localUri);
+      await openDownloadedMediaFile(localUri, media);
     } catch (error) {
       const message = "We couldn't open this file. Please try again.";
       setOpenError(message);

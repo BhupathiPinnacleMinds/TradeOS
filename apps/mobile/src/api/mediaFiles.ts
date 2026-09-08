@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { Linking, Platform } from 'react-native';
 import type { MediaAsset } from '@tradieos/shared';
 import {
   ApiRequestError,
@@ -11,6 +12,8 @@ import {
 declare const __DEV__: boolean;
 
 const MEDIA_CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}tradieos-media/`;
+const ANDROID_GRANT_READ_URI_PERMISSION = 1;
+const ANDROID_VIEW_ACTION = 'android.intent.action.VIEW';
 
 function safeFileName(fileName: string) {
   const cleaned = fileName
@@ -24,6 +27,56 @@ export function mediaCacheFileName(
   media: Pick<MediaAsset, 'id' | 'originalFileName'>,
 ) {
   return `${media.id}-${safeFileName(media.originalFileName)}`.slice(0, 180);
+}
+
+export function mediaOpenMimeType(
+  media: Pick<MediaAsset, 'mediaType' | 'mimeType'>,
+) {
+  const mimeType = media.mimeType.trim().toLowerCase();
+  if (mimeType) return mimeType;
+
+  if (media.mediaType === 'IMAGE') return 'image/*';
+  if (media.mediaType === 'PDF') return 'application/pdf';
+
+  return 'application/octet-stream';
+}
+
+export async function openDownloadedMediaFile(
+  localUri: string,
+  media: Pick<MediaAsset, 'id' | 'mediaType' | 'mimeType'>,
+) {
+  const fileInfo = await FileSystem.getInfoAsync(localUri).catch(
+    (error: unknown) => {
+      if (__DEV__) {
+        console.warn('[TradieOS media open file check failed]', {
+          code: 'MEDIA_LOCAL_FILE_CHECK_FAILED',
+          mediaId: media.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return null;
+    },
+  );
+
+  if (!fileInfo?.exists) {
+    throw new ApiRequestError(
+      "We couldn't open this file.",
+      null,
+      'MEDIA_DOWNLOAD_FAILED',
+    );
+  }
+
+  if (Platform.OS === 'android') {
+    const contentUri = await FileSystem.getContentUriAsync(localUri);
+    await IntentLauncher.startActivityAsync(ANDROID_VIEW_ACTION, {
+      data: contentUri,
+      flags: ANDROID_GRANT_READ_URI_PERMISSION,
+      type: mediaOpenMimeType(media),
+    });
+    return;
+  }
+
+  await Linking.openURL(localUri);
 }
 
 export async function downloadAuthenticatedMediaFile(
