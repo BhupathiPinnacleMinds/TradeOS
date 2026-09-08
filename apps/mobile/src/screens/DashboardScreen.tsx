@@ -2,6 +2,7 @@ import type { DashboardSummaryResponse } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
   formatBusinessDateTime,
+  getBusinessGreeting,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -45,9 +46,15 @@ export function DashboardScreen() {
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [greetingNow, setGreetingNow] = useState(() => new Date());
   const businessTimezone = normaliseBusinessTimezone(
     summary?.business.timezone ?? user?.business.timezone,
   );
+  const greeting = getBusinessGreeting({
+    firstName: user?.firstName,
+    now: greetingNow,
+    timezone: businessTimezone,
+  });
 
   const loadSummary = useCallback(
     async (shouldApply: () => boolean = () => true) => {
@@ -88,6 +95,7 @@ export function DashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
+      setGreetingNow(new Date());
       void loadSummary(() => isActive);
 
       return () => {
@@ -105,9 +113,7 @@ export function DashboardScreen() {
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.headerRow}>
           <View style={styles.headerCopy}>
-            <Text style={styles.greeting}>
-              Good morning{user?.firstName ? `, ${user.firstName}` : ''}
-            </Text>
+            <Text style={styles.greeting}>{greeting}</Text>
             <Text style={styles.title}>
               {summary?.business.name ?? 'Dashboard'}
             </Text>

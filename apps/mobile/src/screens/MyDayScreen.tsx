@@ -217,6 +217,7 @@ export function MyDayScreen({ navigation }: Props) {
                       void runTransition(appointment, action)
                     }
                     role={user?.role}
+                    showScheduledDate
                     timezone={timezone}
                     userId={user?.id}
                   />
@@ -330,6 +331,7 @@ function AppointmentCard({
   onOpen,
   onTransition,
   role,
+  showScheduledDate = false,
   timezone,
   userId,
 }: {
@@ -341,6 +343,7 @@ function AppointmentCard({
   onOpen(): void;
   onTransition(action: AppointmentTransitionAction): void;
   role?: Parameters<typeof getAllowedAppointmentTransitions>[0]['userRole'];
+  showScheduledDate?: boolean;
   timezone: string;
   userId?: string;
 }) {
@@ -379,7 +382,12 @@ function AppointmentCard({
     <Pressable style={styles.card} onPress={onOpen}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTime}>
-          {formatBusinessTime(appointment.scheduledStart, timezone)}
+          {showScheduledDate
+            ? `${formatBusinessDate(
+                appointment.scheduledStart,
+                timezone,
+              )} · ${formatBusinessTime(appointment.scheduledStart, timezone)}`
+            : formatBusinessTime(appointment.scheduledStart, timezone)}
         </Text>
         <View
           style={[styles.statusPill, { backgroundColor: colour.background }]}

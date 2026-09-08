@@ -177,11 +177,13 @@ export function NotificationsScreen() {
 
     setActiveId(notification.id);
     try {
+      let nextNotification = notification;
       if (notification.status === 'UNREAD') {
         const response = await markNotificationReadRequest(
           token,
           notification.id,
         );
+        nextNotification = response.notification;
         setUnreadCount(response.unreadCount);
         setNotifications((current) =>
           current.map((item) =>
@@ -189,7 +191,7 @@ export function NotificationsScreen() {
           ),
         );
       }
-      navigateForNotification(notification);
+      navigateForNotification(nextNotification);
     } catch (markError) {
       showToast({
         message:
@@ -204,9 +206,10 @@ export function NotificationsScreen() {
   }
 
   function navigateForNotification(notification: InAppNotification) {
-    if (notification.entityType === 'appointment' && notification.entityId) {
+    const appointmentId = appointmentIdForNotification(notification);
+    if (appointmentId) {
       navigation.navigate('AppointmentDetails', {
-        appointmentId: notification.entityId,
+        appointmentId,
       });
       return;
     }
@@ -232,6 +235,23 @@ export function NotificationsScreen() {
       message: 'This update has been marked as read.',
       tone: 'info',
     });
+  }
+
+  function appointmentIdForNotification(notification: InAppNotification) {
+    if (notification.entityType === 'appointment' && notification.entityId) {
+      return notification.entityId;
+    }
+
+    const metadataAppointmentId = notification.metadata?.appointmentId;
+    if (
+      notification.type.startsWith('APPOINTMENT_') &&
+      typeof metadataAppointmentId === 'string' &&
+      metadataAppointmentId.trim()
+    ) {
+      return metadataAppointmentId;
+    }
+
+    return null;
   }
 
   const emptyTitle =
