@@ -19,6 +19,8 @@ import {
   normaliseBusinessTimezone,
   roleCanCreateInvoices,
   roleCanCreateQuotes,
+  staleActiveAppointmentWarning,
+  unusualExecutionDurationWarning,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
@@ -163,14 +165,14 @@ function hasFollowUpRequired(appointments: Appointment[]) {
   );
 }
 
-function latestFollowUpLog(appointments: Appointment[]) {
+function latestFollowUpAppointment(appointments: Appointment[]) {
   return [...appointments]
     .filter((appointment) => appointment.workLog?.followUpRequired)
     .sort(
       (left, right) =>
         new Date(right.workLog?.updatedAt ?? right.updatedAt).getTime() -
         new Date(left.workLog?.updatedAt ?? left.updatedAt).getTime(),
-    )[0]?.workLog;
+    )[0];
 }
 
 function completionEvidenceCount(
@@ -244,7 +246,12 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const availableJobStatusActions = job ? jobStatusActions(job) : [];
   const latestCompletedAppointment = completedAppointments(appointments)[0];
-  const latestFollowUpWorkLog = latestFollowUpLog(appointments);
+  const latestCompletionDurationWarning = latestCompletedAppointment
+    ? unusualExecutionDurationWarning(latestCompletedAppointment)
+    : null;
+  const latestFollowUpWorkLogAppointment =
+    latestFollowUpAppointment(appointments);
+  const latestFollowUpWorkLog = latestFollowUpWorkLogAppointment?.workLog;
   const jobHasFollowUpRequired = hasFollowUpRequired(appointments);
   const jobCompletionEvidenceCount = completionEvidenceCount(
     media,
@@ -530,6 +537,13 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             {latestFollowUpWorkLog?.followUpNotes ??
               'A technician marked this job for follow-up.'}
           </Text>
+          {latestFollowUpWorkLogAppointment ? (
+            <Text style={styles.statusContext}>
+              Unresolved follow-up from{' '}
+              {latestFollowUpWorkLogAppointment.appointmentNumber}. Schedule a
+              return visit or update the job when it has been handled.
+            </Text>
+          ) : null}
           {canScheduleAppointment ? (
             <ActionButton
               label="Schedule follow-up"
@@ -546,7 +560,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       {job.status !== 'COMPLETED' && latestCompletedAppointment ? (
         <Text style={styles.statusContext}>
           Latest appointment is completed, but this job remains open
-          {jobHasFollowUpRequired ? ' because follow-up is required.' : '.'}
+          {jobHasFollowUpRequired
+            ? ' because an earlier follow-up is still unresolved.'
+            : '.'}
         </Text>
       ) : null}
       {job.isArchived ? (
@@ -679,8 +695,21 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               'No field notes recorded.'}
           </Text>
           <Text style={styles.meta}>
-            Follow-up: {followUpDisplay(latestCompletedAppointment.workLog)}
+            Latest completion follow-up:{' '}
+            {followUpDisplay(latestCompletedAppointment.workLog)}
           </Text>
+          {jobHasFollowUpRequired &&
+          !latestCompletedAppointment.workLog?.followUpRequired ? (
+            <Text style={styles.warningText}>
+              Overall job follow-up is still required from an earlier
+              appointment.
+            </Text>
+          ) : null}
+          {latestCompletionDurationWarning ? (
+            <Text style={styles.warningText}>
+              {latestCompletionDurationWarning.message}
+            </Text>
+          ) : null}
           <Text style={styles.meta}>
             Signature:{' '}
             {latestCompletedAppointment.signature?.capturedAt
@@ -789,6 +818,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           <Text style={styles.meta}>No appointments booked yet.</Text>
         ) : null}
         {appointments.map((appointment) => {
+          const staleWarning = staleActiveAppointmentWarning(appointment);
+          const durationWarning = unusualExecutionDurationWarning(appointment);
           const appointmentActions = getAppointmentQuickActions({
             hasAddress: Boolean(appointment.addressLine1),
             hasPhone: Boolean(appointment.job.customer.phone),
@@ -847,6 +878,14 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               <Text style={styles.meta}>
                 Notes: {appointment.notes ?? 'No appointment notes.'}
               </Text>
+              {staleWarning ? (
+                <Text style={styles.warningText}>{staleWarning.message}</Text>
+              ) : null}
+              {durationWarning ? (
+                <Text style={styles.warningText}>
+                  {durationWarning.message}
+                </Text>
+              ) : null}
               {canUpdateStatus ? (
                 <View style={styles.actions}>
                   {canEdit &&
@@ -1336,6 +1375,17 @@ const styles = StyleSheet.create({
     color: colours.muted,
     lineHeight: 21,
     marginTop: 8,
+  },
+  warningText: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74',
+    borderRadius: 12,
+    borderWidth: 1,
+    color: '#9A3412',
+    fontWeight: '800',
+    lineHeight: 20,
+    marginTop: 10,
+    padding: 10,
   },
   title: { color: colours.ink, fontSize: 32, fontWeight: '900', marginTop: 4 },
 });

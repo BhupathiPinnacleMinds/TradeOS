@@ -397,9 +397,42 @@ describe('Job form mobile UI contracts', () => {
 
     expect(jobDetails).toContain('jobHasFollowUpRequired');
     expect(jobDetails).toContain('Follow-up required');
+    expect(jobDetails).toContain('Unresolved follow-up from');
+    expect(jobDetails).toContain('Latest completion follow-up:');
     expect(jobDetails).toContain(
       'Latest appointment is completed, but this job remains open',
     );
+    expect(jobDetails).toContain(
+      'Overall job follow-up is still required from an earlier',
+    );
+  });
+
+  it('surfaces stale active appointments and unusual durations without truncating timers', () => {
+    const dashboard = mobileSource('screens/DashboardScreen.tsx');
+    const appointmentDetails = mobileSource(
+      'screens/AppointmentDetailsScreen.tsx',
+    );
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+    const dashboardService = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'dashboard', 'dashboard.service.ts'),
+      'utf8',
+    );
+    const sharedAppointments = readFileSync(
+      join(repoRoot, 'packages', 'shared', 'src', 'appointments.ts'),
+      'utf8',
+    );
+
+    expect(sharedAppointments).toContain(
+      'STALE_ACTIVE_APPOINTMENT_THRESHOLD_MINUTES',
+    );
+    expect(sharedAppointments).toContain('staleActiveAppointmentWarning');
+    expect(sharedAppointments).toContain('unusualExecutionDurationWarning');
+    expect(dashboardService).toContain('staleActiveAppointments');
+    expect(dashboard).toContain('Stale active appointments');
+    expect(appointmentDetails).toContain('staleActiveAppointmentWarning');
+    expect(appointmentDetails).toContain('unusualDurationWarning.message');
+    expect(jobDetails).toContain('staleActiveAppointmentWarning');
+    expect(jobDetails).toContain('unusualExecutionDurationWarning');
   });
 
   it('shows only valid Job Details contact and navigation actions', () => {

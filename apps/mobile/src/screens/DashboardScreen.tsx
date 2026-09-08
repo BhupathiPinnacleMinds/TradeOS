@@ -207,7 +207,7 @@ export function DashboardScreen() {
               activeExecution
                 ? `${activeExecution.customerName} · ${
                     activeExecution.technicianName ?? 'Unassigned'
-                  }`
+                  }${activeExecution.warning ? ' · Needs review' : ''}`
                 : 'No technician is actively travelling or working right now'
             }
             onPress={
@@ -218,7 +218,12 @@ export function DashboardScreen() {
                     })
                 : undefined
             }
-            value={activeExecution?.currentAction ?? 'None'}
+            tone={activeExecution?.warning ? 'warning' : undefined}
+            value={
+              activeExecution?.warning
+                ? 'Review'
+                : (activeExecution?.currentAction ?? 'None')
+            }
           />
 
           {previewAppointments.length ? (
@@ -274,6 +279,11 @@ export function DashboardScreen() {
             label="Late appointments"
             tone="warning"
             value={summary?.counts.lateAppointments ?? '-'}
+          />
+          <DashboardRow
+            label="Stale active appointments"
+            tone="warning"
+            value={summary?.counts.staleActiveAppointments ?? '-'}
           />
           <DashboardRow
             label="Unassigned appointments"

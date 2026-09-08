@@ -36,6 +36,16 @@ export type AppointmentLocationSource =
 export type CalendarViewMode = 'day' | 'week' | 'month' | 'agenda';
 export type CalendarTopTab = 'calendar' | 'dispatcher' | 'today';
 
+export const ACTIVE_APPOINTMENT_EXECUTION_STATUSES = [
+  'ON_THE_WAY',
+  'ARRIVED',
+  'IN_PROGRESS',
+  'PAUSED',
+] as const satisfies AppointmentStatus[];
+
+export const STALE_ACTIVE_APPOINTMENT_THRESHOLD_MINUTES = 12 * 60;
+export const UNUSUAL_EXECUTION_DURATION_THRESHOLD_MINUTES = 12 * 60;
+
 export type AppointmentSortBy =
   'scheduledStart' | 'createdAt' | 'updatedAt' | 'appointmentNumber' | 'status';
 
@@ -166,6 +176,145 @@ export function normaliseAppointmentExecutionDurations(
     workMinutes:
       executionDurations?.workMinutes ??
       DEFAULT_APPOINTMENT_EXECUTION_DURATIONS.workMinutes,
+  };
+}
+
+export interface AppointmentOperationalWarning {
+  code: 'STALE_ACTIVE_EXECUTION' | 'UNUSUAL_EXECUTION_DURATION';
+  elapsedMinutes: number;
+  message: string;
+  thresholdMinutes: number;
+}
+
+type AppointmentOperationalTimingInput = {
+  actualStart?: Date | string | null;
+  arrivedAt?: Date | string | null;
+  completedAt?: Date | string | null;
+  currentWorkStartedAt?: Date | string | null;
+  pausedAt?: Date | string | null;
+  scheduledStart?: Date | string | null;
+  status: AppointmentStatus | string;
+  totalPausedMinutes?: number | null;
+  totalTravelMinutes?: number | null;
+  totalWorkMinutes?: number | null;
+  travelStartedAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+  workStartedAt?: Date | string | null;
+};
+
+type AppointmentExecutionDurationInput = {
+  executionDurations?: Partial<AppointmentExecutionDurations> | null;
+};
+
+function hasExecutionDurationInput(
+  appointment:
+    AppointmentOperationalTimingInput | AppointmentExecutionDurationInput,
+): appointment is AppointmentExecutionDurationInput {
+  return Object.prototype.hasOwnProperty.call(
+    appointment,
+    'executionDurations',
+  );
+}
+
+function parseOperationalDate(value?: Date | string | null) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function operationalMinutesBetween(start: Date, end: Date) {
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+}
+
+export function isActiveAppointmentExecutionStatus(
+  status: AppointmentStatus | string,
+) {
+  return ACTIVE_APPOINTMENT_EXECUTION_STATUSES.includes(
+    status as (typeof ACTIVE_APPOINTMENT_EXECUTION_STATUSES)[number],
+  );
+}
+
+export function activeAppointmentExecutionStartedAt(
+  appointment: AppointmentOperationalTimingInput,
+) {
+  if (!isActiveAppointmentExecutionStatus(appointment.status)) return null;
+  if (appointment.status === 'IN_PROGRESS') {
+    return (
+      parseOperationalDate(appointment.currentWorkStartedAt) ??
+      parseOperationalDate(appointment.workStartedAt) ??
+      parseOperationalDate(appointment.actualStart)
+    );
+  }
+  if (appointment.status === 'PAUSED') {
+    return (
+      parseOperationalDate(appointment.pausedAt) ??
+      parseOperationalDate(appointment.currentWorkStartedAt) ??
+      parseOperationalDate(appointment.workStartedAt) ??
+      parseOperationalDate(appointment.actualStart)
+    );
+  }
+  if (appointment.status === 'ARRIVED') {
+    return (
+      parseOperationalDate(appointment.arrivedAt) ??
+      parseOperationalDate(appointment.travelStartedAt) ??
+      parseOperationalDate(appointment.scheduledStart)
+    );
+  }
+  return (
+    parseOperationalDate(appointment.travelStartedAt) ??
+    parseOperationalDate(appointment.scheduledStart) ??
+    parseOperationalDate(appointment.updatedAt)
+  );
+}
+
+export function staleActiveAppointmentWarning(
+  appointment: AppointmentOperationalTimingInput,
+  now: Date = new Date(),
+  thresholdMinutes = STALE_ACTIVE_APPOINTMENT_THRESHOLD_MINUTES,
+): AppointmentOperationalWarning | null {
+  const startedAt = activeAppointmentExecutionStartedAt(appointment);
+  if (!startedAt) return null;
+  const elapsedMinutes = operationalMinutesBetween(startedAt, now);
+  if (elapsedMinutes < thresholdMinutes) return null;
+
+  return {
+    code: 'STALE_ACTIVE_EXECUTION',
+    elapsedMinutes,
+    message:
+      'This appointment has been left in an active field-work state longer than expected. Review before continuing.',
+    thresholdMinutes,
+  };
+}
+
+export function unusualExecutionDurationWarning(
+  appointment:
+    AppointmentOperationalTimingInput | AppointmentExecutionDurationInput,
+  thresholdMinutes = UNUSUAL_EXECUTION_DURATION_THRESHOLD_MINUTES,
+): AppointmentOperationalWarning | null {
+  const durations = hasExecutionDurationInput(appointment)
+    ? normaliseAppointmentExecutionDurations(appointment.executionDurations)
+    : (() => {
+        const timing = appointment;
+        return {
+          calculatedAt: '',
+          pausedMinutes: timing.totalPausedMinutes ?? 0,
+          totalElapsedMinutes: 0,
+          travelMinutes: timing.totalTravelMinutes ?? 0,
+          workMinutes: timing.totalWorkMinutes ?? 0,
+        };
+      })();
+  const elapsedMinutes = Math.max(
+    durations.totalElapsedMinutes,
+    durations.travelMinutes + durations.workMinutes + durations.pausedMinutes,
+  );
+  if (elapsedMinutes < thresholdMinutes) return null;
+
+  return {
+    code: 'UNUSUAL_EXECUTION_DURATION',
+    elapsedMinutes,
+    message:
+      'Recorded field-work duration is unusually long. The true timestamped duration is preserved for review.',
+    thresholdMinutes,
   };
 }
 

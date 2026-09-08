@@ -15,6 +15,8 @@ type CountCall = {
 };
 
 type DashboardFixture = {
+  activeExecutionAppointment?: Record<string, unknown> | null;
+  activeExecutionAppointments?: Array<Record<string, unknown>>;
   draftInvoices?: number;
   overdueInvoices?: number;
   paidTodayCents?: number | null;
@@ -94,8 +96,17 @@ function createPrisma(fixture: DashboardFixture = {}) {
   prisma.notification.count.mockResolvedValue(4);
   prisma.aiMessage.count.mockResolvedValue(3);
   prisma.job.findMany.mockResolvedValue([]);
-  prisma.appointment.findMany.mockResolvedValue([]);
-  prisma.appointment.findFirst.mockResolvedValue(null);
+  prisma.appointment.findMany.mockImplementation(
+    (input: { select?: Record<string, unknown>; take?: number } = {}) => {
+      if (input.take === 50 && input.select?.totalWorkMinutes !== undefined) {
+        return Promise.resolve(fixture.activeExecutionAppointments ?? []);
+      }
+      return Promise.resolve([]);
+    },
+  );
+  prisma.appointment.findFirst.mockResolvedValue(
+    fixture.activeExecutionAppointment ?? null,
+  );
   prisma.notification.findMany.mockResolvedValue([]);
 
   return prisma;
@@ -112,6 +123,10 @@ async function getSummary(prisma: ReturnType<typeof createPrisma>) {
 }
 
 describe('DashboardService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('returns job dashboard counts from tenant-scoped queries', async () => {
     const prisma = createPrisma();
     const result = await getSummary(prisma);
@@ -202,6 +217,50 @@ describe('DashboardService', () => {
     expect(result.counts.paidInvoicesToday).toBe(1);
     expect(result.money.paidTodayCents).toBe(20000);
     expect(result.money.outstandingInvoicesCents).toBe(80000);
+  });
+
+  it('surfaces stale active appointment counts without changing appointment state', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-09-08T02:00:00.000Z'));
+    const staleAppointment = {
+      actualStart: null,
+      arrivedAt: null,
+      currentWorkStartedAt: null,
+      id: 'appointment-stale-1',
+      pausedAt: null,
+      scheduledStart: new Date('2026-09-04T00:00:00.000Z'),
+      status: 'ON_THE_WAY',
+      totalPausedMinutes: 0,
+      totalTravelMinutes: 0,
+      totalWorkMinutes: 0,
+      travelStartedAt: new Date('2026-09-04T00:05:00.000Z'),
+      updatedAt: new Date('2026-09-04T00:05:00.000Z'),
+      workStartedAt: null,
+    };
+    const prisma = createPrisma({
+      activeExecutionAppointment: {
+        ...staleAppointment,
+        assignedUser: {
+          firstName: 'Ram',
+          lastName: 'G',
+        },
+        job: {
+          customer: {
+            companyName: null,
+            displayName: 'Sam Donald',
+          },
+          title: 'Plumbing job test',
+        },
+      },
+      activeExecutionAppointments: [staleAppointment],
+    });
+
+    const result = await getSummary(prisma);
+
+    expect(result.counts.staleActiveAppointments).toBe(1);
+    expect(result.activeExecutionAppointment?.warning).toContain(
+      'active field-work state longer than expected',
+    );
   });
 
   it('scopes dashboard notification summaries to the current user', async () => {

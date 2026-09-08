@@ -41,6 +41,8 @@ import {
   normaliseBusinessTimezone,
   roleCanCreateQuotes,
   shouldExecuteAppointmentMoreActionsMenuItem,
+  staleActiveAppointmentWarning,
+  unusualExecutionDurationWarning,
   validateAppointmentCompletion,
   validateAppointmentFieldWork,
 } from '@tradieos/shared';
@@ -1087,6 +1089,13 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     appointment,
     timerNow,
   );
+  const staleActiveWarning = staleActiveAppointmentWarning(
+    appointment,
+    timerNow,
+  );
+  const unusualDurationWarning = unusualExecutionDurationWarning({
+    executionDurations,
+  });
   const workLogEditable = canEditCurrentWorkLog;
   return (
     <ScrollView contentContainerStyle={styles.container} ref={pageScrollRef}>
@@ -1172,6 +1181,14 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           Timers use server-recorded transition timestamps and update locally
           while this screen is open.
         </Text>
+        {staleActiveWarning ? (
+          <Text style={styles.warningText}>{staleActiveWarning.message}</Text>
+        ) : null}
+        {unusualDurationWarning ? (
+          <Text style={styles.warningText}>
+            {unusualDurationWarning.message}
+          </Text>
+        ) : null}
       </Card>
 
       <Card title="Address">
@@ -1857,6 +1874,9 @@ function CompletionModal({
   const executionDurations = normaliseAppointmentExecutionDurations(
     appointment.executionDurations,
   );
+  const unusualDurationWarning = unusualExecutionDurationWarning({
+    executionDurations,
+  });
   const clearSignature = useCallback(() => {
     setSignatureActive(false);
     setSignatureData(clearAppointmentSignatureData);
@@ -2256,6 +2276,11 @@ function CompletionModal({
                   Work: {formatDuration(executionDurations.workMinutes)} ·
                   Paused: {formatDuration(executionDurations.pausedMinutes)}
                 </Text>
+                {unusualDurationWarning ? (
+                  <Text style={styles.warningText}>
+                    {unusualDurationWarning.message}
+                  </Text>
+                ) : null}
               </Card>
             </ScrollView>
 
@@ -2894,6 +2919,17 @@ const styles = StyleSheet.create({
   },
   loaderText: { color: colours.ink, fontWeight: '900', textAlign: 'center' },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
+  warningText: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74',
+    borderRadius: 12,
+    borderWidth: 1,
+    color: '#9A3412',
+    fontWeight: '800',
+    lineHeight: 20,
+    marginTop: 10,
+    padding: 10,
+  },
   mediaDetails: { flex: 1, gap: 3, minWidth: 0 },
   mediaGrid: { gap: 10, marginTop: 12 },
   mediaMeta: { color: colours.muted, fontSize: 12, fontWeight: '700' },

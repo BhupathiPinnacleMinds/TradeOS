@@ -42,6 +42,7 @@ export interface DashboardSummaryResponse {
     paidInvoicesToday: number;
     unreadNotifications: number;
     aiMessages: number;
+    staleActiveAppointments: number;
   };
   money: {
     outstandingInvoicesCents: number;
@@ -79,6 +80,7 @@ export interface DashboardSummaryResponse {
     customerName: string;
     status: string;
     currentAction: string;
+    warning: string | null;
     technicianName: string | null;
   } | null;
   notifications: Array<{

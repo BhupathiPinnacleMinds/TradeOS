@@ -3,7 +3,11 @@ import type {
   AuthenticatedUser,
   DashboardSummaryResponse,
 } from '@tradieos/shared';
-import { getBusinessDayRangeUtc } from '@tradieos/shared';
+import {
+  ACTIVE_APPOINTMENT_EXECUTION_STATUSES,
+  getBusinessDayRangeUtc,
+  staleActiveAppointmentWarning,
+} from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const OPEN_JOB_STATUSES = [
@@ -40,6 +44,7 @@ export class DashboardService {
 
     const { end: startOfTomorrow, start: startOfToday } =
       getBusinessDayRangeUtc(new Date(), business.timezone);
+    const now = new Date();
     const quoteExpiringSoonEnd = new Date(startOfToday);
     quoteExpiringSoonEnd.setUTCDate(quoteExpiringSoonEnd.getUTCDate() + 7);
 
@@ -77,6 +82,7 @@ export class DashboardService {
       todayAppointments,
       nextAppointment,
       activeExecutionAppointment,
+      activeExecutionAppointments,
       notifications,
     ] = await this.prisma.$transaction([
       this.prisma.customer.count({ where: { businessId, isArchived: false } }),
@@ -333,13 +339,16 @@ export class DashboardService {
       this.prisma.appointment.findFirst({
         where: {
           businessId,
-          status: { in: ['ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS', 'PAUSED'] },
+          status: { in: [...ACTIVE_APPOINTMENT_EXECUTION_STATUSES] },
         },
         orderBy: { updatedAt: 'desc' },
         select: {
+          actualStart: true,
           assignedUser: {
             select: { firstName: true, lastName: true },
           },
+          arrivedAt: true,
+          currentWorkStartedAt: true,
           id: true,
           job: {
             select: {
@@ -349,8 +358,39 @@ export class DashboardService {
               title: true,
             },
           },
+          pausedAt: true,
+          scheduledStart: true,
           status: true,
+          totalPausedMinutes: true,
+          totalTravelMinutes: true,
+          totalWorkMinutes: true,
+          travelStartedAt: true,
+          updatedAt: true,
+          workStartedAt: true,
         },
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          businessId,
+          status: { in: [...ACTIVE_APPOINTMENT_EXECUTION_STATUSES] },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          actualStart: true,
+          arrivedAt: true,
+          currentWorkStartedAt: true,
+          id: true,
+          pausedAt: true,
+          scheduledStart: true,
+          status: true,
+          totalPausedMinutes: true,
+          totalTravelMinutes: true,
+          totalWorkMinutes: true,
+          travelStartedAt: true,
+          updatedAt: true,
+          workStartedAt: true,
+        },
+        take: 50,
       }),
       this.prisma.notification.findMany({
         where: {
@@ -378,7 +418,12 @@ export class DashboardService {
       0,
     );
     const paidTodayCents = paidInvoicePaymentTotalsToday._sum.amountCents ?? 0;
-    const now = new Date();
+    const activeExecutionWarning = activeExecutionAppointment
+      ? staleActiveAppointmentWarning(activeExecutionAppointment, now)
+      : null;
+    const staleActiveAppointments = activeExecutionAppointments.filter(
+      (appointment) => staleActiveAppointmentWarning(appointment, now),
+    ).length;
     const workingUserIds = new Set(
       dispatcherAppointments
         .filter(
@@ -421,6 +466,7 @@ export class DashboardService {
         draftInvoices,
         overdueInvoices,
         paidInvoicesToday: paidInvoicePaymentsToday,
+        staleActiveAppointments,
         unreadNotifications,
         aiMessages,
       },
@@ -486,6 +532,7 @@ export class DashboardService {
             technicianName: activeExecutionAppointment.assignedUser
               ? `${activeExecutionAppointment.assignedUser.firstName} ${activeExecutionAppointment.assignedUser.lastName}`
               : null,
+            warning: activeExecutionWarning?.message ?? null,
           }
         : null,
       notifications: notifications.map((notification) => ({
