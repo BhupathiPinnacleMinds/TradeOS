@@ -18,8 +18,10 @@ import {
 import {
   AUSTRALIAN_STATES,
   JOB_PRIORITIES,
+  JOB_FOLLOW_UP_RESOLUTION_REASONS,
   JOB_STATUSES,
   type AustralianState,
+  type JobFollowUpResolutionReason,
   type JobFilter,
   type JobPriority,
   type JobSortBy,
@@ -243,4 +245,14 @@ export class UpdateJobStatusDto {
   @IsString()
   @MaxLength(2000)
   internalNotes?: string;
+}
+
+export class ResolveJobFollowUpDto {
+  @IsIn(JOB_FOLLOW_UP_RESOLUTION_REASONS)
+  reason!: JobFollowUpResolutionReason;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string | null;
 }

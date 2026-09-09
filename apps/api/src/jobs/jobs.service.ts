@@ -5,11 +5,14 @@ import type {
   AuthenticatedUser,
   Job,
   JobDetailResponse,
+  JobFollowUpResolutionReason,
+  JobFollowUpState,
   JobListResponse,
   JobPriority,
   JobStatus,
 } from '@tradieos/shared';
 import {
+  JOB_FOLLOW_UP_RESOLUTION_REASONS,
   JOB_ARCHIVE_ROLES,
   JOB_STATUS_UPDATE_ROLES,
   JOB_VIEW_ROLES,
@@ -23,6 +26,7 @@ import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   ListJobsQueryDto,
+  ResolveJobFollowUpDto,
   UpdateJobStatusDto,
   UpsertJobDto,
 } from './dto/jobs.dto';
@@ -86,6 +90,16 @@ type JobWithRelations = {
 type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
   include: ReturnType<JobsService['appointmentInclude']>;
 }>;
+
+type JobAuditEntry = {
+  action: string;
+  actorUserId: string | null;
+  createdAt: Date;
+  entityId: string | null;
+  entityType: string;
+  id: string;
+  metadata: unknown;
+};
 
 @Injectable()
 export class JobsService {
@@ -247,6 +261,7 @@ export class JobsService {
         (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
       ),
     );
+    const followUp = this.jobFollowUpState(appointments, activity);
 
     return {
       activity: activity.map((entry) => ({
@@ -271,6 +286,7 @@ export class JobsService {
         title: invoice.title,
         totalCents: invoice.totalCents,
       })),
+      followUp,
       job: this.toJob(job),
       relatedQuotes,
       sourceQuote,
@@ -428,6 +444,23 @@ export class JobsService {
         { from: job.status, to: dto.status },
       );
     }
+    if (dto.status === 'COMPLETED') {
+      const followUp = await this.findJobFollowUpState(
+        currentUser.businessId,
+        id,
+      );
+      if (followUp.unresolved) {
+        throw this.domainError(
+          'FOLLOW_UP_UNRESOLVED',
+          'This job still has an unresolved follow-up. Resolve it before completing the job.',
+          HttpStatus.CONFLICT,
+          {
+            sourceAppointmentId: followUp.sourceAppointmentId,
+            sourceAppointmentNumber: followUp.sourceAppointmentNumber,
+          },
+        );
+      }
+    }
     const now = new Date();
     const statusData: Record<string, unknown> = {
       status: dto.status,
@@ -461,6 +494,49 @@ export class JobsService {
           metadata: { from: job.status, to: dto.status },
         },
       });
+    });
+
+    return this.findOne(currentUser, id);
+  }
+
+  async resolveFollowUp(
+    currentUser: AuthenticatedUser,
+    id: string,
+    dto: ResolveJobFollowUpDto,
+  ): Promise<JobDetailResponse> {
+    this.assertRole(currentUser, JOB_WRITE_ROLES);
+    const job = await this.getJobForUser(currentUser, id);
+    const note = this.clean(dto.note);
+    if (dto.reason === 'OTHER' && !note) {
+      throw this.domainError(
+        'FOLLOW_UP_RESOLUTION_NOTE_REQUIRED',
+        'Add a short explanation when resolving follow-up as Other.',
+        HttpStatus.BAD_REQUEST,
+        { field: 'note' },
+      );
+    }
+    const followUp = await this.findJobFollowUpState(
+      currentUser.businessId,
+      job.id,
+    );
+    if (!followUp.unresolved) {
+      return this.findOne(currentUser, id);
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'FOLLOW_UP_RESOLVED',
+        actorUserId: currentUser.id,
+        businessId: currentUser.businessId,
+        entityId: job.id,
+        entityType: 'Job',
+        metadata: {
+          note,
+          reason: dto.reason,
+          sourceAppointmentId: followUp.sourceAppointmentId,
+          sourceAppointmentNumber: followUp.sourceAppointmentNumber,
+        },
+      },
     });
 
     return this.findOne(currentUser, id);
@@ -1123,6 +1199,108 @@ export class JobsService {
       skippedAt: signature.skippedAt?.toISOString() ?? null,
       skipReason: signature.skipReason,
       updatedAt: signature.updatedAt.toISOString(),
+    };
+  }
+
+  private async findJobFollowUpState(
+    businessId: string,
+    jobId: string,
+  ): Promise<JobFollowUpState> {
+    const [appointments, activity] = await Promise.all([
+      this.prisma.appointment.findMany({
+        where: { businessId, jobId },
+        include: this.appointmentInclude(),
+        orderBy: { scheduledStart: 'asc' },
+      }),
+      this.prisma.auditLog.findMany({
+        where: {
+          action: 'FOLLOW_UP_RESOLVED',
+          businessId,
+          entityId: jobId,
+          entityType: 'Job',
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      }),
+    ]);
+
+    return this.jobFollowUpState(appointments, activity);
+  }
+
+  private jobFollowUpState(
+    appointments: AppointmentWithRelations[],
+    activity: JobAuditEntry[],
+  ): JobFollowUpState {
+    const latestRequired = [...appointments]
+      .filter((appointment) => appointment.workLogs?.[0]?.followUpRequired)
+      .sort((left, right) => {
+        const leftAt = left.workLogs[0]?.updatedAt ?? left.updatedAt;
+        const rightAt = right.workLogs[0]?.updatedAt ?? right.updatedAt;
+        return rightAt.getTime() - leftAt.getTime();
+      })[0];
+    const latestResolution = [...activity]
+      .filter(
+        (entry) =>
+          entry.action === 'FOLLOW_UP_RESOLVED' && entry.entityType === 'Job',
+      )
+      .sort(
+        (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+      )[0];
+    const latestWorkLog = latestRequired?.workLogs?.[0];
+    const latestRequiredAt = latestWorkLog?.updatedAt ?? null;
+    const unresolved = Boolean(
+      latestWorkLog &&
+      latestRequiredAt &&
+      (!latestResolution ||
+        latestResolution.createdAt.getTime() < latestRequiredAt.getTime()),
+    );
+    const resolutionMetadata = this.followUpResolutionMetadata(
+      latestResolution?.metadata,
+    );
+
+    return {
+      notes: unresolved ? (latestWorkLog?.followUpNotes ?? null) : null,
+      requiredAt: unresolved ? (latestRequiredAt?.toISOString() ?? null) : null,
+      resolutionNote: resolutionMetadata.note,
+      resolutionReason: resolutionMetadata.reason,
+      resolvedAt: latestResolution?.createdAt.toISOString() ?? null,
+      resolvedByUserId: latestResolution?.actorUserId ?? null,
+      sourceAppointmentId: unresolved
+        ? (latestRequired?.id ?? null)
+        : (resolutionMetadata.sourceAppointmentId ?? null),
+      sourceAppointmentNumber: unresolved
+        ? (latestRequired?.appointmentNumber ?? null)
+        : (resolutionMetadata.sourceAppointmentNumber ?? null),
+      unresolved,
+    };
+  }
+
+  private followUpResolutionMetadata(metadata: unknown): {
+    note: string | null;
+    reason: JobFollowUpResolutionReason | null;
+    sourceAppointmentId: string | null;
+    sourceAppointmentNumber: string | null;
+  } {
+    const input =
+      metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>)
+        : {};
+    const reason = JOB_FOLLOW_UP_RESOLUTION_REASONS.includes(
+      input.reason as JobFollowUpResolutionReason,
+    )
+      ? (input.reason as JobFollowUpResolutionReason)
+      : null;
+    return {
+      note: typeof input.note === 'string' ? input.note : null,
+      reason,
+      sourceAppointmentId:
+        typeof input.sourceAppointmentId === 'string'
+          ? input.sourceAppointmentId
+          : null,
+      sourceAppointmentNumber:
+        typeof input.sourceAppointmentNumber === 'string'
+          ? input.sourceAppointmentNumber
+          : null,
     };
   }
 

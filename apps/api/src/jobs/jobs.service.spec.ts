@@ -563,6 +563,253 @@ describe('JobsService', () => {
     });
   });
 
+  it('keeps older follow-up unresolved when a later appointment records no follow-up', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        appointmentNumber: 'APT-2026-000001',
+        completedAt: new Date('2026-09-01T01:00:00.000Z'),
+        id: 'appointment-follow-up',
+        workLogs: [
+          {
+            appointmentId: 'appointment-follow-up',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-01T01:00:00.000Z'),
+            followUpNotes: 'Return with replacement mixer.',
+            followUpRequired: true,
+            id: 'work-log-follow-up',
+            jobId: 'job-1',
+            technicianNotes: 'Temporary repair completed.',
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-01T01:05:00.000Z'),
+            workCompleted: 'Stopped leak temporarily.',
+          },
+        ],
+      }),
+      appointment({
+        appointmentNumber: 'APT-2026-000003',
+        completedAt: new Date('2026-09-08T01:00:00.000Z'),
+        id: 'appointment-latest',
+        workLogs: [
+          {
+            appointmentId: 'appointment-latest',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-08T01:00:00.000Z'),
+            followUpNotes: null,
+            followUpRequired: false,
+            id: 'work-log-latest',
+            jobId: 'job-1',
+            technicianNotes: 'Checked repair.',
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-08T01:05:00.000Z'),
+            workCompleted: 'Latest visit complete.',
+          },
+        ],
+      }),
+    ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.followUp).toMatchObject({
+      notes: 'Return with replacement mixer.',
+      sourceAppointmentId: 'appointment-follow-up',
+      sourceAppointmentNumber: 'APT-2026-000001',
+      unresolved: true,
+    });
+    expect(result.appointments[1]?.workLog?.followUpRequired).toBe(false);
+  });
+
+  it('allows authorised job operators to resolve unresolved follow-up with an audit event', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        appointmentNumber: 'APT-2026-000001',
+        id: 'appointment-follow-up',
+        workLogs: [
+          {
+            appointmentId: 'appointment-follow-up',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-01T01:00:00.000Z'),
+            followUpNotes: 'Return with replacement mixer.',
+            followUpRequired: true,
+            id: 'work-log-follow-up',
+            jobId: 'job-1',
+            technicianNotes: null,
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-01T01:05:00.000Z'),
+            workCompleted: 'Temporary repair.',
+          },
+        ],
+      }),
+    ]);
+
+    await service.resolveFollowUp(owner, 'job-1', {
+      reason: 'RESOLVED_DURING_LATEST_VISIT',
+    });
+
+    const auditCreateCalls = prisma.auditLog.create.mock
+      .calls as unknown as Array<[{ data: AuditCreateCall['data'] }]>;
+    expect(auditCreateCalls[0]?.[0].data).toMatchObject({
+      action: 'FOLLOW_UP_RESOLVED',
+      actorUserId: 'owner-1',
+      businessId: 'business-1',
+      entityId: 'job-1',
+      entityType: 'Job',
+      metadata: {
+        note: null,
+        reason: 'RESOLVED_DURING_LATEST_VISIT',
+        sourceAppointmentId: 'appointment-follow-up',
+        sourceAppointmentNumber: 'APT-2026-000001',
+      },
+    });
+  });
+
+  it('requires an explanation when resolving follow-up as Other', async () => {
+    const { service } = createService();
+
+    await service
+      .resolveFollowUp(owner, 'job-1', { note: ' ', reason: 'OTHER' })
+      .catch((error: unknown) => {
+        expectDomainError(error, 'FOLLOW_UP_RESOLUTION_NOTE_REQUIRED');
+      });
+  });
+
+  it('blocks unauthorised users from resolving job-level follow-up', async () => {
+    const { prisma, service } = createService();
+
+    await service
+      .resolveFollowUp(technician, 'job-1', {
+        reason: 'NO_FURTHER_ACTION_REQUIRED',
+      })
+      .catch((error: unknown) => {
+        expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+      });
+
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('treats repeated follow-up resolution as idempotent when no unresolved follow-up remains', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        workLogs: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-01T01:00:00.000Z'),
+            followUpNotes: 'Original follow-up.',
+            followUpRequired: true,
+            id: 'work-log-follow-up',
+            jobId: 'job-1',
+            technicianNotes: null,
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-01T01:05:00.000Z'),
+            workCompleted: 'Temporary repair.',
+          },
+        ],
+      }),
+    ]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      audit('FOLLOW_UP_RESOLVED', {
+        actorUserId: 'owner-1',
+        createdAt: new Date('2026-09-08T01:00:00.000Z'),
+        entityId: 'job-1',
+        entityType: 'Job',
+        metadata: {
+          reason: 'NO_FURTHER_ACTION_REQUIRED',
+          sourceAppointmentId: 'appointment-1',
+          sourceAppointmentNumber: 'APT-2026-000001',
+        },
+      }),
+    ]);
+
+    await service.resolveFollowUp(owner, 'job-1', {
+      reason: 'NO_FURTHER_ACTION_REQUIRED',
+    });
+
+    expect(
+      (
+        prisma.auditLog.create.mock.calls as Array<
+          [{ data: AuditCreateCall['data'] }]
+        >
+      ).filter(([call]) => call.data.action === 'FOLLOW_UP_RESOLVED'),
+    ).toHaveLength(0);
+  });
+
+  it('prevents completing a job while aggregate follow-up is unresolved', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        workLogs: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-01T01:00:00.000Z'),
+            followUpNotes: 'Return with replacement mixer.',
+            followUpRequired: true,
+            id: 'work-log-follow-up',
+            jobId: 'job-1',
+            technicianNotes: null,
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-01T01:05:00.000Z'),
+            workCompleted: 'Temporary repair.',
+          },
+        ],
+      }),
+    ]);
+
+    await service
+      .updateStatus(owner, 'job-1', { status: 'COMPLETED' })
+      .catch((error: unknown) => {
+        expectDomainError(error, 'FOLLOW_UP_UNRESOLVED');
+      });
+
+    expect(prisma.job.update).not.toHaveBeenCalled();
+  });
+
+  it('allows completing a job after follow-up has been explicitly resolved', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        workLogs: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            createdAt: new Date('2026-09-01T01:00:00.000Z'),
+            followUpNotes: 'Return with replacement mixer.',
+            followUpRequired: true,
+            id: 'work-log-follow-up',
+            jobId: 'job-1',
+            technicianNotes: null,
+            technicianUserId: 'tech-1',
+            updatedAt: new Date('2026-09-01T01:05:00.000Z'),
+            workCompleted: 'Temporary repair.',
+          },
+        ],
+      }),
+    ]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      audit('FOLLOW_UP_RESOLVED', {
+        actorUserId: 'owner-1',
+        createdAt: new Date('2026-09-08T01:00:00.000Z'),
+        entityId: 'job-1',
+        entityType: 'Job',
+        metadata: {
+          reason: 'RESOLVED_DURING_LATEST_VISIT',
+          sourceAppointmentId: 'appointment-1',
+          sourceAppointmentNumber: 'APT-2026-000001',
+        },
+      }),
+    ]);
+
+    await service.updateStatus(owner, 'job-1', { status: 'COMPLETED' });
+
+    const jobUpdateCalls = prisma.job.update.mock.calls as unknown as Array<
+      [JobUpdateCall]
+    >;
+    expect(jobUpdateCalls[0]?.[0].data.status).toBe('COMPLETED');
+  });
+
   it('maps latest appointment signature status into Job Details appointments', async () => {
     const { prisma, service } = createService();
     prisma.appointment.findMany.mockResolvedValueOnce([

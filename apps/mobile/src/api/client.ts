@@ -39,6 +39,7 @@ import type {
   QuoteListResponse,
   QuotePayload,
   PublicQuoteResponse,
+  ResolveJobFollowUpPayload,
   InvitationPreviewResponse,
   InviteMemberResponse,
   LocalMediaUploadRequest,
@@ -841,6 +842,18 @@ export function updateJobStatusRequest(
   return apiRequest<JobDetailResponse>(`/jobs/${jobId}/status`, {
     body: JSON.stringify({ internalNotes, status }),
     method: 'PATCH',
+    token,
+  });
+}
+
+export function resolveJobFollowUpRequest(
+  token: string,
+  jobId: string,
+  input: ResolveJobFollowUpPayload,
+) {
+  return apiRequest<JobDetailResponse>(`/jobs/${jobId}/resolve-follow-up`, {
+    body: JSON.stringify(input),
+    method: 'POST',
     token,
   });
 }

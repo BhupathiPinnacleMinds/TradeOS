@@ -3,11 +3,14 @@ import type {
   AppointmentTransitionAction,
   Job,
   JobDetailResponse,
+  JobFollowUpResolutionReason,
+  JobFollowUpState,
   JobStatus,
   MediaAsset,
 } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
+  JOB_FOLLOW_UP_RESOLUTION_REASONS,
   formatAudCents,
   formatBusinessDate,
   formatBusinessDateTime,
@@ -26,11 +29,14 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {
@@ -41,6 +47,7 @@ import {
   friendlyAppointmentMutationError,
   jobDetailRequest,
   mediaRequest,
+  resolveJobFollowUpRequest,
   restoreJobRequest,
   restoreMediaRequest,
   transitionAppointmentRequest,
@@ -110,6 +117,17 @@ const CLOSED_APPOINTMENT_STATUSES = [
   'RESCHEDULED',
 ] as const;
 const JOB_TIMELINE_PREVIEW_LIMIT = 5;
+const EMPTY_JOB_FOLLOW_UP_STATE: JobFollowUpState = {
+  notes: null,
+  requiredAt: null,
+  resolutionNote: null,
+  resolutionReason: null,
+  resolvedAt: null,
+  resolvedByUserId: null,
+  sourceAppointmentId: null,
+  sourceAppointmentNumber: null,
+  unresolved: false,
+};
 
 type JobStatusAction = {
   danger?: boolean;
@@ -203,6 +221,19 @@ function followUpDisplay(workLog: Appointment['workLog']) {
   return workLog.followUpNotes ? `Yes — ${workLog.followUpNotes}` : 'Yes';
 }
 
+function followUpReasonLabel(reason: JobFollowUpResolutionReason) {
+  if (reason === 'RESOLVED_DURING_LATEST_VISIT') {
+    return 'Resolved during latest visit';
+  }
+  if (reason === 'CUSTOMER_NO_LONGER_REQUIRES_FOLLOW_UP') {
+    return 'Customer no longer requires follow-up';
+  }
+  if (reason === 'RESOLVED_REMOTELY') return 'Resolved remotely';
+  if (reason === 'NO_FURTHER_ACTION_REQUIRED')
+    return 'No further action required';
+  return 'Other';
+}
+
 export function JobDetailsScreen({ navigation, route }: Props) {
   const routeJobId = route.params?.jobId ?? null;
   const jobId = routeJobId?.trim() ?? '';
@@ -219,6 +250,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [relatedQuotes, setRelatedQuotes] = useState<
     JobDetailResponse['relatedQuotes']
   >([]);
+  const [followUp, setFollowUp] = useState<JobFollowUpState>(
+    EMPTY_JOB_FOLLOW_UP_STATE,
+  );
   const [invoices, setInvoices] = useState<JobDetailResponse['invoices']>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [media, setMedia] = useState<MediaAsset[]>([]);
@@ -231,6 +265,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const [busyMediaId, setBusyMediaId] = useState<string | null>(null);
   const [showArchivedMedia, setShowArchivedMedia] = useState(false);
   const [showAllTimeline, setShowAllTimeline] = useState(false);
+  const [showResolveFollowUp, setShowResolveFollowUp] = useState(false);
+  const [resolveFollowUpReason, setResolveFollowUpReason] =
+    useState<JobFollowUpResolutionReason>('RESOLVED_DURING_LATEST_VISIT');
+  const [resolveFollowUpNote, setResolveFollowUpNote] = useState('');
   const [requestState, setRequestState] =
     useState<JobDetailsRequestState>('IDLE');
 
@@ -252,7 +290,8 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const latestFollowUpWorkLogAppointment =
     latestFollowUpAppointment(appointments);
   const latestFollowUpWorkLog = latestFollowUpWorkLogAppointment?.workLog;
-  const jobHasFollowUpRequired = hasFollowUpRequired(appointments);
+  const jobHasHistoricalFollowUp = hasFollowUpRequired(appointments);
+  const jobHasFollowUpRequired = followUp.unresolved;
   const jobCompletionEvidenceCount = completionEvidenceCount(
     media,
     latestCompletedAppointment,
@@ -260,7 +299,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canNavigateToJob = job ? hasUsableAddress(job) : false;
   const canUseEmailAction = Boolean(job?.customer.email && !isTechnician);
   const canShowGenericScheduleAction =
-    canScheduleAppointment && !latestFollowUpWorkLog;
+    canScheduleAppointment && !jobHasFollowUpRequired;
   const timelinePreview = showAllTimeline
     ? timeline
     : timeline.slice(0, JOB_TIMELINE_PREVIEW_LIMIT);
@@ -316,6 +355,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
+      setFollowUp(response.followUp ?? EMPTY_JOB_FOLLOW_UP_STATE);
       setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
@@ -365,12 +405,27 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
   async function changeStatus(status: JobStatus) {
     if (!token || !job || isBusy) return;
+    if (status === 'COMPLETED' && followUp.unresolved) {
+      Alert.alert(
+        'Outstanding follow-up',
+        'This job still has an unresolved follow-up from an earlier appointment.',
+        [
+          { text: 'Keep job open', style: 'cancel' },
+          {
+            text: 'Resolve follow-up',
+            onPress: () => setShowResolveFollowUp(true),
+          },
+        ],
+      );
+      return;
+    }
     setIsBusy(true);
     try {
       const response = await updateJobStatusRequest(token, job.id, status);
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
+      setFollowUp(response.followUp ?? EMPTY_JOB_FOLLOW_UP_STATE);
       setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
@@ -401,6 +456,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
+      setFollowUp(response.followUp ?? EMPTY_JOB_FOLLOW_UP_STATE);
       setInvoices(response.invoices ?? []);
       setAppointments(response.appointments);
       setTimeline(response.timeline);
@@ -414,6 +470,49 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           error instanceof Error
             ? error.message
             : "We couldn't update this job.",
+        tone: 'error',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function resolveFollowUp() {
+    if (!token || !job || isBusy) return;
+    const note = resolveFollowUpNote.trim();
+    if (resolveFollowUpReason === 'OTHER' && !note) {
+      showToast({
+        message: 'Add a short explanation for Other.',
+        tone: 'error',
+      });
+      return;
+    }
+    setIsBusy(true);
+    try {
+      const response = await resolveJobFollowUpRequest(token, job.id, {
+        note: note || null,
+        reason: resolveFollowUpReason,
+      });
+      setJob(response.job);
+      setSourceQuote(response.sourceQuote);
+      setRelatedQuotes(response.relatedQuotes ?? []);
+      setFollowUp(response.followUp ?? EMPTY_JOB_FOLLOW_UP_STATE);
+      setInvoices(response.invoices ?? []);
+      setAppointments(response.appointments);
+      setTimeline(response.timeline);
+      setShowResolveFollowUp(false);
+      setResolveFollowUpReason('RESOLVED_DURING_LATEST_VISIT');
+      setResolveFollowUpNote('');
+      showToast({
+        message: 'Follow-up resolved.',
+        tone: 'success',
+      });
+    } catch (error) {
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "We couldn't resolve this follow-up.",
         tone: 'error',
       });
     } finally {
@@ -534,14 +633,18 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             <Text style={styles.followUpBadgeText}>Follow-up required</Text>
           </View>
           <Text style={styles.statusContext}>
-            {latestFollowUpWorkLog?.followUpNotes ??
+            {followUp.notes ??
+              latestFollowUpWorkLog?.followUpNotes ??
               'A technician marked this job for follow-up.'}
           </Text>
-          {latestFollowUpWorkLogAppointment ? (
+          {followUp.sourceAppointmentNumber ||
+          latestFollowUpWorkLogAppointment ? (
             <Text style={styles.statusContext}>
               Unresolved follow-up from{' '}
-              {latestFollowUpWorkLogAppointment.appointmentNumber}. Schedule a
-              return visit or update the job when it has been handled.
+              {followUp.sourceAppointmentNumber ??
+                latestFollowUpWorkLogAppointment?.appointmentNumber}
+              . Schedule a return visit or resolve the follow-up when it has
+              been handled.
             </Text>
           ) : null}
           {canScheduleAppointment ? (
@@ -554,6 +657,31 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 })
               }
             />
+          ) : null}
+          {canEdit ? (
+            <ActionButton
+              label="Resolve follow-up"
+              onPress={() => setShowResolveFollowUp(true)}
+            />
+          ) : null}
+        </View>
+      ) : null}
+      {!jobHasFollowUpRequired && followUp.resolvedAt ? (
+        <View style={styles.followUpResolvedCard}>
+          <View style={styles.followUpResolvedBadge}>
+            <Text style={styles.followUpResolvedBadgeText}>
+              Follow-up resolved
+            </Text>
+          </View>
+          <Text style={styles.statusContext}>
+            {followUp.resolutionReason
+              ? followUpReasonLabel(followUp.resolutionReason)
+              : 'No further action required'}
+            {' · '}
+            {formatDateTime(followUp.resolvedAt, businessTimezone)}
+          </Text>
+          {followUp.resolutionNote ? (
+            <Text style={styles.statusContext}>{followUp.resolutionNote}</Text>
           ) : null}
         </View>
       ) : null}
@@ -703,6 +831,12 @@ export function JobDetailsScreen({ navigation, route }: Props) {
             <Text style={styles.warningText}>
               Overall job follow-up is still required from an earlier
               appointment.
+            </Text>
+          ) : null}
+          {!jobHasFollowUpRequired && jobHasHistoricalFollowUp ? (
+            <Text style={styles.meta}>
+              Overall job follow-up has been resolved. Historical appointment
+              notes remain in the timeline.
             </Text>
           ) : null}
           {latestCompletionDurationWarning ? (
@@ -1023,6 +1157,16 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           <Text style={styles.muted}>Updating job...</Text>
         </View>
       ) : null}
+      <ResolveFollowUpModal
+        busy={isBusy}
+        note={resolveFollowUpNote}
+        onCancel={() => setShowResolveFollowUp(false)}
+        onChangeNote={setResolveFollowUpNote}
+        onChangeReason={setResolveFollowUpReason}
+        onConfirm={() => void resolveFollowUp()}
+        reason={resolveFollowUpReason}
+        visible={showResolveFollowUp}
+      />
       <MediaRemovalConfirmation
         busy={Boolean(busyMediaId)}
         media={mediaToRemove}
@@ -1031,6 +1175,106 @@ export function JobDetailsScreen({ navigation, route }: Props) {
         visible={Boolean(mediaToRemove)}
       />
     </ScrollView>
+  );
+}
+
+function ResolveFollowUpModal({
+  busy,
+  note,
+  onCancel,
+  onChangeNote,
+  onChangeReason,
+  onConfirm,
+  reason,
+  visible,
+}: {
+  busy: boolean;
+  note: string;
+  onCancel(): void;
+  onChangeNote(value: string): void;
+  onChangeReason(value: JobFollowUpResolutionReason): void;
+  onConfirm(): void;
+  reason: JobFollowUpResolutionReason;
+  visible: boolean;
+}) {
+  const canConfirm = !busy && (reason !== 'OTHER' || Boolean(note.trim()));
+  return (
+    <Modal animationType="fade" transparent visible={visible}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.resolveModalCard}>
+          <Text style={styles.cardTitle}>Resolve follow-up</Text>
+          <Text style={styles.meta}>
+            Record why the outstanding follow-up has been handled. The original
+            follow-up history will remain in the job timeline.
+          </Text>
+          <View style={styles.reasonGrid}>
+            {JOB_FOLLOW_UP_RESOLUTION_REASONS.map((option) => {
+              const selected = reason === option;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  key={option}
+                  onPress={() => onChangeReason(option)}
+                  style={[
+                    styles.reasonPill,
+                    selected && styles.reasonPillSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.reasonPillText,
+                      selected && styles.reasonPillTextSelected,
+                    ]}
+                  >
+                    {followUpReasonLabel(option)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.inputLabel}>
+            {reason === 'OTHER' ? 'Explanation' : 'Optional note'}
+          </Text>
+          <TextInput
+            multiline
+            onChangeText={onChangeNote}
+            placeholder={
+              reason === 'OTHER'
+                ? 'Add a short explanation.'
+                : 'Add an optional resolution note.'
+            }
+            placeholderTextColor={colours.muted}
+            style={styles.resolveNoteInput}
+            value={note}
+          />
+          <View style={styles.modalActions}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={onCancel}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!canConfirm}
+              onPress={onConfirm}
+              style={[
+                styles.quickAction,
+                styles.modalPrimaryButton,
+                !canConfirm && styles.disabledAction,
+              ]}
+            >
+              <Text style={styles.quickText}>
+                {busy ? 'Resolving...' : 'Resolve follow-up'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1297,6 +1541,30 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 12,
   },
+  followUpResolvedBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#DCFCE7',
+    borderColor: '#22C55E',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  followUpResolvedBadgeText: {
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  followUpResolvedCard: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    marginTop: 12,
+    padding: 12,
+  },
   inlineTextButton: {
     alignSelf: 'flex-start',
     marginTop: 12,
@@ -1333,6 +1601,7 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   dangerText: { color: '#FFFFFF', fontWeight: '900' },
+  disabledAction: { opacity: 0.55 },
   eyebrow: {
     color: colours.primary,
     fontSize: 12,
@@ -1348,6 +1617,12 @@ const styles = StyleSheet.create({
   },
   meta: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   muted: { color: colours.muted },
+  inputLabel: {
+    color: colours.ink,
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 12,
+  },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
   mediaIcon: { fontSize: 28 },
   mediaName: { color: colours.ink, fontWeight: '900' },
@@ -1361,6 +1636,24 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingRight: 60,
   },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalPrimaryButton: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
+  },
   quickAction: {
     backgroundColor: colours.primary,
     borderRadius: 999,
@@ -1369,7 +1662,50 @@ const styles = StyleSheet.create({
   },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
   quickText: { color: '#FFFFFF', fontWeight: '900' },
+  reasonGrid: { gap: 8, marginTop: 14 },
+  reasonPill: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  reasonPillSelected: {
+    backgroundColor: '#EEF2FF',
+    borderColor: colours.primary,
+  },
+  reasonPillText: { color: colours.ink, fontWeight: '800' },
+  reasonPillTextSelected: { color: colours.primary },
+  resolveModalCard: {
+    backgroundColor: colours.card,
+    borderRadius: 22,
+    maxWidth: 520,
+    padding: 18,
+    width: '100%',
+  },
+  resolveNoteInput: {
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colours.ink,
+    minHeight: 92,
+    padding: 12,
+    textAlignVertical: 'top',
+  },
   restoreButton: { backgroundColor: colours.primary },
+  secondaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingHorizontal: 14,
+  },
+  secondaryButtonText: { color: colours.ink, fontWeight: '900' },
   subtitle: { color: colours.muted, lineHeight: 22, marginTop: 8 },
   statusContext: {
     color: colours.muted,

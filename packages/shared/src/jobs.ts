@@ -104,6 +104,7 @@ export interface JobDetailResponse {
   job: Job;
   activity: AuditLogEntry[];
   appointments: Appointment[];
+  followUp: JobFollowUpState;
   sourceQuote: {
     id: string;
     quoteNumber: string;
@@ -136,6 +137,34 @@ export interface JobDetailResponse {
     createdAt: string;
     metadata: Record<string, unknown> | null;
   }>;
+}
+
+export const JOB_FOLLOW_UP_RESOLUTION_REASONS = [
+  'RESOLVED_DURING_LATEST_VISIT',
+  'CUSTOMER_NO_LONGER_REQUIRES_FOLLOW_UP',
+  'RESOLVED_REMOTELY',
+  'NO_FURTHER_ACTION_REQUIRED',
+  'OTHER',
+] as const;
+
+export type JobFollowUpResolutionReason =
+  (typeof JOB_FOLLOW_UP_RESOLUTION_REASONS)[number];
+
+export interface ResolveJobFollowUpPayload {
+  reason: JobFollowUpResolutionReason;
+  note?: string | null;
+}
+
+export interface JobFollowUpState {
+  unresolved: boolean;
+  sourceAppointmentId: string | null;
+  sourceAppointmentNumber: string | null;
+  notes: string | null;
+  requiredAt: string | null;
+  resolvedAt: string | null;
+  resolvedByUserId: string | null;
+  resolutionReason: JobFollowUpResolutionReason | null;
+  resolutionNote: string | null;
 }
 
 export interface JobPayload {

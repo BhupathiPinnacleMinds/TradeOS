@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JobsService } from './jobs.service';
 import {
   ListJobsQueryDto,
+  ResolveJobFollowUpDto,
   UpdateJobStatusDto,
   UpsertJobDto,
 } from './dto/jobs.dto';
@@ -75,6 +76,15 @@ export class JobsController {
     @Body() dto: UpdateJobStatusDto,
   ) {
     return this.jobs.updateStatus(currentUser, id, dto);
+  }
+
+  @Post(':id/resolve-follow-up')
+  resolveFollowUp(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ResolveJobFollowUpDto,
+  ) {
+    return this.jobs.resolveFollowUp(currentUser, id, dto);
   }
 
   @Post(':id/archive')

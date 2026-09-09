@@ -394,11 +394,25 @@ describe('Job form mobile UI contracts', () => {
 
   it('makes Job Details status/follow-up context explicit without auto-completing jobs', () => {
     const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+    const jobController = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'jobs', 'jobs.controller.ts'),
+      'utf8',
+    );
+    const jobService = readFileSync(
+      join(repoRoot, 'apps', 'api', 'src', 'jobs', 'jobs.service.ts'),
+      'utf8',
+    );
 
     expect(jobDetails).toContain('jobHasFollowUpRequired');
     expect(jobDetails).toContain('Follow-up required');
     expect(jobDetails).toContain('Unresolved follow-up from');
     expect(jobDetails).toContain('Latest completion follow-up:');
+    expect(jobDetails).toContain('Resolve follow-up');
+    expect(jobDetails).toContain('ResolveFollowUpModal');
+    expect(jobDetails).toContain('resolveJobFollowUpRequest');
+    expect(jobController).toContain("@Post(':id/resolve-follow-up')");
+    expect(jobService).toContain("'FOLLOW_UP_RESOLVED'");
+    expect(jobService).toContain("'FOLLOW_UP_UNRESOLVED'");
     expect(jobDetails).toContain(
       'Latest appointment is completed, but this job remains open',
     );
