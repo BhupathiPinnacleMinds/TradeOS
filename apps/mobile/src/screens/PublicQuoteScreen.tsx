@@ -1,8 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { formatAudCents } from '@tradieos/shared';
+import { formatAudCents, formatBusinessDate } from '@tradieos/shared';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
 import {
   publicQuoteAcceptRequest,
   publicQuoteDeclineRequest,
+  publicQuotePdfUrl,
   publicQuoteRequest,
 } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
@@ -100,6 +102,13 @@ export function PublicQuoteScreen({ route }: Props) {
 
   const { business, quote, state } = response;
   const canRespond = state === 'ACTIVE';
+  const pdfDocument = response.documents?.[0] ?? null;
+  const expiryText = quote.expiryDate
+    ? `Valid until ${formatBusinessDate(
+        quote.expiryDate,
+        business.timezone ?? undefined,
+      )}`
+    : 'No expiry date supplied.';
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.container}>
@@ -119,6 +128,7 @@ export function PublicQuoteScreen({ route }: Props) {
         <Text style={styles.title}>{quote.title}</Text>
         <Text style={styles.badge}>{stateLabel(state)}</Text>
         <Text style={styles.total}>{formatAudCents(quote.totalCents)}</Text>
+        <Text style={styles.validity}>{expiryText}</Text>
         <Text style={styles.muted}>Customer: {quote.customer.displayName}</Text>
         {quote.customerSite ? (
           <Text style={styles.muted}>
@@ -126,6 +136,16 @@ export function PublicQuoteScreen({ route }: Props) {
             {quote.customerSite.suburb} {quote.customerSite.state}{' '}
             {quote.customerSite.postcode}
           </Text>
+        ) : null}
+        {pdfDocument ? (
+          <Pressable
+            accessibilityLabel={`View PDF for quote ${quote.quoteNumber}`}
+            accessibilityRole="button"
+            onPress={() => void Linking.openURL(publicQuotePdfUrl(token))}
+            style={styles.pdfButton}
+          >
+            <Text style={styles.pdfButtonText}>View PDF</Text>
+          </Pressable>
         ) : null}
       </View>
 
@@ -335,6 +355,16 @@ const styles = StyleSheet.create({
   lineTotal: { color: colours.ink, fontWeight: '900' },
   muted: { color: colours.muted, lineHeight: 20 },
   page: { backgroundColor: colours.background, flex: 1 },
+  pdfButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderColor: colours.primary,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  pdfButtonText: { color: colours.primary, fontWeight: '900' },
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colours.primary,
@@ -361,4 +391,5 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
   title: { color: colours.ink, fontSize: 26, fontWeight: '900' },
   total: { color: colours.ink, fontSize: 30, fontWeight: '900' },
+  validity: { color: colours.ink, fontWeight: '900', lineHeight: 20 },
 });

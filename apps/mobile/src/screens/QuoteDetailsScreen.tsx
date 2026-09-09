@@ -15,8 +15,9 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,8 +35,12 @@ import {
   quoteDetailRequest,
   sendQuoteRequest,
 } from '../api/client';
-import { downloadAuthenticatedQuotePdf } from '../api/quoteDocuments';
+import {
+  downloadAuthenticatedQuotePdf,
+  openDownloadedQuotePdf,
+} from '../api/quoteDocuments';
 import { useAuth } from '../auth/AuthContext';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
@@ -154,7 +159,7 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
       quote.id,
       fileName ?? `Quote-${quote.quoteNumber}.pdf`,
     );
-    await Linking.openURL(localUri);
+    await openDownloadedQuotePdf(localUri, quote.id);
   }
 
   return (
@@ -537,42 +542,57 @@ function SendQuoteModal({
 }) {
   return (
     <Modal animationType="slide" transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalCard}>
-          <Text style={styles.sectionTitle}>Send Quote</Text>
-          <Text style={styles.inputLabel}>To</Text>
-          <TextInput
-            autoCapitalize="none"
-            keyboardType="email-address"
-            onChangeText={onChangeTo}
-            placeholder="customer@example.com"
-            style={styles.input}
-            value={to}
-          />
-          <Text style={styles.inputLabel}>Subject</Text>
-          <TextInput
-            onChangeText={onChangeSubject}
-            style={styles.input}
-            value={subject}
-          />
-          <Text style={styles.inputLabel}>Message</Text>
-          <TextInput
-            multiline
-            onChangeText={onChangeMessage}
-            style={[styles.input, styles.textArea]}
-            value={message}
-          />
-          <Text style={styles.muted}>Attachment: Quote PDF</Text>
-          <Text style={styles.muted}>
-            Secure link:{' '}
-            {publicQuoteUrl ? 'available after send' : 'created on send'}
-          </Text>
-          <View style={styles.modalActions}>
-            <Action label="Cancel" onPress={onCancel} />
-            <Action busy={busy} label="Send Quote" onPress={onSend} />
-          </View>
+      <KeyboardAvoidingView
+        behavior={keyboardAvoidingBehavior}
+        style={styles.modalKeyboardAvoider}
+      >
+        <View style={styles.modalBackdrop}>
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardDismissMode={
+              Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+            }
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.modalScroll}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.sectionTitle}>Send Quote</Text>
+              <Text style={styles.inputLabel}>To</Text>
+              <TextInput
+                autoCapitalize="none"
+                keyboardType="email-address"
+                onChangeText={onChangeTo}
+                placeholder="customer@example.com"
+                style={styles.input}
+                value={to}
+              />
+              <Text style={styles.inputLabel}>Subject</Text>
+              <TextInput
+                onChangeText={onChangeSubject}
+                style={styles.input}
+                value={subject}
+              />
+              <Text style={styles.inputLabel}>Message</Text>
+              <TextInput
+                multiline
+                onChangeText={onChangeMessage}
+                style={[styles.input, styles.textArea]}
+                value={message}
+              />
+              <Text style={styles.muted}>Attachment: Quote PDF</Text>
+              <Text style={styles.muted}>
+                Secure link:{' '}
+                {publicQuoteUrl ? 'available after send' : 'created on send'}
+              </Text>
+              <View style={styles.modalActions}>
+                <Action label="Cancel" onPress={onCancel} />
+                <Action busy={busy} label="Send Quote" onPress={onSend} />
+              </View>
+            </View>
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -753,6 +773,13 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     gap: 12,
     padding: 20,
+  },
+  modalKeyboardAvoider: { flex: 1 },
+  modalScroll: { flex: 1 },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    paddingTop: 24,
   },
   secondaryButton: {
     alignItems: 'center',

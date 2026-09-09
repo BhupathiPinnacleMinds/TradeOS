@@ -289,6 +289,7 @@ export interface PublicQuoteResponse {
     suburb: string | null;
     state: string | null;
     postcode: string | null;
+    timezone?: string | null;
   };
   quote: {
     acceptedAt: string | null;
@@ -327,6 +328,7 @@ export interface PublicQuoteResponse {
   };
   state:
     'ACTIVE' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'CANCELLED' | 'CONVERTED';
+  documents?: QuoteDocumentSummary[];
 }
 
 export interface QuoteLineItemPayload {

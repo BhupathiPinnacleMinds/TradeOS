@@ -27,6 +27,47 @@ describe('EmailProvider', () => {
     expect(provider).toBeInstanceOf(ConsoleEmailProvider);
   });
 
+  it('normalises deployment provider values before selecting Resend', () => {
+    const provider = createEmailProvider({
+      apiKey: ' re_test_key ',
+      fromAddress: ' noreply@tradieosapp.com ',
+      fromName: ' TradieOS ',
+      isProduction: true,
+      provider: ' Resend ',
+    });
+
+    expect(provider).toBeInstanceOf(ResendEmailProvider);
+  });
+
+  it('uses console only when explicitly configured outside production', () => {
+    const provider = createEmailProvider({
+      provider: 'console',
+    });
+
+    expect(provider).toBeInstanceOf(ConsoleEmailProvider);
+  });
+
+  it('fails safely instead of falling back to console for invalid production providers', () => {
+    expect(() =>
+      createEmailProvider({
+        apiKey: 're_test_key',
+        fromAddress: 'noreply@tradieosapp.com',
+        isProduction: true,
+        provider: 'mailgun',
+      }),
+    ).toThrow(/Unsupported EMAIL_PROVIDER/);
+  });
+
+  it('fails safely instead of falling back to console for incomplete production Resend config', () => {
+    expect(() =>
+      createEmailProvider({
+        apiKey: 're_test_key',
+        isProduction: true,
+        provider: 'resend',
+      }),
+    ).toThrow(/RESEND_API_KEY and EMAIL_FROM_ADDRESS/);
+  });
+
   it('does not expose invite URLs in production console logs', async () => {
     const info = jest.spyOn(console, 'info').mockImplementation(() => {});
     const provider = new ConsoleEmailProvider(false);

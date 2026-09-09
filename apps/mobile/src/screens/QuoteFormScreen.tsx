@@ -32,6 +32,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   createQuoteRequest,
   customerDetailRequest,
@@ -56,12 +57,21 @@ type FormLineItem = Omit<
 };
 
 const units = ['hour', 'item', 'metre', 'square metre', 'litre', 'fixed'];
+const placeholderLineItem: FormLineItem = {
+  name: 'New item',
+  quantityInput: '1',
+  taxable: true,
+  type: 'SERVICE',
+  unit: 'item',
+  unitPriceInput: '0.00',
+};
 
 export function QuoteFormScreen({ navigation, route }: Props) {
   const { appointmentId, customerId, customerSiteId, jobId, quoteId } =
     route.params ?? {};
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const insets = useSafeAreaInsets();
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
   const [step, setStep] = useState(0);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -348,23 +358,12 @@ export function QuoteFormScreen({ navigation, route }: Props) {
   }
 
   function addLine() {
-    setLineItems((current) => [
-      ...current,
-      {
-        name: 'New item',
-        quantityInput: '1',
-        taxable: true,
-        type: 'SERVICE',
-        unit: 'item',
-        unitPriceInput: '0.00',
-      },
-    ]);
+    setLineItems((current) => [...current, { ...placeholderLineItem }]);
   }
 
   async function save(sendAfterSave = false) {
     if (!token || isSaving || savingRef.current) return;
     const validationError = validateBeforeSave({
-      hasLineItems: lineItems.length > 0,
       calculations,
       depositInput,
       depositType: depositType ?? 'NONE',
@@ -474,9 +473,13 @@ export function QuoteFormScreen({ navigation, route }: Props) {
       style={styles.page}
     >
       <ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: Math.max(insets.bottom + 96, 120) },
+        ]}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
+        style={styles.scroll}
       >
         <Text style={styles.eyebrow}>STEP {step + 1} OF 4</Text>
         <Text style={styles.title}>{quoteId ? 'Edit quote' : 'New quote'}</Text>
@@ -738,8 +741,15 @@ function parseLineItems(lineItems: FormLineItem[]) {
   const errors: Array<{ quantity: string | null; unitPrice: string | null }> =
     [];
   const validItems: QuoteLineItemPayload[] = [];
+  let activeItemCount = 0;
 
   lineItems.forEach((item) => {
+    if (isUntouchedPlaceholderLineItem(item)) {
+      errors.push({ quantity: null, unitPrice: null });
+      return;
+    }
+
+    activeItemCount += 1;
     const quantity = parseQuoteQuantityInput(item.quantityInput);
     const unitPrice = parseQuoteMoneyInput(item.unitPriceInput);
     errors.push({
@@ -760,7 +770,20 @@ function parseLineItems(lineItems: FormLineItem[]) {
     }
   });
 
-  return { errors, validItems };
+  return { activeItemCount, errors, validItems };
+}
+
+function isUntouchedPlaceholderLineItem(item: FormLineItem) {
+  return (
+    !item.id &&
+    (item.description ?? '').trim() === '' &&
+    item.name.trim() === placeholderLineItem.name &&
+    item.quantityInput.trim() === placeholderLineItem.quantityInput &&
+    item.taxable === placeholderLineItem.taxable &&
+    item.type === placeholderLineItem.type &&
+    item.unit === placeholderLineItem.unit &&
+    item.unitPriceInput.trim() === placeholderLineItem.unitPriceInput
+  );
 }
 
 function validateBeforeSave({
@@ -769,7 +792,6 @@ function validateBeforeSave({
   depositType,
   discountInput,
   discountType,
-  hasLineItems,
   lineItems,
   selectedCustomerId,
   title,
@@ -779,7 +801,6 @@ function validateBeforeSave({
   depositType: QuoteDepositType;
   discountInput: AdjustmentInput;
   discountType: QuoteDiscountType;
-  hasLineItems: boolean;
   lineItems: ReturnType<typeof parseLineItems>;
   selectedCustomerId: string;
   title: string;
@@ -790,7 +811,7 @@ function validateBeforeSave({
   if (!title.trim()) {
     return { message: 'Enter a quote title.', step: 0 };
   }
-  if (!hasLineItems) {
+  if (lineItems.activeItemCount === 0) {
     return { message: 'Add at least one line item.', step: 1 };
   }
   const firstInvalidLineIndex = lineItems.errors.findIndex(
@@ -806,7 +827,7 @@ function validateBeforeSave({
       step: 1,
     };
   }
-  if (lineItems.validItems.length < lineItems.errors.length) {
+  if (lineItems.validItems.length < lineItems.activeItemCount) {
     return { message: 'Complete each line item before saving.', step: 1 };
   }
   if (discountType !== 'NONE') {
@@ -869,7 +890,7 @@ function validateStep({
         step: 1,
       };
     }
-    if (lineItems.validItems.length < lineItems.errors.length) {
+    if (lineItems.validItems.length < lineItems.activeItemCount) {
       return { message: 'Complete each line item before continuing.', step: 1 };
     }
   }
@@ -1162,6 +1183,7 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 18,
   },
+  scroll: { flex: 1 },
   sectionTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
   stepPill: {
     borderColor: colours.border,

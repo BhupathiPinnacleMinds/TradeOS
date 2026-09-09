@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { Linking, Platform } from 'react-native';
 import {
   ApiRequestError,
   buildAuthenticatedHeaders,
@@ -9,6 +10,9 @@ import {
 declare const __DEV__: boolean;
 
 const QUOTE_CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}tradieos-quotes/`;
+const ANDROID_GRANT_READ_URI_PERMISSION = 1;
+const ANDROID_VIEW_ACTION = 'android.intent.action.VIEW';
+const QUOTE_PDF_MIME_TYPE = 'application/pdf';
 
 function safeFileName(fileName: string) {
   const cleaned = fileName
@@ -95,4 +99,62 @@ export async function downloadAuthenticatedQuotePdf(
   }
 
   return result.uri;
+}
+
+export async function openDownloadedQuotePdf(
+  localUri: string,
+  quoteId: string,
+) {
+  if (Platform.OS === 'web') {
+    await Linking.openURL(localUri);
+    return;
+  }
+
+  const fileInfo = await FileSystem.getInfoAsync(localUri).catch(
+    (error: unknown) => {
+      if (__DEV__) {
+        console.warn('[TradieOS quote PDF open file check failed]', {
+          code: 'QUOTE_PDF_LOCAL_FILE_CHECK_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+          quoteId,
+        });
+      }
+      return null;
+    },
+  );
+
+  if (!fileInfo?.exists) {
+    throw new ApiRequestError(
+      "We couldn't open this quote PDF.",
+      null,
+      'QUOTE_PDF_DOWNLOAD_FAILED',
+    );
+  }
+
+  try {
+    if (Platform.OS === 'android') {
+      const contentUri = await FileSystem.getContentUriAsync(localUri);
+      await IntentLauncher.startActivityAsync(ANDROID_VIEW_ACTION, {
+        data: contentUri,
+        flags: ANDROID_GRANT_READ_URI_PERMISSION,
+        type: QUOTE_PDF_MIME_TYPE,
+      });
+      return;
+    }
+
+    await Linking.openURL(localUri);
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[TradieOS quote PDF open failed]', {
+        code: 'QUOTE_PDF_OPEN_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+        quoteId,
+      });
+    }
+    throw new ApiRequestError(
+      "We couldn't open this quote PDF.",
+      null,
+      'QUOTE_PDF_OPEN_FAILED',
+    );
+  }
 }

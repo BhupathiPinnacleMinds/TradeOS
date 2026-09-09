@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { Public } from '../auth/decorators/public.decorator';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { RateLimitPolicy } from '../rate-limit/rate-limit.decorator';
@@ -26,6 +35,18 @@ export class PublicQuotesController {
   @RateLimitPolicy('publicRead')
   viewed(@Param('token') token: string) {
     return this.quotes.publicPreview(token);
+  }
+
+  @Get(':token/pdf')
+  @RateLimitPolicy('publicRead')
+  async pdf(@Param('token') token: string, @Res() response: Response) {
+    const pdf = await this.quotes.publicPdf(token);
+    response.setHeader('Content-Type', pdf.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `inline; filename="${pdf.fileName}"`,
+    );
+    response.send(pdf.buffer);
   }
 
   @Post(':token/accept')

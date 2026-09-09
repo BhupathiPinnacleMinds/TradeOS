@@ -942,6 +942,12 @@ export function publicQuoteRequest(publicToken: string) {
   );
 }
 
+export function publicQuotePdfUrl(publicToken: string) {
+  return buildApiRequestUrl(
+    `/public/quotes/${encodeURIComponent(publicToken)}/pdf`,
+  );
+}
+
 export function publicQuoteAcceptRequest(
   publicToken: string,
   input: {

@@ -62,6 +62,23 @@ describe('quotes route contract', () => {
     ),
     'utf8',
   );
+  const mobilePublicQuote = readFileSync(
+    join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'mobile',
+      'src',
+      'screens',
+      'PublicQuoteScreen.tsx',
+    ),
+    'utf8',
+  );
+  const mobileApiClient = readFileSync(
+    join(__dirname, '..', '..', '..', 'mobile', 'src', 'api', 'client.ts'),
+    'utf8',
+  );
 
   it('registers the Quotes module in the application', () => {
     expect(appModule).toContain('QuotesModule');
@@ -126,6 +143,7 @@ describe('quotes route contract', () => {
     expect(publicController).toContain("@Controller('public/quotes')");
     [
       "@Get(':token')",
+      "@Get(':token/pdf')",
       "@Post(':token/view')",
       "@Post(':token/accept')",
       "@Post(':token/decline')",
@@ -134,6 +152,8 @@ describe('quotes route contract', () => {
 
   it('uses PDF, hash-only token and configuration-driven email provider seams', () => {
     expect(service).toContain('generateAndStorePdf');
+    expect(service).toContain('publicPdf');
+    expect(service).toContain('publicQuoteDocuments');
     expect(pdfProvider).toContain('application/pdf');
     expect(service).toContain('hashToken');
     expect(service).toContain('tokenHash');
@@ -148,7 +168,23 @@ describe('quotes route contract', () => {
 
   it('keeps quote PDF opening authenticated and document-driven in mobile', () => {
     expect(mobileQuoteDocuments).toContain('downloadAuthenticatedQuotePdf');
+    expect(mobileQuoteDocuments).toContain('openDownloadedQuotePdf');
     expect(mobileQuoteDocuments).toContain('buildAuthenticatedHeaders(token)');
+    expect(mobileQuoteDocuments).toContain(
+      "import * as IntentLauncher from 'expo-intent-launcher';",
+    );
+    expect(mobileQuoteDocuments).toContain(
+      'FileSystem.getContentUriAsync(localUri)',
+    );
+    expect(mobileQuoteDocuments).toContain('IntentLauncher.startActivityAsync');
+    expect(mobileQuoteDocuments).toContain('data: contentUri');
+    expect(mobileQuoteDocuments).toContain(
+      'flags: ANDROID_GRANT_READ_URI_PERMISSION',
+    );
+    expect(mobileQuoteDetails).toContain(
+      'await openDownloadedQuotePdf(localUri, quote.id);',
+    );
+    expect(mobileQuoteDetails).not.toContain('await Linking.openURL(localUri)');
     expect(mobileQuoteDetails).toContain(
       "label={activeDocument ? 'View PDF' : 'Generate PDF'}",
     );
@@ -157,6 +193,47 @@ describe('quotes route contract', () => {
     expect(mobileQuoteDetails).toContain('Converted to Job');
     expect(mobileQuoteDetails).not.toContain('objectKey');
     expect(mobileQuoteDetails).not.toContain('storageProvider');
+  });
+
+  it('keeps quote form and send modal keyboard-safe on mobile', () => {
+    expect(mobileQuoteForm).toContain('<KeyboardAvoidingView');
+    expect(mobileQuoteForm).toContain('keyboardAvoidingBehavior');
+    expect(mobileQuoteForm).toContain('keyboardShouldPersistTaps="handled"');
+    expect(mobileQuoteForm).toContain('keyboardDismissMode={');
+    expect(mobileQuoteForm).toContain('paddingBottom: Math.max(insets.bottom');
+    expect(mobileQuoteForm).toContain('style={styles.scroll}');
+
+    expect(mobileQuoteDetails).toContain('<KeyboardAvoidingView');
+    expect(mobileQuoteDetails).toContain('modalKeyboardAvoider');
+    expect(mobileQuoteDetails).toContain('modalScrollContent');
+    expect(mobileQuoteDetails).toContain('keyboardShouldPersistTaps="handled"');
+    expect(mobileQuoteDetails).toContain('keyboardDismissMode={');
+  });
+
+  it('does not persist untouched default quote line-item placeholders', () => {
+    expect(mobileQuoteForm).toContain('const placeholderLineItem');
+    expect(mobileQuoteForm).toContain('isUntouchedPlaceholderLineItem');
+    expect(mobileQuoteForm).toContain(
+      'if (isUntouchedPlaceholderLineItem(item))',
+    );
+    expect(mobileQuoteForm).toContain('lineItems.activeItemCount === 0');
+    expect(mobileQuoteForm).toContain(
+      'lineItems.validItems.length < lineItems.activeItemCount',
+    );
+    expect(mobileQuoteForm).toContain('lineItems: parsedLineItems.validItems');
+  });
+
+  it('shows public quote expiry and token-scoped PDF access to customers', () => {
+    expect(mobilePublicQuote).toContain('Valid until');
+    expect(mobilePublicQuote).toContain('formatBusinessDate');
+    expect(mobilePublicQuote).toContain('response.documents?.[0]');
+    expect(mobilePublicQuote).toContain('View PDF');
+    expect(mobilePublicQuote).toContain('publicQuotePdfUrl(token)');
+    expect(mobileApiClient).toContain('publicQuotePdfUrl');
+    expect(mobileApiClient).toContain('/public/quotes/');
+    expect(mobileApiClient).toContain('/pdf');
+    expect(mobilePublicQuote).not.toContain('objectKey');
+    expect(mobilePublicQuote).not.toContain('storageProvider');
   });
 
   it('labels quote discounts in customer-facing units before converting to stored values', () => {

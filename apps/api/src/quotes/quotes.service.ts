@@ -925,8 +925,37 @@ export class QuotesService {
     }
     return {
       business,
+      documents: await this.publicQuoteDocuments(context),
       quote: this.publicQuote(quote),
       state,
+    };
+  }
+
+  async publicPdf(token: string) {
+    const context = await this.resolvePublicToken(token);
+    const document = await this.prisma.quotePdfDocument.findFirst({
+      where: {
+        businessId: context.token.businessId,
+        quoteId: context.token.quoteId,
+        quoteRevisionId: context.revision.id,
+        version: context.revision.version,
+      },
+      orderBy: { generatedAt: 'desc' },
+    });
+    if (!document) {
+      throw this.domainError(
+        'QUOTE_PDF_NOT_FOUND',
+        'This quote PDF is not available.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const buffer = await this.storage.readObject({
+      objectKey: document.objectKey,
+    });
+    return {
+      buffer,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
     };
   }
 
@@ -1806,6 +1835,21 @@ export class QuotesService {
     };
   }
 
+  private async publicQuoteDocuments(
+    context: Awaited<ReturnType<QuotesService['resolvePublicToken']>>,
+  ) {
+    const document = await this.prisma.quotePdfDocument.findFirst({
+      where: {
+        businessId: context.token.businessId,
+        quoteId: context.token.quoteId,
+        quoteRevisionId: context.revision.id,
+        version: context.revision.version,
+      },
+      orderBy: { generatedAt: 'desc' },
+    });
+    return document ? [this.toPdfDocument(document)] : [];
+  }
+
   private snapshotQuote(snapshot: Prisma.JsonValue): Quote {
     const quote = snapshot as unknown as Quote;
     return {
@@ -1867,6 +1911,7 @@ export class QuotesService {
         postcode: true,
         state: true,
         suburb: true,
+        timezone: true,
       },
     });
     if (!business) {

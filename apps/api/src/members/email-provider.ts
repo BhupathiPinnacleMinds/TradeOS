@@ -244,15 +244,42 @@ export function createEmailProvider(config: {
   isProduction?: boolean;
   provider?: string;
 }) {
-  if (config.provider === 'resend' && config.apiKey && config.fromAddress) {
-    return new ResendEmailProvider(
-      config.apiKey,
-      config.fromName ?? 'TradieOS',
-      config.fromAddress,
-    );
+  const provider = normalizeEmailProvider(config.provider);
+  const apiKey = normalizeOptionalString(config.apiKey);
+  const fromAddress = normalizeOptionalString(config.fromAddress);
+  const fromName = normalizeOptionalString(config.fromName) ?? 'TradieOS';
+  const isProduction = config.isProduction === true;
+
+  if (provider === 'resend') {
+    if (!apiKey || !fromAddress) {
+      if (isProduction) {
+        throw new Error(
+          'Resend email provider requires RESEND_API_KEY and EMAIL_FROM_ADDRESS.',
+        );
+      }
+      return new ConsoleEmailProvider(!isProduction);
+    }
+    return new ResendEmailProvider(apiKey, fromName, fromAddress);
   }
 
-  return new ConsoleEmailProvider(!config.isProduction);
+  if (provider !== 'console' && provider !== 'local' && isProduction) {
+    throw new Error(`Unsupported EMAIL_PROVIDER: ${provider}.`);
+  }
+
+  if (isProduction) {
+    throw new Error('EMAIL_PROVIDER must be resend in production.');
+  }
+
+  return new ConsoleEmailProvider(!isProduction);
+}
+
+function normalizeEmailProvider(provider?: string) {
+  return normalizeOptionalString(provider)?.toLowerCase() ?? 'console';
+}
+
+function normalizeOptionalString(value?: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function escapeHtml(value: string) {
