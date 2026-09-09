@@ -30,6 +30,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Pressable,
@@ -66,6 +67,7 @@ import {
   MediaRemovalConfirmation,
 } from '../components/MediaOverflowMenu';
 import { useToast } from '../components/ToastProvider';
+import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { mobileConfig } from '../config/mobileConfig';
 import type { RootStackParamList } from '../navigation/types';
 import {
@@ -1199,81 +1201,99 @@ function ResolveFollowUpModal({
 }) {
   const canConfirm = !busy && (reason !== 'OTHER' || Boolean(note.trim()));
   return (
-    <Modal animationType="fade" transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.resolveModalCard}>
-          <Text style={styles.cardTitle}>Resolve follow-up</Text>
-          <Text style={styles.meta}>
-            Record why the outstanding follow-up has been handled. The original
-            follow-up history will remain in the job timeline.
-          </Text>
-          <View style={styles.reasonGrid}>
-            {JOB_FOLLOW_UP_RESOLUTION_REASONS.map((option) => {
-              const selected = reason === option;
-              return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onCancel}
+      transparent
+      visible={visible}
+    >
+      <KeyboardAvoidingView
+        behavior={keyboardAvoidingBehavior}
+        style={styles.resolveModalKeyboardAvoider}
+      >
+        <View style={styles.modalBackdrop}>
+          <ScrollView
+            contentContainerStyle={styles.resolveModalScrollContent}
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.resolveModalScroll}
+          >
+            <View style={styles.resolveModalCard}>
+              <Text style={styles.cardTitle}>Resolve follow-up</Text>
+              <Text style={styles.meta}>
+                Record why the outstanding follow-up has been handled. The
+                original follow-up history will remain in the job timeline.
+              </Text>
+              <View style={styles.reasonGrid}>
+                {JOB_FOLLOW_UP_RESOLUTION_REASONS.map((option) => {
+                  const selected = reason === option;
+                  return (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      key={option}
+                      onPress={() => onChangeReason(option)}
+                      style={[
+                        styles.reasonPill,
+                        selected && styles.reasonPillSelected,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.reasonPillText,
+                          selected && styles.reasonPillTextSelected,
+                        ]}
+                      >
+                        {followUpReasonLabel(option)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.inputLabel}>
+                {reason === 'OTHER' ? 'Explanation' : 'Optional note'}
+              </Text>
+              <TextInput
+                multiline
+                onChangeText={onChangeNote}
+                placeholder={
+                  reason === 'OTHER'
+                    ? 'Add a short explanation.'
+                    : 'Add an optional resolution note.'
+                }
+                placeholderTextColor={colours.muted}
+                style={styles.resolveNoteInput}
+                value={note}
+              />
+              <View style={styles.modalActions}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  key={option}
-                  onPress={() => onChangeReason(option)}
+                  disabled={busy}
+                  onPress={onCancel}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!canConfirm}
+                  onPress={onConfirm}
                   style={[
-                    styles.reasonPill,
-                    selected && styles.reasonPillSelected,
+                    styles.quickAction,
+                    styles.modalPrimaryButton,
+                    !canConfirm && styles.disabledAction,
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.reasonPillText,
-                      selected && styles.reasonPillTextSelected,
-                    ]}
-                  >
-                    {followUpReasonLabel(option)}
+                  <Text style={styles.quickText}>
+                    {busy ? 'Resolving...' : 'Resolve follow-up'}
                   </Text>
                 </Pressable>
-              );
-            })}
-          </View>
-          <Text style={styles.inputLabel}>
-            {reason === 'OTHER' ? 'Explanation' : 'Optional note'}
-          </Text>
-          <TextInput
-            multiline
-            onChangeText={onChangeNote}
-            placeholder={
-              reason === 'OTHER'
-                ? 'Add a short explanation.'
-                : 'Add an optional resolution note.'
-            }
-            placeholderTextColor={colours.muted}
-            style={styles.resolveNoteInput}
-            value={note}
-          />
-          <View style={styles.modalActions}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={onCancel}
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!canConfirm}
-              onPress={onConfirm}
-              style={[
-                styles.quickAction,
-                styles.modalPrimaryButton,
-                !canConfirm && styles.disabledAction,
-              ]}
-            >
-              <Text style={styles.quickText}>
-                {busy ? 'Resolving...' : 'Resolve follow-up'}
-              </Text>
-            </Pressable>
-          </View>
+              </View>
+            </View>
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1677,12 +1697,24 @@ const styles = StyleSheet.create({
   },
   reasonPillText: { color: colours.ink, fontWeight: '800' },
   reasonPillTextSelected: { color: colours.primary },
+  resolveModalKeyboardAvoider: {
+    flex: 1,
+  },
   resolveModalCard: {
     backgroundColor: colours.card,
     borderRadius: 22,
     maxWidth: 520,
     padding: 18,
     width: '100%',
+  },
+  resolveModalScroll: {
+    maxWidth: 520,
+    width: '100%',
+  },
+  resolveModalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 20,
   },
   resolveNoteInput: {
     borderColor: colours.border,

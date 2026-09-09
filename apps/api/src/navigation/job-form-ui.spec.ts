@@ -409,6 +409,10 @@ describe('Job form mobile UI contracts', () => {
     expect(jobDetails).toContain('Latest completion follow-up:');
     expect(jobDetails).toContain('Resolve follow-up');
     expect(jobDetails).toContain('ResolveFollowUpModal');
+    expect(jobDetails).toContain('<KeyboardAvoidingView');
+    expect(jobDetails).toContain('behavior={keyboardAvoidingBehavior}');
+    expect(jobDetails).toContain('keyboardShouldPersistTaps="handled"');
+    expect(jobDetails).toContain('styles.resolveModalScrollContent');
     expect(jobDetails).toContain('resolveJobFollowUpRequest');
     expect(jobController).toContain("@Post(':id/resolve-follow-up')");
     expect(jobService).toContain("'FOLLOW_UP_RESOLVED'");

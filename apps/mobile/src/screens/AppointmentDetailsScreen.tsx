@@ -1793,8 +1793,8 @@ function CompletionModal({
   );
   const [skipReasonExplanation, setSkipReasonExplanation] = useState('');
   const [signOffMode, setSignOffMode] = useState<
-    typeof SIGNATURE_CAPTURE_OPTION | typeof SIGNATURE_SKIP_OPTION
-  >(SIGNATURE_CAPTURE_OPTION);
+    typeof SIGNATURE_CAPTURE_OPTION | typeof SIGNATURE_SKIP_OPTION | ''
+  >('');
   const [skipReasonError, setSkipReasonError] = useState('');
   const [signatureActive, setSignatureActive] = useState(false);
   useEffect(() => {
@@ -1817,7 +1817,7 @@ function CompletionModal({
         : '',
     );
     setSkipReasonExplanation('');
-    setSignOffMode(SIGNATURE_CAPTURE_OPTION);
+    setSignOffMode('');
     setSkipReasonError('');
     setSignatureActive(false);
   }, [
@@ -2061,53 +2061,20 @@ function CompletionModal({
                     <Text style={styles.consentText}>
                       I confirm the work described above has been completed.
                     </Text>
-                    {canSkipSignature ? (
-                      <View style={styles.signOffChoiceRow}>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            selected: signOffMode === SIGNATURE_CAPTURE_OPTION,
-                          }}
-                          onPress={chooseSignaturePath}
-                          style={[
-                            styles.signOffChoice,
-                            signOffMode === SIGNATURE_CAPTURE_OPTION &&
-                              styles.signOffChoiceActive,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.signOffChoiceText,
-                              signOffMode === SIGNATURE_CAPTURE_OPTION &&
-                                styles.signOffChoiceTextActive,
-                            ]}
-                          >
-                            Capture signature
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            selected: signOffMode === SIGNATURE_SKIP_OPTION,
-                          }}
-                          onPress={chooseSkipPath}
-                          style={[
-                            styles.signOffChoice,
-                            signOffMode === SIGNATURE_SKIP_OPTION &&
-                              styles.signOffChoiceActive,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.signOffChoiceText,
-                              signOffMode === SIGNATURE_SKIP_OPTION &&
-                                styles.signOffChoiceTextActive,
-                            ]}
-                          >
-                            Skip signature
-                          </Text>
-                        </Pressable>
-                      </View>
+                    {signOffMode !== SIGNATURE_CAPTURE_OPTION ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={chooseSignaturePath}
+                        style={[
+                          styles.quickAction,
+                          styles.quickActionPrimary,
+                          styles.captureSignatureButton,
+                        ]}
+                      >
+                        <Text style={styles.quickTextPrimary}>
+                          Capture signature
+                        </Text>
+                      </Pressable>
                     ) : null}
                     {signOffMode === SIGNATURE_CAPTURE_OPTION ? (
                       <>
@@ -2169,6 +2136,18 @@ function CompletionModal({
                           </Pressable>
                         </View>
                       </>
+                    ) : null}
+                    {canSkipSignature &&
+                    signOffMode !== SIGNATURE_SKIP_OPTION ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={chooseSkipPath}
+                        style={styles.skipSignatureSecondaryButton}
+                      >
+                        <Text style={styles.skipSignatureSecondaryText}>
+                          Skip signature
+                        </Text>
+                      </Pressable>
                     ) : null}
                     {errors.signature ? (
                       <Text
@@ -2873,6 +2852,10 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingHorizontal: 18,
   },
+  captureSignatureButton: {
+    alignSelf: 'stretch',
+    marginTop: 12,
+  },
   container: {
     backgroundColor: colours.background,
     padding: 24,
@@ -3260,6 +3243,18 @@ const styles = StyleSheet.create({
   },
   skipSignatureButton: {
     marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_BUTTON_GAP,
+  },
+  skipSignatureSecondaryButton: {
+    alignSelf: 'center',
+    marginTop: 12,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  skipSignatureSecondaryText: {
+    color: colours.primary,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   skipSignatureSection: {
     marginTop: APPOINTMENT_SIGNATURE_SKIP_REASON_TOP_SPACING,

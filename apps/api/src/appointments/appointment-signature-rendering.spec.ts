@@ -207,6 +207,13 @@ describe('appointment signature rendering contract', () => {
 
     expect(appointmentDetails).toContain('Capture signature');
     expect(appointmentDetails).toContain('Skip signature');
+    expect(appointmentDetails).toContain("typeof SIGNATURE_SKIP_OPTION | ''");
+    expect(appointmentDetails).toContain("setSignOffMode('')");
+    expect(appointmentDetails).toContain('styles.captureSignatureButton');
+    expect(appointmentDetails).toContain('styles.skipSignatureSecondaryButton');
+    expect(appointmentDetails).toContain(
+      'signOffMode !== SIGNATURE_CAPTURE_OPTION',
+    );
     expect(appointmentDetails).toContain(
       'APPOINTMENT_SIGNATURE_SKIP_REASONS.map',
     );
