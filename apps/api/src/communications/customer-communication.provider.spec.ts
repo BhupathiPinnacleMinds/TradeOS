@@ -207,6 +207,32 @@ describe('CustomerCommunicationProvider', () => {
     });
   });
 
+  it('keeps customer communications local-safe when the feature is disabled', async () => {
+    const provider = createCustomerCommunicationProvider(
+      config({
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+        CUSTOMER_EMAIL_PROVIDER: 'resend',
+        CUSTOMER_SMS_PROVIDER: 'twilio',
+        EMAIL_FROM_ADDRESS: 'hello@example.com',
+        RESEND_API_KEY: 're_test_key',
+        TWILIO_ACCOUNT_SID: 'AC123456789',
+        TWILIO_AUTH_TOKEN: 'twilio-secret',
+        TWILIO_MESSAGING_FROM: '+61400000000',
+      }),
+    );
+
+    await expect(provider.send(delivery())).resolves.toMatchObject({
+      provider: 'local-email',
+      status: 'SENT',
+    });
+    await expect(
+      provider.send(delivery({ channel: 'SMS', recipient: '0422462867' })),
+    ).resolves.toMatchObject({
+      provider: 'local-sms',
+      status: 'SENT',
+    });
+  });
+
   it('fails fast when real provider config is incomplete', () => {
     expect(() =>
       createCustomerCommunicationProvider(

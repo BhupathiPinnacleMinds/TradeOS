@@ -175,6 +175,25 @@ function quoteRecord(overrides: Record<string, unknown> = {}) {
 function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
   const createdQuote = quoteRecord({ ...quoteOverrides, lineItems: [] });
   const quoteWithItems = quoteRecord(quoteOverrides);
+  const sentQuote = quoteRecord({
+    ...quoteOverrides,
+    sentAt: new Date('2026-08-10T00:00:00.000Z'),
+    status: 'SENT',
+  });
+  const pdfDocument = {
+    businessId: user.businessId,
+    checksum: 'pdf-checksum',
+    fileName: 'Q-2026-000001-v1.pdf',
+    fileSizeBytes: 1200,
+    generatedAt: new Date('2026-08-10T00:00:00.000Z'),
+    id: 'pdf-1',
+    mimeType: 'application/pdf',
+    objectKey: 'quotes/quote-1/pdf.pdf',
+    quoteId: 'quote-1',
+    quoteRevisionId: 'revision-1',
+    storageProvider: 'local',
+    version: 1,
+  };
   const quoteCreate = jest.fn((input: { data: Record<string, unknown> }) => {
     void input;
     return Promise.resolve(createdQuote);
@@ -199,17 +218,52 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
     quote: {
       create: quoteCreate,
       findUniqueOrThrow: jest.fn().mockResolvedValue(quoteWithItems),
-      update: jest.fn().mockResolvedValue(
-        quoteRecord({
-          ...quoteOverrides,
-          convertedAt: new Date('2026-08-10T00:00:00.000Z'),
-          convertedJobId: 'job-converted-1',
-          jobId: 'job-converted-1',
-          status: 'CONVERTED',
-        }),
+      update: jest.fn((input: { data?: { status?: string } }) =>
+        Promise.resolve(
+          input.data?.status === 'SENT'
+            ? sentQuote
+            : quoteRecord({
+                ...quoteOverrides,
+                convertedAt: new Date('2026-08-10T00:00:00.000Z'),
+                convertedJobId: 'job-converted-1',
+                jobId: 'job-converted-1',
+                status: 'CONVERTED',
+              }),
+        ),
       ),
     },
     quoteLineItem: { createMany: jest.fn().mockResolvedValue({ count: 2 }) },
+    quotePdfDocument: {
+      create: jest.fn().mockResolvedValue(pdfDocument),
+      findFirst: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue(pdfDocument),
+    },
+    quotePublicAccessToken: {
+      create: jest.fn().mockResolvedValue({
+        businessId: user.businessId,
+        expiresAt: new Date('2026-09-10T00:00:00.000Z'),
+        id: 'public-token-1',
+        quoteId: 'quote-1',
+        quoteRevisionId: 'revision-1',
+        tokenHash: 'hashed-token',
+        version: 1,
+      }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    quoteRevision: {
+      upsert: jest.fn().mockResolvedValue({
+        businessId: user.businessId,
+        createdAt: new Date('2026-08-10T00:00:00.000Z'),
+        createdBy: user.id,
+        id: 'revision-1',
+        quoteId: 'quote-1',
+        reason: 'Customer-facing send',
+        snapshot: {},
+        snapshotHash: 'snapshot-hash',
+        status: 'DRAFT',
+        version: 1,
+      }),
+    },
     quoteSequence: {
       update: jest.fn().mockResolvedValue({ nextNumber: 1 }),
       upsert: jest.fn().mockResolvedValue({}),
@@ -221,13 +275,26 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
   const prisma = {
     $transaction: transaction,
     auditLog: { findMany: jest.fn().mockResolvedValue([]) },
+    business: {
+      findUnique: jest.fn().mockResolvedValue({
+        abn: '12345678901',
+        address: '1 Main St',
+        email: 'hello@tradieos.test',
+        id: user.businessId,
+        name: 'Demo Tradie Co',
+        phone: '0400000000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      }),
+    },
     customer: { findFirst: jest.fn().mockResolvedValue({ id: 'customer-1' }) },
     customerSite: { findFirst: jest.fn().mockResolvedValue({ id: 'site-1' }) },
     job: { findFirst: jest.fn().mockResolvedValue({ id: 'job-1' }) },
     quote: { findFirst: jest.fn().mockResolvedValue(quoteWithItems) },
     quotePdfDocument: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  return { prisma, quoteCreate, tx };
+  return { prisma, quoteCreate, quoteWithItems, sentQuote, tx };
 }
 
 function createService(
@@ -239,29 +306,42 @@ function createService(
     quoteFinalised: jest.fn(),
     quoteSent: jest.fn(),
   },
+  configValues: Record<string, string | undefined> = {},
 ) {
+  const storage = {
+    createObjectKey: jest.fn().mockReturnValue('quotes/quote-1/pdf.pdf'),
+    createUploadTarget: jest.fn(),
+    deleteObject: jest.fn(),
+    completeUpload: jest.fn(),
+    getObjectMetadata: jest.fn(),
+    getSignedDownloadUrl: jest.fn(),
+    getSignedPreviewUrl: jest.fn(),
+    name: 'local',
+    objectExists: jest.fn(),
+    readObject: jest.fn(),
+    uploadFile: jest.fn().mockResolvedValue({
+      checksum: 'pdf-checksum',
+      contentLength: 1200,
+    }),
+  };
   return new QuotesService(
     prisma as never,
-    { get: jest.fn() } as never,
     {
-      createObjectKey: jest.fn(),
-      createUploadTarget: jest.fn(),
-      deleteObject: jest.fn(),
-      completeUpload: jest.fn(),
-      getObjectMetadata: jest.fn(),
-      getSignedDownloadUrl: jest.fn(),
-      getSignedPreviewUrl: jest.fn(),
-      name: 'local',
-      objectExists: jest.fn(),
-      readObject: jest.fn(),
-      uploadFile: jest.fn(),
-    },
+      get: jest.fn(
+        (key: string, fallback?: string) => configValues[key] ?? fallback,
+      ),
+    } as never,
+    storage,
     communications as never,
     { createForRoles: jest.fn() } as never,
   );
 }
 
 describe('QuotesService create', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('creates the quote and line items separately inside one transaction', async () => {
     const { prisma, quoteCreate, tx } = createPrismaMock();
     const communications = {
@@ -465,7 +545,10 @@ describe('QuotesService create', () => {
   });
 
   it('blocks technicians from creating quote drafts', async () => {
-    const { prisma, tx } = createPrismaMock();
+    const { prisma, quoteWithItems, sentQuote, tx } = createPrismaMock();
+    prisma.quote.findFirst
+      .mockResolvedValueOnce(quoteWithItems)
+      .mockResolvedValueOnce(sentQuote);
     const service = createService(prisma);
 
     try {
@@ -480,5 +563,117 @@ describe('QuotesService create', () => {
       });
     }
     expect(tx.quote.create).not.toHaveBeenCalled();
+  });
+
+  it('sends direct quote emails through configured Resend without customer communications being enabled', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      json: () => Promise.resolve({ id: 'em_quote_123' }),
+      ok: true,
+      status: 200,
+    } as Response);
+    type QuoteSentPayload = {
+      businessId: string;
+      createdBy: string;
+      publicUrl: string;
+      quoteId: string;
+    };
+    const { prisma, quoteWithItems, sentQuote, tx } = createPrismaMock();
+    prisma.quote.findFirst
+      .mockResolvedValueOnce(quoteWithItems)
+      .mockResolvedValueOnce(sentQuote);
+    const quoteSent = jest
+      .fn<Promise<void>, [QuoteSentPayload]>()
+      .mockResolvedValue(undefined);
+    const communications = {
+      quoteFinalised: jest.fn(),
+      quoteSent,
+    };
+    const service = createService(prisma, communications, {
+      APP_PUBLIC_URL: 'https://staging.tradieos.com',
+      CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+      EMAIL_FROM_ADDRESS: 'quotes@tradieos.com',
+      EMAIL_FROM_NAME: 'TradieOS Staging',
+      EMAIL_PROVIDER: 'resend',
+      RESEND_API_KEY: 're_test_key',
+    });
+
+    const response = await service.send(user, 'quote-1', {
+      message: 'Please review this quote.',
+      subject: 'Your quote is ready',
+      to: 'sam@example.com',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.resend.com/emails',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+    const request = fetchMock.mock.calls[0]?.[1];
+    const rawBody = request?.body;
+    if (typeof rawBody !== 'string') {
+      throw new Error('Expected Resend request body to be serialized JSON.');
+    }
+    const body = JSON.parse(rawBody) as {
+      from: string;
+      subject: string;
+      text: string;
+      to: string;
+    };
+    expect(body).toMatchObject({
+      from: 'TradieOS Staging <quotes@tradieos.com>',
+      subject: 'Your quote is ready',
+      to: 'sam@example.com',
+    });
+    expect(body.text).toContain('https://staging.tradieos.com/quote/');
+    expect(
+      tx.quote.update.mock.calls.some(
+        ([input]) => input.data?.status === 'SENT',
+      ),
+    ).toBe(true);
+    expect(tx.quotePdfDocument.create).toHaveBeenCalled();
+    expect(tx.quotePublicAccessToken.create).toHaveBeenCalled();
+    expect(quoteSent).toHaveBeenCalledTimes(1);
+    const quoteSentPayload = quoteSent.mock.calls[0]?.[0];
+    expect(quoteSentPayload).toEqual(
+      expect.objectContaining({
+        businessId: user.businessId,
+        createdBy: user.id,
+        quoteId: 'quote-1',
+      }),
+    );
+    expect(quoteSentPayload?.publicUrl).toContain(
+      'https://staging.tradieos.com/quote/',
+    );
+    expect(response.quote.status).toBe('SENT');
+    expect(response.publicQuoteUrl).toContain(
+      'https://staging.tradieos.com/quote/',
+    );
+  });
+
+  it('keeps direct quote email local when Resend is not configured', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      json: () => Promise.resolve({ id: 'em_should_not_send' }),
+      ok: true,
+      status: 200,
+    } as Response);
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { prisma } = createPrismaMock();
+    const service = createService(prisma);
+
+    await service.send(user, 'quote-1', {
+      message: 'Please review this quote.',
+      subject: 'Quote Q-2026-000001 from Demo Tradie Co',
+      to: 'sam@example.com',
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      '[TradieOS email:TRANSACTIONAL]',
+      expect.objectContaining({
+        subject: 'Quote Q-2026-000001 from Demo Tradie Co',
+        to: 'sam@example.com',
+      }),
+    );
   });
 });

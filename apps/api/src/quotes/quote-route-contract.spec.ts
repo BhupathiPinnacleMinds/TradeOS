@@ -132,7 +132,7 @@ describe('quotes route contract', () => {
     ].forEach((route) => expect(publicController).toContain(route));
   });
 
-  it('uses PDF, hash-only token and local email provider seams', () => {
+  it('uses PDF, hash-only token and configuration-driven email provider seams', () => {
     expect(service).toContain('generateAndStorePdf');
     expect(pdfProvider).toContain('application/pdf');
     expect(service).toContain('hashToken');
@@ -142,6 +142,8 @@ describe('quotes route contract', () => {
     expect(service).toContain('QUOTE_PUBLIC_TOKEN_INVALID');
     expect(service).toContain('QUOTE_ACCEPTANCE_CONFIRMATION_REQUIRED');
     expect(service).toContain("this.config.get<string>('APP_PUBLIC_URL')");
+    expect(service).toContain('createQuoteEmailProvider');
+    expect(service).not.toContain('new ConsoleQuoteEmailProvider()');
   });
 
   it('keeps quote PDF opening authenticated and document-driven in mobile', () => {

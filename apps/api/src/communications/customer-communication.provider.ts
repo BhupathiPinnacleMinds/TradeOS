@@ -173,6 +173,11 @@ export class TwilioCustomerSmsProvider implements CustomerChannelProvider {
 export function createCustomerCommunicationProvider(
   config: ConfigService,
 ): CustomerCommunicationProvider {
+  const enabled =
+    config.get<string>('CUSTOMER_COMMUNICATIONS_ENABLED', 'true') !== 'false';
+  if (!enabled) {
+    return new LocalCustomerCommunicationProvider();
+  }
   const emailProvider = config.get<string>('CUSTOMER_EMAIL_PROVIDER', 'local');
   const smsProvider = config.get<string>('CUSTOMER_SMS_PROVIDER', 'local');
   return new RoutedCustomerCommunicationProvider(

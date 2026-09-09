@@ -16,6 +16,13 @@ export type PasswordResetEmailInput = {
   expiresAt: Date;
 };
 
+export type TransactionalEmailInput = {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+};
+
 export type EmailDeliveryResult = {
   provider: 'console' | 'resend';
   status: 'SENT' | 'FAILED';
@@ -32,6 +39,9 @@ export interface EmailProvider {
   ): Promise<EmailDeliveryResult>;
   sendPasswordReset(
     input: PasswordResetEmailInput,
+  ): Promise<EmailDeliveryResult>;
+  sendTransactionalEmail(
+    input: TransactionalEmailInput,
   ): Promise<EmailDeliveryResult>;
   sendWelcomeEmail(input: {
     to: string;
@@ -58,6 +68,19 @@ export class ConsoleEmailProvider implements EmailProvider {
       resetUrl: this.exposeInviteUrlInLogs
         ? redactResetToken(input.resetUrl)
         : '[hidden outside development]',
+      to: input.to,
+    });
+    return Promise.resolve({
+      provider: 'console' as const,
+      status: 'SENT' as const,
+    });
+  }
+
+  sendTransactionalEmail(input: TransactionalEmailInput) {
+    console.info('[TradieOS email:TRANSACTIONAL]', {
+      htmlPreview: input.html.replace(/\s+/g, ' ').slice(0, 180),
+      subject: input.subject,
+      textPreview: input.text?.replace(/\s+/g, ' ').slice(0, 180) ?? null,
       to: input.to,
     });
     return Promise.resolve({
@@ -113,7 +136,7 @@ export class ResendEmailProvider implements EmailProvider {
   }
 
   sendPasswordReset(input: PasswordResetEmailInput) {
-    return this.send({
+    return this.sendTransactionalEmail({
       html: `
         <p>Hi ${escapeHtml(input.firstName)},</p>
         <p>We received a request to reset your TradieOS password.</p>
@@ -133,7 +156,7 @@ export class ResendEmailProvider implements EmailProvider {
     firstName: string;
     businessName: string;
   }) {
-    return this.send({
+    return this.sendTransactionalEmail({
       html: `<p>Hi ${escapeHtml(input.firstName)}, welcome to ${escapeHtml(
         input.businessName,
       )} on TradieOS.</p>`,
@@ -158,10 +181,10 @@ export class ResendEmailProvider implements EmailProvider {
       <p>If you were not expecting this invitation, you can safely ignore this email.</p>
     `;
 
-    return this.send({ html, subject, to: input.to });
+    return this.sendTransactionalEmail({ html, subject, to: input.to });
   }
 
-  private async send(input: { html: string; subject: string; to: string }) {
+  async sendTransactionalEmail(input: TransactionalEmailInput) {
     if (!this.apiKey || !this.fromAddress) {
       return {
         error: 'Resend is not configured',
@@ -176,6 +199,7 @@ export class ResendEmailProvider implements EmailProvider {
           from: `${this.fromName} <${this.fromAddress}>`,
           html: input.html,
           subject: input.subject,
+          text: input.text,
           to: input.to,
         }),
         headers: {

@@ -48,7 +48,7 @@ import type {
 import { STORAGE_PROVIDER } from '../media/storage-provider';
 import type { StorageProvider } from '../media/storage-provider';
 import {
-  ConsoleQuoteEmailProvider,
+  createQuoteEmailProvider,
   type QuoteEmailProvider,
 } from './quote-email.provider';
 import {
@@ -74,8 +74,7 @@ type QuoteRecord = Prisma.QuoteGetPayload<{
 @Injectable()
 export class QuotesService {
   private readonly logger = new Logger(QuotesService.name);
-  private readonly emailProvider: QuoteEmailProvider =
-    new ConsoleQuoteEmailProvider();
+  private readonly emailProvider: QuoteEmailProvider;
   private readonly pdfProvider: QuotePdfProvider =
     new DeterministicQuotePdfProvider();
 
@@ -85,7 +84,15 @@ export class QuotesService {
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly communications: CustomerCommunicationsService,
     private readonly notifications: NotificationsService,
-  ) {}
+  ) {
+    this.emailProvider = createQuoteEmailProvider({
+      apiKey: this.config.get<string>('RESEND_API_KEY'),
+      fromAddress: this.config.get<string>('EMAIL_FROM_ADDRESS'),
+      fromName: this.config.get<string>('EMAIL_FROM_NAME', 'TradieOS'),
+      isProduction: this.config.get<string>('NODE_ENV') === 'production',
+      provider: this.config.get<string>('EMAIL_PROVIDER', 'console'),
+    });
+  }
 
   async findAll(
     currentUser: AuthenticatedUser,

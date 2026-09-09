@@ -496,7 +496,7 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
             setPublicQuoteUrl(response.publicQuoteUrl ?? null);
             setSendModalOpen(false);
             showToast({
-              message: 'Quote sent using local email provider.',
+              message: 'Quote sent successfully.',
               tone: 'success',
             });
           })
