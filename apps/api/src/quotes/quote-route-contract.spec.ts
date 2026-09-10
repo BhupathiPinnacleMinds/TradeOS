@@ -202,12 +202,26 @@ describe('quotes route contract', () => {
     expect(mobileQuoteForm).toContain('keyboardDismissMode={');
     expect(mobileQuoteForm).toContain('paddingBottom: Math.max(insets.bottom');
     expect(mobileQuoteForm).toContain('style={styles.scroll}');
+    expect(mobileQuoteForm).toContain('ref={scrollRef}');
 
     expect(mobileQuoteDetails).toContain('<KeyboardAvoidingView');
     expect(mobileQuoteDetails).toContain('modalKeyboardAvoider');
     expect(mobileQuoteDetails).toContain('modalScrollContent');
     expect(mobileQuoteDetails).toContain('keyboardShouldPersistTaps="handled"');
     expect(mobileQuoteDetails).toContain('keyboardDismissMode={');
+  });
+
+  it('scrolls the New Quote Description field into view when focused', () => {
+    expect(mobileQuoteForm).toContain('function scrollDescriptionIntoView()');
+    expect(mobileQuoteForm).toContain('descriptionOffsetYRef');
+    expect(mobileQuoteForm).toContain('scrollRef.current?.scrollTo');
+    expect(mobileQuoteForm).toContain('clearTimeout(descriptionFocusTimerRef');
+    expect(mobileQuoteForm).toContain('label="Title"');
+    expect(mobileQuoteForm).toContain('label="Description"');
+    expect(mobileQuoteForm).toContain('onFocus={scrollDescriptionIntoView}');
+    expect(mobileQuoteForm).toContain(
+      'descriptionOffsetYRef.current = event.nativeEvent.layout.y',
+    );
   });
 
   it('does not persist untouched default quote line-item placeholders', () => {

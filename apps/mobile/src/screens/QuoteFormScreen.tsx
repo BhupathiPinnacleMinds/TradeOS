@@ -32,6 +32,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { ViewProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   createQuoteRequest,
@@ -120,6 +121,11 @@ export function QuoteFormScreen({ navigation, route }: Props) {
   const savedRef = useRef(false);
   const mountedRef = useRef(true);
   const navigationRef = useRef(navigation);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const descriptionOffsetYRef = useRef(0);
+  const descriptionFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const guardRef = useRef(
     createUnsavedChangesNavigationGuard<NavigationAction>({
       dispatch(action) {
@@ -235,6 +241,9 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (descriptionFocusTimerRef.current) {
+        clearTimeout(descriptionFocusTimerRef.current);
+      }
       guardRef.current.cleanup();
     };
   }, []);
@@ -361,6 +370,20 @@ export function QuoteFormScreen({ navigation, route }: Props) {
     setLineItems((current) => [...current, { ...placeholderLineItem }]);
   }
 
+  function scrollDescriptionIntoView() {
+    if (descriptionFocusTimerRef.current) {
+      clearTimeout(descriptionFocusTimerRef.current);
+    }
+
+    descriptionFocusTimerRef.current = setTimeout(() => {
+      descriptionFocusTimerRef.current = null;
+      scrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(descriptionOffsetYRef.current - 24, 0),
+      });
+    }, 120);
+  }
+
   async function save(sendAfterSave = false) {
     if (!token || isSaving || savingRef.current) return;
     const validationError = validateBeforeSave({
@@ -479,6 +502,7 @@ export function QuoteFormScreen({ navigation, route }: Props) {
         ]}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
+        ref={scrollRef}
         style={styles.scroll}
       >
         <Text style={styles.eyebrow}>STEP {step + 1} OF 4</Text>
@@ -533,6 +557,10 @@ export function QuoteFormScreen({ navigation, route }: Props) {
             <Field
               label="Description"
               multiline
+              onFocus={scrollDescriptionIntoView}
+              onLayout={(event) => {
+                descriptionOffsetYRef.current = event.nativeEvent.layout.y;
+              }}
               value={description}
               onChangeText={setDescription}
             />
@@ -1006,6 +1034,7 @@ function StepTabs({
 function Field({
   error,
   label,
+  onLayout,
   ...props
 }: {
   error?: string | null;
@@ -1013,10 +1042,12 @@ function Field({
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
+  onFocus?: () => void;
+  onLayout?: ViewProps['onLayout'];
   value: string;
 }) {
   return (
-    <View style={styles.field}>
+    <View onLayout={onLayout} style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         {...props}
