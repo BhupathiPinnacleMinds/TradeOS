@@ -120,6 +120,20 @@ describe('customer communications mobile UI contracts', () => {
     expect(quoteDetails).toContain('Decline quote');
   });
 
+  it('renders GST-exclusive quote line rows before GST in staff and public views', () => {
+    const quoteDetails = mobileSource('screens/QuoteDetailsScreen.tsx');
+    const publicQuote = mobileSource('screens/PublicQuoteScreen.tsx');
+
+    expect(quoteDetails).toContain('quoteLineDisplayAmountCents');
+    expect(quoteDetails).toContain(
+      'quoteLineDisplayAmountCents(quote.pricingMode, item)',
+    );
+    expect(publicQuote).toContain('quoteLineDisplayAmountCents');
+    expect(publicQuote).toContain(
+      'quoteLineDisplayAmountCents(quote.pricingMode, item)',
+    );
+  });
+
   it('uses explicit appointment reschedule controls instead of fixed increment rescheduling', () => {
     const appointmentDetails = mobileSource(
       'screens/AppointmentDetailsScreen.tsx',

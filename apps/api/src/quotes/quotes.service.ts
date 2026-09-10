@@ -24,6 +24,7 @@ import {
   canTransitionQuoteStatus,
   formatAudCents,
   parseQuoteQuantityInput,
+  quoteLineDisplayAmountCents,
   roleCanAcceptOrDeclineQuote,
   roleCanCancelQuote,
   roleCanConvertQuote,
@@ -70,6 +71,10 @@ const QUOTE_STATUS_AUDIT_EVENTS: Partial<Record<QuoteStatus, string>> = {
 type QuoteRecord = Prisma.QuoteGetPayload<{
   include: ReturnType<QuotesService['quoteInclude']>;
 }>;
+
+type QuoteRevisionActor = Pick<AuthenticatedUser, 'businessId'> & {
+  id: string | null;
+};
 
 @Injectable()
 export class QuotesService {
@@ -460,39 +465,41 @@ export class QuotesService {
     const now = new Date();
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const isInitialSend = quote.status === 'DRAFT';
+      const next = await tx.quote.update({
+        where: { id_businessId: { businessId: currentUser.businessId, id } },
+        data: {
+          sentAt: quote.sentAt ?? now,
+          status: isInitialSend ? 'SENT' : quote.status,
+          updatedBy: currentUser.id,
+          ...(isInitialSend ? { version: { increment: 1 } } : {}),
+        },
+        include: this.quoteInclude(),
+      });
       const revision = await this.createRevision(
         tx,
         currentUser,
-        quote,
-        quote.status === 'DRAFT' ? 'Customer-facing send' : 'Resend',
+        next,
+        isInitialSend ? 'Customer-facing send' : 'Resend',
       );
       const pdf = await this.generateAndStorePdf(
         tx,
         currentUser,
-        quote,
+        next,
         revision.id,
         business,
       );
       const token = await this.createPublicToken(
         tx,
         currentUser.businessId,
-        quote.id,
+        next.id,
         revision.id,
-        quote.version,
+        next.version,
       );
-      const next = await tx.quote.update({
-        where: { id_businessId: { businessId: currentUser.businessId, id } },
-        data: {
-          sentAt: quote.sentAt ?? now,
-          status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
-          updatedBy: currentUser.id,
-        },
-        include: this.quoteInclude(),
-      });
       await this.writeAudit(
         tx,
         currentUser,
-        quote.status === 'DRAFT' ? 'QUOTE_SENT' : 'QUOTE_RESENT',
+        isInitialSend ? 'QUOTE_SENT' : 'QUOTE_RESENT',
         next,
         {
           pdfDocumentId: pdf.id,
@@ -730,6 +737,7 @@ export class QuotesService {
       );
     }
 
+    const business = await this.getBusiness(currentUser.businessId);
     const result = await this.prisma.$transaction(async (tx) => {
       const jobNumber = await this.nextJobNumber(tx, currentUser.businessId);
       const address = this.quoteAddress(quote);
@@ -761,8 +769,33 @@ export class QuotesService {
           jobId: job.id,
           status: 'CONVERTED',
           updatedBy: currentUser.id,
+          version: { increment: 1 },
         },
         include: this.quoteInclude(),
+      });
+      const revision = await this.createRevision(
+        tx,
+        currentUser,
+        updated,
+        'Converted version',
+      );
+      const pdf = await this.generateAndStorePdf(
+        tx,
+        currentUser,
+        updated,
+        revision.id,
+        business,
+      );
+      await tx.quotePublicAccessToken.updateMany({
+        where: {
+          businessId: currentUser.businessId,
+          quoteId: updated.id,
+          revokedAt: null,
+        },
+        data: {
+          quoteRevisionId: revision.id,
+          version: updated.version,
+        },
       });
       await this.writeAudit(
         tx,
@@ -772,6 +805,8 @@ export class QuotesService {
         {
           jobId: job.id,
           jobNumber,
+          pdfDocumentId: pdf.id,
+          quoteRevisionId: revision.id,
         },
       );
       await tx.auditLog.create({
@@ -845,27 +880,59 @@ export class QuotesService {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const existingDocument = await this.prisma.quotePdfDocument.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        quoteId: quote.id,
+        version: quote.version,
+      },
+      orderBy: { generatedAt: 'desc' },
+    });
     const document =
-      (await this.prisma.quotePdfDocument.findFirst({
-        where: {
-          businessId: currentUser.businessId,
-          quoteId: quote.id,
-          version: quote.version,
-        },
-        orderBy: { generatedAt: 'desc' },
-      })) ??
-      (await this.prisma.$transaction(async (tx) => {
-        const frozen =
-          revision ??
-          (await this.createRevision(tx, currentUser, quote, 'PDF generated'));
-        return this.generateAndStorePdf(
-          tx,
-          currentUser,
-          quote,
-          frozen.id,
-          business,
-        );
-      }));
+      existingDocument && revision?.status === quote.status
+        ? existingDocument
+        : await this.prisma.$transaction(async (tx) => {
+            if (revision && revision.status !== quote.status) {
+              const current = await tx.quote.update({
+                where: {
+                  id_businessId: {
+                    businessId: currentUser.businessId,
+                    id: quote.id,
+                  },
+                },
+                data: { version: { increment: 1 } },
+                include: this.quoteInclude(),
+              });
+              const frozen = await this.createRevision(
+                tx,
+                currentUser,
+                current,
+                'Current status PDF generated',
+              );
+              return this.generateAndStorePdf(
+                tx,
+                currentUser,
+                current,
+                frozen.id,
+                business,
+              );
+            }
+            const frozen =
+              revision ??
+              (await this.createRevision(
+                tx,
+                currentUser,
+                quote,
+                'PDF generated',
+              ));
+            return this.generateAndStorePdf(
+              tx,
+              currentUser,
+              quote,
+              frozen.id,
+              business,
+            );
+          });
     const buffer = await this.storage.readObject({
       objectKey: document.objectKey,
     });
@@ -933,15 +1000,64 @@ export class QuotesService {
 
   async publicPdf(token: string) {
     const context = await this.resolvePublicToken(token);
-    const document = await this.prisma.quotePdfDocument.findFirst({
+    const business = await this.getBusiness(context.quote.businessId);
+    const publicActor: QuoteRevisionActor = {
+      businessId: context.quote.businessId,
+      id: null,
+    };
+    const existingDocument = await this.prisma.quotePdfDocument.findFirst({
       where: {
         businessId: context.token.businessId,
         quoteId: context.token.quoteId,
-        quoteRevisionId: context.revision.id,
-        version: context.revision.version,
       },
       orderBy: { generatedAt: 'desc' },
     });
+    const document =
+      existingDocument && context.revision.status === context.quote.status
+        ? existingDocument
+        : await this.prisma.$transaction(async (tx) => {
+            if (context.revision.status !== context.quote.status) {
+              const current = await tx.quote.update({
+                where: {
+                  id_businessId: {
+                    businessId: context.quote.businessId,
+                    id: context.quote.id,
+                  },
+                },
+                data: { version: { increment: 1 } },
+                include: this.quoteInclude(),
+              });
+              const revision = await this.createRevision(
+                tx,
+                publicActor,
+                current,
+                'Current status public PDF generated',
+              );
+              const pdf = await this.generateAndStorePdf(
+                tx,
+                publicActor,
+                current,
+                revision.id,
+                business,
+              );
+              await tx.quotePublicAccessToken.update({
+                where: { id: context.token.id },
+                data: {
+                  quoteRevisionId: revision.id,
+                  version: current.version,
+                },
+              });
+              return pdf;
+            }
+            const snapshotQuote = context.quote;
+            return this.generateAndStorePdf(
+              tx,
+              publicActor,
+              snapshotQuote,
+              context.revision.id,
+              business,
+            );
+          });
     if (!document) {
       throw this.domainError(
         'QUOTE_PDF_NOT_FOUND',
@@ -976,9 +1092,14 @@ export class QuotesService {
     }
     const context = await this.resolvePublicToken(token);
     this.assertPublicMutationAllowed(context);
+    const business = await this.getBusiness(context.quote.businessId);
+    const publicActor: QuoteRevisionActor = {
+      businessId: context.quote.businessId,
+      id: null,
+    };
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.quote.update({
+      const updated = await tx.quote.update({
         where: {
           id_businessId: {
             businessId: context.quote.businessId,
@@ -989,14 +1110,33 @@ export class QuotesService {
           acceptedAt: now,
           acceptedByEmail: context.quote.customer.email,
           acceptedByName: dto.acceptedByName.trim(),
-          acceptedQuoteVersion: context.revision.version,
+          acceptedQuoteVersion: context.quote.version + 1,
           status: 'ACCEPTED',
           updatedBy: null,
+          version: { increment: 1 },
         },
+        include: this.quoteInclude(),
       });
+      const revision = await this.createRevision(
+        tx,
+        publicActor,
+        updated,
+        'Accepted version',
+      );
+      const pdf = await this.generateAndStorePdf(
+        tx,
+        publicActor,
+        updated,
+        revision.id,
+        business,
+      );
       await tx.quotePublicAccessToken.update({
         where: { id: context.token.id },
-        data: { acceptedAt: now },
+        data: {
+          acceptedAt: now,
+          quoteRevisionId: revision.id,
+          version: updated.version,
+        },
       });
       await tx.auditLog.create({
         data: {
@@ -1010,10 +1150,11 @@ export class QuotesService {
             acceptedByTitle: dto.acceptedByTitle ?? null,
             acceptedTotalCents: context.quote.totalCents,
             note: dto.note ?? null,
+            pdfDocumentId: pdf.id,
             publicTokenId: context.token.id,
             quoteNumber: context.quote.quoteNumber,
-            quoteRevisionId: context.revision.id,
-            version: context.revision.version,
+            quoteRevisionId: revision.id,
+            version: updated.version,
           },
         },
       });
@@ -1038,9 +1179,14 @@ export class QuotesService {
   async publicDecline(token: string, dto: PublicQuoteDeclineDto) {
     const context = await this.resolvePublicToken(token);
     this.assertPublicMutationAllowed(context);
+    const business = await this.getBusiness(context.quote.businessId);
+    const publicActor: QuoteRevisionActor = {
+      businessId: context.quote.businessId,
+      id: null,
+    };
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.quote.update({
+      const updated = await tx.quote.update({
         where: {
           id_businessId: {
             businessId: context.quote.businessId,
@@ -1053,11 +1199,30 @@ export class QuotesService {
           declineReason: dto.reason ?? null,
           status: 'DECLINED',
           updatedBy: null,
+          version: { increment: 1 },
         },
+        include: this.quoteInclude(),
       });
+      const revision = await this.createRevision(
+        tx,
+        publicActor,
+        updated,
+        'Declined version',
+      );
+      const pdf = await this.generateAndStorePdf(
+        tx,
+        publicActor,
+        updated,
+        revision.id,
+        business,
+      );
       await tx.quotePublicAccessToken.update({
         where: { id: context.token.id },
-        data: { declinedAt: now },
+        data: {
+          declinedAt: now,
+          quoteRevisionId: revision.id,
+          version: updated.version,
+        },
       });
       await tx.auditLog.create({
         data: {
@@ -1068,11 +1233,12 @@ export class QuotesService {
           entityType: 'Quote',
           metadata: {
             comment: dto.comment ?? null,
+            pdfDocumentId: pdf.id,
             publicTokenId: context.token.id,
             quoteNumber: context.quote.quoteNumber,
-            quoteRevisionId: context.revision.id,
+            quoteRevisionId: revision.id,
             reason: dto.reason ?? null,
-            version: context.revision.version,
+            version: updated.version,
           },
         },
       });
@@ -1179,16 +1345,43 @@ export class QuotesService {
         HttpStatus.CONFLICT,
       );
     }
+    const business = await this.getBusiness(currentUser.businessId);
     return this.prisma.$transaction(async (tx) => {
-      if (nextStatus === 'ACCEPTED') {
-        await this.createRevision(tx, currentUser, quote, 'Accepted version');
-      }
       const updated = await tx.quote.update({
         where: {
           id_businessId: { businessId: currentUser.businessId, id: quote.id },
         },
-        data: { ...data, status: nextStatus, updatedBy: currentUser.id },
+        data: {
+          ...data,
+          status: nextStatus,
+          updatedBy: currentUser.id,
+          version: { increment: 1 },
+        },
         include: this.quoteInclude(),
+      });
+      const revision = await this.createRevision(
+        tx,
+        currentUser,
+        updated,
+        `${nextStatus} version`,
+      );
+      const pdf = await this.generateAndStorePdf(
+        tx,
+        currentUser,
+        updated,
+        revision.id,
+        business,
+      );
+      await tx.quotePublicAccessToken.updateMany({
+        where: {
+          businessId: currentUser.businessId,
+          quoteId: updated.id,
+          revokedAt: null,
+        },
+        data: {
+          quoteRevisionId: revision.id,
+          version: updated.version,
+        },
       });
       await this.writeAudit(
         tx,
@@ -1196,7 +1389,9 @@ export class QuotesService {
         QUOTE_STATUS_AUDIT_EVENTS[nextStatus] ?? 'QUOTE_STATUS_CHANGED',
         updated,
         {
+          pdfDocumentId: pdf.id,
           previousStatus: quote.status,
+          quoteRevisionId: revision.id,
           status: nextStatus,
         },
       );
@@ -1567,7 +1762,7 @@ export class QuotesService {
 
   private async createRevision(
     tx: Prisma.TransactionClient,
-    currentUser: AuthenticatedUser,
+    currentUser: QuoteRevisionActor,
     quote: QuoteRecord,
     reason: string,
   ) {
@@ -1596,7 +1791,7 @@ export class QuotesService {
 
   private async generateAndStorePdf(
     tx: Prisma.TransactionClient,
-    currentUser: AuthenticatedUser,
+    currentUser: QuoteRevisionActor,
     quote: QuoteRecord,
     quoteRevisionId: string,
     business: Awaited<ReturnType<QuotesService['getBusiness']>>,
@@ -1816,6 +2011,7 @@ export class QuotesService {
       gstCents: quote.gstCents,
       issueDate: quote.issueDate,
       lineItems: quote.lineItems.map((item) => ({
+        lineSubtotalCents: item.lineSubtotalCents,
         lineTotalCents: item.lineTotalCents,
         name: item.name,
         quantity: item.quantity,
@@ -1842,8 +2038,6 @@ export class QuotesService {
       where: {
         businessId: context.token.businessId,
         quoteId: context.token.quoteId,
-        quoteRevisionId: context.revision.id,
-        version: context.revision.version,
       },
       orderBy: { generatedAt: 'desc' },
     });
@@ -2129,7 +2323,7 @@ export class QuotesService {
           `<tr><td>${this.escape(item.name)}</td><td>${item.quantity} ${
             item.unit
           }</td><td>${formatAudCents(item.unitPriceCents)}</td><td>${formatAudCents(
-            item.lineTotalCents,
+            quoteLineDisplayAmountCents(quote.pricingMode, item),
           )}</td></tr>`,
       )
       .join('');

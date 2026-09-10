@@ -171,6 +171,83 @@ describe('DeterministicQuotePdfProvider', () => {
     expect(pdfText).toContain('Total: $308.00');
   });
 
+  it('renders GST-exclusive line item amounts before GST', () => {
+    const provider = new DeterministicQuotePdfProvider();
+    const result = provider.generateQuotePdf({
+      business: {
+        abn: '12345678901',
+        address: '1 Collins Street',
+        email: 'hello@example.com',
+        name: 'Demo Tradie Co',
+        phone: '0399990000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      },
+      quote,
+    });
+    const pdfText = result.buffer.toString('utf8');
+
+    expect(pdfText).toContain('Labour | 2.5 hour | $100.00 | $250.00');
+    expect(pdfText).not.toContain('Labour | 2.5 hour | $100.00 | $275.00');
+    expect(pdfText).toContain('Total: $363.00');
+  });
+
+  it('preserves GST-inclusive line item amount display', () => {
+    const provider = new DeterministicQuotePdfProvider();
+    const result = provider.generateQuotePdf({
+      business: {
+        abn: '12345678901',
+        address: '1 Collins Street',
+        email: 'hello@example.com',
+        name: 'Demo Tradie Co',
+        phone: '0399990000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      },
+      quote: {
+        ...quote,
+        gstCents: 2273,
+        lineItems: [
+          {
+            ...quote.lineItems[0],
+            lineGstCents: 2273,
+            lineSubtotalCents: 22727,
+            lineTotalCents: 25000,
+          },
+        ],
+        pricingMode: 'GST_INCLUSIVE',
+        subtotalCents: 22727,
+        totalCents: 25000,
+      },
+    });
+    const pdfText = result.buffer.toString('utf8');
+
+    expect(pdfText).toContain('Labour | 2.5 hour | $100.00 | $250.00');
+    expect(pdfText).toContain('Subtotal: $227.27');
+    expect(pdfText).toContain('GST: $22.73');
+  });
+
+  it('renders the frozen quote status in the PDF', () => {
+    const provider = new DeterministicQuotePdfProvider();
+    const result = provider.generateQuotePdf({
+      business: {
+        abn: '12345678901',
+        address: '1 Collins Street',
+        email: 'hello@example.com',
+        name: 'Demo Tradie Co',
+        phone: '0399990000',
+        postcode: '3000',
+        state: 'VIC',
+        suburb: 'Melbourne',
+      },
+      quote: { ...quote, status: 'CONVERTED' },
+    });
+
+    expect(result.buffer.toString('utf8')).toContain('Status: CONVERTED');
+  });
+
   it('supports multi-page quote PDFs for long terms', () => {
     const provider = new DeterministicQuotePdfProvider();
     const result = provider.generateQuotePdf({

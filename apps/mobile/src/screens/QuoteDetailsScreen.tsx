@@ -4,6 +4,7 @@ import type { Quote } from '@tradieos/shared';
 import {
   formatAudCents,
   formatBusinessDate,
+  quoteLineDisplayAmountCents,
   roleCanAcceptOrDeclineQuote,
   roleCanCancelQuote,
   roleCanConvertQuote,
@@ -413,7 +414,9 @@ export function QuoteDetailsScreen({ navigation, route }: Props) {
               </Text>
             </View>
             <Text style={styles.lineTotal}>
-              {formatAudCents(item.lineTotalCents)}
+              {formatAudCents(
+                quoteLineDisplayAmountCents(quote.pricingMode, item),
+              )}
             </Text>
           </View>
         ))}

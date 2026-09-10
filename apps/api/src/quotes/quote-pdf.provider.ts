@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { Quote } from '@tradieos/shared';
-import { formatAudCents } from '@tradieos/shared';
+import { formatAudCents, quoteLineDisplayAmountCents } from '@tradieos/shared';
 
 export interface QuotePdfResult {
   buffer: Buffer;
@@ -109,7 +109,9 @@ export class DeterministicQuotePdfProvider implements QuotePdfProvider {
         (item) =>
           `${item.name} | ${item.quantity} ${item.unit} | ${formatAudCents(
             item.unitPriceCents,
-          )} | ${formatAudCents(item.lineTotalCents)}`,
+          )} | ${formatAudCents(
+            quoteLineDisplayAmountCents(quote.pricingMode, item),
+          )}`,
       ),
       '',
       `Subtotal: ${formatAudCents(quote.subtotalCents)}`,

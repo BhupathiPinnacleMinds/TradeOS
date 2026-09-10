@@ -3,6 +3,7 @@ import type {
   AppointmentPayload,
   AppointmentType,
   AustralianState,
+  AustralianTimezone,
   Customer,
   CustomerPayload,
   CustomerSite,
@@ -174,6 +175,74 @@ function formatLocation(location: ResolvedLocation) {
     .join(', ');
 }
 
+function cleanOptionalText(value?: string | null) {
+  return value?.trim() ?? '';
+}
+
+function isPlaceholderAddressText(value?: string | null) {
+  const text = cleanOptionalText(value).toLowerCase();
+  return text === 'address to be confirmed' || text === 'to be confirmed';
+}
+
+function getJobManualLocation(job: Job): ResolvedLocation | null {
+  const addressLine1 = cleanOptionalText(job.addressLine1);
+  const addressLine2 = cleanOptionalText(job.addressLine2);
+  const suburb = cleanOptionalText(job.suburb);
+  const state = cleanOptionalText(job.state) as AustralianState | '';
+  const postcode = cleanOptionalText(job.postcode);
+
+  if (
+    !addressLine1 ||
+    !suburb ||
+    !state ||
+    !postcode ||
+    isPlaceholderAddressText(addressLine1) ||
+    isPlaceholderAddressText(suburb) ||
+    postcode === '0000' ||
+    !AUSTRALIAN_STATES.includes(state) ||
+    !/^\d{4}$/.test(postcode)
+  ) {
+    return null;
+  }
+
+  return {
+    accessInstructions: cleanOptionalText(job.accessInstructions),
+    addressLine1,
+    addressLine2,
+    postcode,
+    state,
+    suburb,
+  };
+}
+
+function getJobDurationMinutes(job: Job) {
+  if (
+    typeof job.estimatedDurationMinutes === 'number' &&
+    job.estimatedDurationMinutes > 0
+  ) {
+    return job.estimatedDurationMinutes;
+  }
+
+  const scheduledStart = new Date(job.scheduledStart);
+  const scheduledEnd = job.scheduledEnd ? new Date(job.scheduledEnd) : null;
+  if (
+    scheduledEnd &&
+    !Number.isNaN(scheduledStart.getTime()) &&
+    !Number.isNaN(scheduledEnd.getTime())
+  ) {
+    const diffMinutes = Math.round(
+      (scheduledEnd.getTime() - scheduledStart.getTime()) / 60_000,
+    );
+    if (diffMinutes > 0) return diffMinutes;
+  }
+
+  return 120;
+}
+
+function getJobAppointmentStart(job: Job, timezone: AustralianTimezone) {
+  return normalizeFutureStart(new Date(job.scheduledStart), timezone);
+}
+
 function upsertCustomer(records: Customer[], customer: Customer) {
   const existingIndex = records.findIndex(
     (record) => record.id === customer.id,
@@ -181,6 +250,14 @@ function upsertCustomer(records: Customer[], customer: Customer) {
   if (existingIndex === -1) return [customer, ...records];
   return records.map((record, index) =>
     index === existingIndex ? customer : record,
+  );
+}
+
+function upsertJob(records: Job[], job: Job) {
+  const existingIndex = records.findIndex((record) => record.id === job.id);
+  if (existingIndex === -1) return [job, ...records];
+  return records.map((record, index) =>
+    index === existingIndex ? job : record,
   );
 }
 
@@ -561,16 +638,25 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             return;
           }
           setSelectedJobId(jobResponse.job.id);
+          setJobs((current) => upsertJob(current, jobResponse.job));
           setUseQuickJob(false);
           setQuickJobTitle(jobResponse.job.title);
-          setStartAt(
-            normalizeFutureStart(
-              new Date(jobResponse.job.scheduledStart),
-              businessTimezone,
-            ),
-          );
-          setDurationMinutes(jobResponse.job.estimatedDurationMinutes ?? 120);
+          setStartAt(getJobAppointmentStart(jobResponse.job, businessTimezone));
+          setDurationMinutes(getJobDurationMinutes(jobResponse.job));
           setAssignedUserId(jobResponse.job.assignedToUserId);
+          setNotes(cleanOptionalText(jobResponse.job.description));
+          const jobLocation = getJobManualLocation(jobResponse.job);
+          if (jobLocation) {
+            setSelectedSiteId('');
+            setLocationSource('MANUAL');
+            setManualAddressLine1(jobLocation.addressLine1);
+            setManualAddressLine2(jobLocation.addressLine2);
+            setManualSuburb(jobLocation.suburb);
+            setManualState(jobLocation.state);
+            setManualPostcode(jobLocation.postcode);
+            setManualAccessInstructions(jobLocation.accessInstructions);
+            setSaveAddressAsSite(false);
+          }
         } else if (customerId) {
           try {
             await loadCustomer(

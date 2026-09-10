@@ -178,6 +178,24 @@ function jsonSnapshot(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
+type QuoteUpdateInput = {
+  data?: {
+    acceptedAt?: Date;
+    acceptedByEmail?: string | null;
+    acceptedByName?: string | null;
+    cancelledAt?: Date;
+    convertedAt?: Date;
+    convertedJobId?: string;
+    declinedAt?: Date;
+    declineComment?: string | null;
+    declineReason?: string | null;
+    jobId?: string;
+    sentAt?: Date;
+    status?: string;
+    version?: unknown;
+  };
+};
+
 function publicTokenHash(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
@@ -189,6 +207,7 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
     ...quoteOverrides,
     sentAt: new Date('2026-08-10T00:00:00.000Z'),
     status: 'SENT',
+    version: 2,
   });
   const pdfDocument = {
     businessId: user.businessId,
@@ -251,6 +270,61 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
     void input;
     return Promise.resolve(createdQuote);
   });
+  const updatedQuote = (input: QuoteUpdateInput) => {
+    const status = input.data?.status;
+    const nextVersion = input.data?.version ? 2 : quoteWithItems.version;
+    if (status === 'SENT') {
+      return quoteRecord({
+        ...quoteOverrides,
+        sentAt: input.data?.sentAt ?? sentQuote.sentAt,
+        status,
+        version: nextVersion,
+      });
+    }
+    if (status === 'ACCEPTED') {
+      return quoteRecord({
+        ...quoteOverrides,
+        acceptedAt:
+          input.data?.acceptedAt ?? new Date('2026-08-10T00:00:00.000Z'),
+        acceptedByEmail: input.data?.acceptedByEmail ?? null,
+        acceptedByName: input.data?.acceptedByName ?? 'GB',
+        status,
+        version: nextVersion,
+      });
+    }
+    if (status === 'DECLINED') {
+      return quoteRecord({
+        ...quoteOverrides,
+        declinedAt:
+          input.data?.declinedAt ?? new Date('2026-08-10T00:00:00.000Z'),
+        declineComment: input.data?.declineComment ?? null,
+        declineReason: input.data?.declineReason ?? null,
+        status,
+        version: nextVersion,
+      });
+    }
+    if (status === 'CANCELLED') {
+      return quoteRecord({
+        ...quoteOverrides,
+        cancelledAt:
+          input.data?.cancelledAt ?? new Date('2026-08-10T00:00:00.000Z'),
+        status,
+        version: nextVersion,
+      });
+    }
+    if (status === 'CONVERTED') {
+      return quoteRecord({
+        ...quoteOverrides,
+        convertedAt:
+          input.data?.convertedAt ?? new Date('2026-08-10T00:00:00.000Z'),
+        convertedJobId: input.data?.convertedJobId ?? 'job-converted-1',
+        jobId: input.data?.jobId ?? 'job-converted-1',
+        status,
+        version: nextVersion,
+      });
+    }
+    return quoteRecord({ ...quoteOverrides, version: nextVersion });
+  };
   const tx = {
     auditLog: { create: jest.fn().mockResolvedValue({}) },
     business: {
@@ -271,18 +345,8 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
     quote: {
       create: quoteCreate,
       findUniqueOrThrow: jest.fn().mockResolvedValue(quoteWithItems),
-      update: jest.fn((input: { data?: { status?: string } }) =>
-        Promise.resolve(
-          input.data?.status === 'SENT'
-            ? sentQuote
-            : quoteRecord({
-                ...quoteOverrides,
-                convertedAt: new Date('2026-08-10T00:00:00.000Z'),
-                convertedJobId: 'job-converted-1',
-                jobId: 'job-converted-1',
-                status: 'CONVERTED',
-              }),
-        ),
+      update: jest.fn((input: QuoteUpdateInput) =>
+        Promise.resolve(updatedQuote(input)),
       ),
     },
     quoteLineItem: { createMany: jest.fn().mockResolvedValue({ count: 2 }) },
@@ -317,7 +381,10 @@ function createPrismaMock(quoteOverrides: Record<string, unknown> = {}) {
   );
   const prisma = {
     $transaction: transaction,
-    auditLog: { findMany: jest.fn().mockResolvedValue([]) },
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     business: {
       findUnique: jest.fn().mockResolvedValue({
         abn: '12345678901',
@@ -396,6 +463,29 @@ function createService(
     { createForRoles: jest.fn() } as never,
   );
 }
+
+type QuoteRevisionUpsertInput = {
+  create: {
+    status: string;
+    version: number;
+  };
+};
+
+type QuotePublicTokenCreateInput = {
+  data: {
+    quoteRevisionId: string;
+    version: number;
+  };
+};
+
+type QuotePublicTokenUpdateInput = {
+  data: {
+    acceptedAt?: Date;
+    declinedAt?: Date;
+    quoteRevisionId?: string;
+    version?: number;
+  };
+};
 
 describe('QuotesService create', () => {
   beforeEach(() => {
@@ -571,6 +661,7 @@ describe('QuotesService create', () => {
             convertedJobId: string;
             jobId: string;
             status: string;
+            version?: { increment: number };
           };
         },
       ]
@@ -580,6 +671,26 @@ describe('QuotesService create', () => {
       jobId: 'job-converted-1',
       status: 'CONVERTED',
     });
+    expect(quoteUpdateCalls[0]?.[0].data).toHaveProperty('version', {
+      increment: 1,
+    });
+    const revisionCalls = tx.quoteRevision.upsert.mock
+      .calls as unknown as Array<[QuoteRevisionUpsertInput]>;
+    expect(revisionCalls[0]?.[0].create).toEqual(
+      expect.objectContaining({
+        status: 'CONVERTED',
+        version: 2,
+      }),
+    );
+    expect(tx.quotePdfDocument.create).toHaveBeenCalled();
+    expect(tx.quotePublicAccessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          quoteRevisionId: 'revision-1',
+          version: 2,
+        },
+      }),
+    );
     expect(communications.quoteFinalised).toHaveBeenCalledWith(
       user.businessId,
       'quote-1',
@@ -691,13 +802,41 @@ describe('QuotesService create', () => {
       to: 'sam@example.com',
     });
     expect(body.text).toContain('https://staging.tradieos.com/quote/');
+    const quoteUpdateCalls = tx.quote.update.mock.calls as unknown as Array<
+      [QuoteUpdateInput]
+    >;
     expect(
-      tx.quote.update.mock.calls.some(
-        ([input]) => input.data?.status === 'SENT',
-      ),
+      quoteUpdateCalls.some(([input]) => input.data?.status === 'SENT'),
     ).toBe(true);
+    const sendUpdate = quoteUpdateCalls.find(
+      ([input]) => input.data?.status === 'SENT',
+    )?.[0];
+    expect(sendUpdate?.data).toEqual(
+      expect.objectContaining({
+        status: 'SENT',
+        version: { increment: 1 },
+      }),
+    );
+    const revisionCalls = tx.quoteRevision.upsert.mock
+      .calls as unknown as Array<[QuoteRevisionUpsertInput]>;
+    const sendRevision = revisionCalls[0]?.[0];
+    expect(sendRevision?.create).toEqual(
+      expect.objectContaining({
+        status: 'SENT',
+        version: 2,
+      }),
+    );
     expect(tx.quotePdfDocument.create).toHaveBeenCalled();
     expect(tx.quotePublicAccessToken.create).toHaveBeenCalled();
+    const publicTokenCreateCalls = tx.quotePublicAccessToken.create.mock
+      .calls as unknown as Array<[QuotePublicTokenCreateInput]>;
+    const publicTokenCreate = publicTokenCreateCalls[0]?.[0];
+    expect(publicTokenCreate?.data).toEqual(
+      expect.objectContaining({
+        quoteRevisionId: 'revision-1',
+        version: 2,
+      }),
+    );
     expect(quoteSent).toHaveBeenCalledTimes(1);
     const quoteSentPayload = quoteSent.mock.calls[0]?.[0];
     expect(quoteSentPayload).toEqual(
@@ -713,6 +852,57 @@ describe('QuotesService create', () => {
     expect(response.quote.status).toBe('SENT');
     expect(response.publicQuoteUrl).toContain(
       'https://staging.tradieos.com/quote/',
+    );
+  });
+
+  it('creates a current accepted PDF revision when staff mark a quote accepted', async () => {
+    const { prisma, quoteWithItems, tx } = createPrismaMock({
+      sentAt: new Date('2026-08-10T00:00:00.000Z'),
+      status: 'SENT',
+    });
+    prisma.quote.findFirst
+      .mockResolvedValueOnce(quoteWithItems)
+      .mockResolvedValueOnce(
+        quoteRecord({
+          ...quoteWithItems,
+          acceptedAt: new Date('2026-08-12T00:00:00.000Z'),
+          acceptedByName: 'GB',
+          status: 'ACCEPTED',
+          version: 2,
+        }),
+      );
+    const service = createService(prisma);
+
+    await service.accept(user, 'quote-1', { acceptedByName: 'GB' });
+
+    const quoteUpdateCalls = tx.quote.update.mock.calls as unknown as Array<
+      [QuoteUpdateInput]
+    >;
+    const acceptUpdate = quoteUpdateCalls.find(
+      ([input]) => input.data?.status === 'ACCEPTED',
+    )?.[0];
+    expect(acceptUpdate?.data).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        version: { increment: 1 },
+      }),
+    );
+    const revisionCalls = tx.quoteRevision.upsert.mock
+      .calls as unknown as Array<[QuoteRevisionUpsertInput]>;
+    expect(revisionCalls[0]?.[0].create).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        version: 2,
+      }),
+    );
+    expect(tx.quotePdfDocument.create).toHaveBeenCalled();
+    expect(tx.quotePublicAccessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          quoteRevisionId: 'revision-1',
+          version: 2,
+        },
+      }),
     );
   });
 
@@ -815,6 +1005,51 @@ describe('QuotesService create', () => {
     expect(response.quote.expiryDate).toBe('2026-08-24T00:00:00.000Z');
   });
 
+  it('moves the public quote token to an accepted PDF revision after customer acceptance', async () => {
+    const { prisma, tx } = createPrismaMock({
+      sentAt: new Date('2026-08-10T00:00:00.000Z'),
+      status: 'SENT',
+    });
+    const service = createService(prisma);
+
+    await service.publicAccept('public-token', {
+      acceptedByName: 'Sam Donald',
+      acceptedTerms: true,
+    });
+
+    const quoteUpdateCalls = tx.quote.update.mock.calls as unknown as Array<
+      [QuoteUpdateInput]
+    >;
+    const acceptUpdate = quoteUpdateCalls.find(
+      ([input]) => input.data?.status === 'ACCEPTED',
+    )?.[0];
+    expect(acceptUpdate?.data).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        version: { increment: 1 },
+      }),
+    );
+    const revisionCalls = tx.quoteRevision.upsert.mock
+      .calls as unknown as Array<[QuoteRevisionUpsertInput]>;
+    expect(revisionCalls[0]?.[0].create).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        version: 2,
+      }),
+    );
+    expect(tx.quotePdfDocument.create).toHaveBeenCalled();
+    const publicTokenUpdateCalls = tx.quotePublicAccessToken.update.mock
+      .calls as unknown as Array<[QuotePublicTokenUpdateInput]>;
+    const publicTokenUpdate = publicTokenUpdateCalls.find(
+      ([input]) => input.data.quoteRevisionId === 'revision-1',
+    )?.[0];
+    expect(publicTokenUpdate?.data.acceptedAt).toBeInstanceOf(Date);
+    expect(publicTokenUpdate?.data).toMatchObject({
+      quoteRevisionId: 'revision-1',
+      version: 2,
+    });
+  });
+
   it('serves public quote PDFs only after resolving the secure token', async () => {
     const { pdfDocument, prisma, publicQuotePdfFindFirst } = createPrismaMock();
     const service = createService(prisma);
@@ -830,9 +1065,8 @@ describe('QuotesService create', () => {
     expect(pdfLookup?.where).toMatchObject({
       businessId: user.businessId,
       quoteId: 'quote-1',
-      quoteRevisionId: 'revision-1',
-      version: 1,
     });
+    expect(pdfLookup?.where).not.toHaveProperty('quoteRevisionId');
     expect(pdf).toEqual({
       buffer: Buffer.from('%PDF-quote'),
       fileName: pdfDocument.fileName,

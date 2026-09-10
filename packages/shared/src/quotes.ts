@@ -309,6 +309,7 @@ export interface PublicQuoteResponse {
     gstCents: number;
     issueDate: string;
     lineItems: Array<{
+      lineSubtotalCents: number;
       lineTotalCents: number;
       name: string;
       quantity: string;
@@ -411,6 +412,20 @@ export function formatAudCents(cents: number) {
   return `${sign}$${Math.floor(absolute / 100).toLocaleString('en-AU')}.${String(
     absolute % 100,
   ).padStart(2, '0')}`;
+}
+
+export interface QuoteLineAmountDisplayInput {
+  lineSubtotalCents: number;
+  lineTotalCents: number;
+}
+
+export function quoteLineDisplayAmountCents(
+  pricingMode: QuotePricingMode,
+  item: QuoteLineAmountDisplayInput,
+) {
+  return pricingMode === 'GST_EXCLUSIVE'
+    ? item.lineSubtotalCents
+    : item.lineTotalCents;
 }
 
 export type QuoteQuantityInputValidationCode =

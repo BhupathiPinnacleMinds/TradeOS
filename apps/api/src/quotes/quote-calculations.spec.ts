@@ -3,6 +3,7 @@ import {
   formatAudCents,
   parseQuoteMoneyInput,
   parseQuoteQuantityInput,
+  quoteLineDisplayAmountCents,
   roleCanAcceptOrDeclineQuote,
   roleCanCreateQuotes,
   roleCanSendQuote,
@@ -58,6 +59,28 @@ describe('quote calculations', () => {
     expect(result.subtotalCents).toBe(10000);
     expect(result.gstCents).toBe(1000);
     expect(result.totalCents).toBe(11000);
+  });
+
+  it('uses pre-GST line display amounts only for GST-exclusive quotes', () => {
+    const exclusive = calculateQuoteTotals(base({})).lineItems[0];
+    const inclusive = calculateQuoteTotals(
+      base({
+        lineItems: [
+          {
+            name: 'Service',
+            quantity: '1',
+            taxable: true,
+            type: 'SERVICE',
+            unit: 'fixed',
+            unitPriceCents: 11000,
+          },
+        ],
+        pricingMode: 'GST_INCLUSIVE',
+      }),
+    ).lineItems[0];
+
+    expect(quoteLineDisplayAmountCents('GST_EXCLUSIVE', exclusive)).toBe(10000);
+    expect(quoteLineDisplayAmountCents('GST_INCLUSIVE', inclusive)).toBe(11000);
   });
 
   it('supports mixed taxable and non-taxable lines', () => {

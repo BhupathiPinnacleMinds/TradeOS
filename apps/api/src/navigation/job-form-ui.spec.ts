@@ -190,6 +190,70 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('pre-populates appointment defaults from the linked job without exposing job switching controls', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain(
+      "navigation.navigate('AppointmentForm', {\n                  customerId: job.customerId,\n                  jobId: job.id,",
+    );
+    expect(jobDetails).toContain(
+      "navigation.navigate('AppointmentForm', {\n                customerId: job.customerId,\n                jobId: job.id,",
+    );
+    expect(appointmentForm).toContain('function getJobManualLocation');
+    expect(appointmentForm).toContain('function isPlaceholderAddressText');
+    expect(appointmentForm).toContain(
+      "text === 'address to be confirmed' || text === 'to be confirmed'",
+    );
+    expect(appointmentForm).toContain("postcode === '0000'");
+    expect(appointmentForm).toContain('!AUSTRALIAN_STATES.includes(state)');
+    expect(appointmentForm).toContain(
+      'setJobs((current) => upsertJob(current, jobResponse.job))',
+    );
+    expect(appointmentForm).toContain(
+      'setStartAt(getJobAppointmentStart(jobResponse.job, businessTimezone))',
+    );
+    expect(appointmentForm).toContain(
+      'setDurationMinutes(getJobDurationMinutes(jobResponse.job))',
+    );
+    expect(appointmentForm).toContain(
+      'setAssignedUserId(jobResponse.job.assignedToUserId)',
+    );
+    expect(appointmentForm).toContain(
+      'setNotes(cleanOptionalText(jobResponse.job.description))',
+    );
+    expect(appointmentForm).toContain(
+      'const jobLocation = getJobManualLocation(jobResponse.job)',
+    );
+    expect(appointmentForm).toContain("setLocationSource('MANUAL')");
+    expect(appointmentForm).toContain(
+      'setManualAccessInstructions(jobLocation.accessInstructions)',
+    );
+    expect(appointmentForm).not.toContain(
+      'setNotes(cleanOptionalText(jobResponse.job.internalNotes))',
+    );
+    expect(appointmentForm).not.toContain(
+      'setNotes(cleanOptionalText(jobResponse.job.customerNotes))',
+    );
+  });
+
+  it('keeps linked-job schedule defaults future-safe and derives duration without execution timestamps', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain('function getJobAppointmentStart');
+    expect(appointmentForm).toContain(
+      'return normalizeFutureStart(new Date(job.scheduledStart), timezone);',
+    );
+    expect(appointmentForm).toContain('function getJobDurationMinutes');
+    expect(appointmentForm).toContain('job.estimatedDurationMinutes > 0');
+    expect(appointmentForm).toContain(
+      '(scheduledEnd.getTime() - scheduledStart.getTime()) / 60_000',
+    );
+    expect(appointmentForm).not.toContain('new Date(job.actualStart)');
+    expect(appointmentForm).not.toContain('new Date(job.actualEnd)');
+    expect(appointmentForm).not.toContain('new Date(job.completedAt)');
+  });
+
   it('preserves independent appointment creation customer and job selection controls', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
@@ -516,8 +580,9 @@ describe('Job form mobile UI contracts', () => {
       'return normalizeFutureStart(new Date(selectedDate), timezone);',
     );
     expect(appointmentForm).toContain(
-      'normalizeFutureStart(\n              new Date(jobResponse.job.scheduledStart),\n              businessTimezone,',
+      'setStartAt(getJobAppointmentStart(jobResponse.job, businessTimezone))',
     );
+    expect(appointmentForm).toContain('function getJobAppointmentStart');
     expect(appointmentForm).toContain(
       "message: 'Appointment start time must be in the future.'",
     );

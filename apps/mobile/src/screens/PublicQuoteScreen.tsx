@@ -1,5 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { formatAudCents, formatBusinessDate } from '@tradieos/shared';
+import {
+  formatAudCents,
+  formatBusinessDate,
+  quoteLineDisplayAmountCents,
+} from '@tradieos/shared';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -160,7 +164,9 @@ export function PublicQuoteScreen({ route }: Props) {
               </Text>
             </View>
             <Text style={styles.lineTotal}>
-              {formatAudCents(item.lineTotalCents)}
+              {formatAudCents(
+                quoteLineDisplayAmountCents(quote.pricingMode, item),
+              )}
             </Text>
           </View>
         ))}
