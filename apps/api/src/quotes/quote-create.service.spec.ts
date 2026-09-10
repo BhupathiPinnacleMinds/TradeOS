@@ -15,6 +15,7 @@ const user: AuthenticatedUser = {
   id: 'user-1',
   role: 'OWNER',
 };
+const TEST_NOW = new Date('2026-08-12T00:00:00.000Z');
 
 const payload: UpsertQuoteDto = {
   customerId: 'customer-1',
@@ -397,7 +398,12 @@ function createService(
 }
 
 describe('QuotesService create', () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(TEST_NOW);
+  });
+
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
