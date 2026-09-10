@@ -479,6 +479,77 @@ describe('JobsService', () => {
     });
   });
 
+  it('returns accepted-then-converted source quotes for job financial summaries', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce(
+      job({ sourceQuoteId: 'quote-source' }),
+    );
+    prisma.quote.findFirst.mockResolvedValueOnce({
+      id: 'quote-source',
+      quoteNumber: 'Q-2026-000005',
+      status: 'CONVERTED',
+      title: 'Converted accepted quote',
+      totalCents: 13200,
+    });
+    prisma.quote.findMany.mockResolvedValueOnce([
+      {
+        id: 'quote-related-accepted',
+        quoteNumber: 'Q-2026-000006',
+        status: 'ACCEPTED',
+        title: 'Accepted variation',
+        totalCents: 25000,
+      },
+      {
+        id: 'quote-related-cancelled',
+        quoteNumber: 'Q-2026-000007',
+        status: 'CANCELLED',
+        title: 'Cancelled variation',
+        totalCents: 99000,
+      },
+    ]);
+    prisma.invoice.findMany.mockResolvedValueOnce([
+      {
+        amountPaidCents: 10000,
+        balanceDueCents: 23200,
+        dueDate: new Date('2026-09-30T00:00:00.000Z'),
+        id: 'invoice-1',
+        invoiceNumber: 'INV-2026-000001',
+        status: 'SENT',
+        title: 'Deposit invoice',
+        totalCents: 33200,
+      },
+    ]);
+
+    const result = await service.findOne(owner, 'job-1');
+
+    expect(result.sourceQuote).toMatchObject({
+      id: 'quote-source',
+      status: 'CONVERTED',
+      totalCents: 13200,
+    });
+    expect(result.relatedQuotes).toEqual([
+      expect.objectContaining({
+        id: 'quote-related-accepted',
+        status: 'ACCEPTED',
+        totalCents: 25000,
+      }),
+      expect.objectContaining({
+        id: 'quote-related-cancelled',
+        status: 'CANCELLED',
+        totalCents: 99000,
+      }),
+    ]);
+    expect(result.invoices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          amountPaidCents: 10000,
+          balanceDueCents: 23200,
+          totalCents: 33200,
+        }),
+      ]),
+    );
+  });
+
   it('allows a technician to open a parent job through their assigned appointment', async () => {
     const { prisma, service } = createService();
     prisma.job.findFirst.mockResolvedValueOnce(

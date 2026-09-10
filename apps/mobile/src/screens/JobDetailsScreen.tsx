@@ -179,6 +179,14 @@ function hasUsableAddress(job: Job) {
   );
 }
 
+function quoteContributesAcceptedTotal(
+  quote: {
+    status?: string | null;
+  } | null,
+) {
+  return quote?.status === 'ACCEPTED' || quote?.status === 'CONVERTED';
+}
+
 function hasFollowUpRequired(appointments: Appointment[]) {
   return appointments.some(
     (appointment) => appointment.workLog?.followUpRequired,
@@ -306,7 +314,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     ? timeline
     : timeline.slice(0, JOB_TIMELINE_PREVIEW_LIMIT);
   const acceptedQuoteCents = [sourceQuote, ...relatedQuotes]
-    .filter((quote) => quote?.status === 'ACCEPTED')
+    .filter(quoteContributesAcceptedTotal)
     .reduce((sum, quote) => sum + (quote?.totalCents ?? 0), 0);
   const jobFinancialSummary = invoices.reduce(
     (summary, invoice) => ({

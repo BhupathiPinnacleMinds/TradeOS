@@ -425,6 +425,26 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('counts accepted-then-converted quotes in Job Details financial summary', () => {
+    const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+
+    expect(jobDetails).toContain('function quoteContributesAcceptedTotal');
+    expect(jobDetails).toContain("quote?.status === 'ACCEPTED'");
+    expect(jobDetails).toContain("quote?.status === 'CONVERTED'");
+    expect(jobDetails).toContain('.filter(quoteContributesAcceptedTotal)');
+    expect(jobDetails).toContain('formatAudCents(acceptedQuoteCents)');
+    expect(jobDetails).toContain('Accepted quotes');
+    expect(jobDetails).toContain(
+      'invoicedCents: summary.invoicedCents + invoice.totalCents',
+    );
+    expect(jobDetails).toContain(
+      'outstandingCents: summary.outstandingCents + invoice.balanceDueCents',
+    );
+    expect(jobDetails).toContain(
+      'paidCents: summary.paidCents + invoice.amountPaidCents',
+    );
+  });
+
   it('surfaces stale active appointments and unusual durations without truncating timers', () => {
     const dashboard = mobileSource('screens/DashboardScreen.tsx');
     const appointmentDetails = mobileSource(
