@@ -1191,7 +1191,10 @@ describe('AppointmentsService', () => {
     const result = await service.myDay(technician);
 
     expect(result.nextAppointment?.id).toBe('future-confirmed');
-    expect(result.remainingCount).toBe(0);
+    expect(result.remainingCount).toBe(1);
+    expect(result.appointments.map((item) => item.id)).toContain(
+      'future-confirmed',
+    );
     expect(result.laterToday).toEqual([]);
   });
 
@@ -1341,6 +1344,63 @@ describe('AppointmentsService', () => {
     expect(result.laterToday.map((item) => item.id)).not.toEqual(
       expect.arrayContaining(['cancelled', 'no-show', 'rescheduled']),
     );
+  });
+
+  it('counts the surfaced future next appointment as remaining for the assigned technician', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-10T03:00:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValueOnce({
+      name: 'Demo Tradie Co',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        assignedUserId: 'tech-1',
+        id: 'future-laundry-tap',
+        job: { ...appointment().job, title: 'Laundry tap' },
+        scheduledEnd: new Date('2026-09-10T23:30:00.000Z'),
+        scheduledStart: new Date('2026-09-10T21:30:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    );
+
+    const result = await service.myDay(technician);
+
+    expect(result.nextAppointment?.id).toBe('future-laundry-tap');
+    expect(result.remainingCount).toBe(1);
+    expect(result.appointments.map((item) => item.id)).toContain(
+      'future-laundry-tap',
+    );
+    const findFirstCalls = prisma.appointment.findFirst.mock.calls as Array<
+      [
+        {
+          where: {
+            assignedUserId?: string;
+            businessId: string;
+            status: { in: string[] };
+          };
+        },
+      ]
+    >;
+    const fallbackCall = findFirstCalls[0][0];
+    expect(fallbackCall.where.assignedUserId).toBe('tech-1');
+    expect(fallbackCall.where.businessId).toBe('business-1');
+    expect(fallbackCall.where.status.in).toEqual(
+      expect.arrayContaining([
+        'SCHEDULED',
+        'CONFIRMED',
+        'ON_THE_WAY',
+        'ARRIVED',
+        'IN_PROGRESS',
+        'PAUSED',
+      ]),
+    );
+    expect(fallbackCall.where.status.in).not.toEqual(
+      expect.arrayContaining(['COMPLETED', 'CANCELLED']),
+    );
+    jest.useRealTimers();
   });
 
   it('counts appointments completed today by completion time rather than scheduled date', async () => {

@@ -178,5 +178,39 @@ describe('AppointmentNotificationsService', () => {
         type: 'APPOINTMENT_COMPLETED_FOLLOW_UP',
       }),
     );
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'Hot water inspection with Raj Patel on 31/08/2026 at 9:30 am has been completed and needs follow-up.',
+      }),
+    );
+  });
+
+  it('includes the scheduled business date and time in appointment completed notifications', async () => {
+    const { notifications, service } = createService();
+
+    await service.notifyCompleted({
+      actor: { ...actor, id: 'tech-1', role: 'TECHNICIAN' },
+      appointment: appointment({
+        completedAt: '2026-09-11T01:00:00.000Z',
+        job: {
+          ...appointment().job,
+          customer: {
+            ...appointment().job.customer,
+            displayName: 'Sam Donald',
+          },
+          title: 'Laundry tap',
+        },
+        scheduledStart: '2026-09-10T22:30:00.000Z',
+        status: 'COMPLETED',
+      }),
+    });
+
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'Laundry tap with Sam Donald on 11/09/2026 at 8:30 am has been completed.',
+        title: 'Appointment completed',
+        type: 'APPOINTMENT_COMPLETED',
+      }),
+    );
   });
 });

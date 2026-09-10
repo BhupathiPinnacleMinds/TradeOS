@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Appointment, AuthenticatedUser } from '@tradieos/shared';
 import {
   DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessDateTime,
   formatBusinessTime,
 } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -79,6 +80,7 @@ export class AppointmentNotificationsService {
       followUpRequired
         ? 'has been completed and needs follow-up.'
         : 'has been completed.',
+      { includeScheduledDate: true },
     );
 
     try {
@@ -181,14 +183,20 @@ export class AppointmentNotificationsService {
     }
   }
 
-  private async appointmentBody(appointment: Appointment, suffix: string) {
+  private async appointmentBody(
+    appointment: Appointment,
+    suffix: string,
+    options: { includeScheduledDate?: boolean } = {},
+  ) {
     const timezone = await this.businessTimezone(appointment.businessId);
-    const time = formatBusinessTime(appointment.scheduledStart, timezone);
+    const scheduledAt = options.includeScheduledDate
+      ? `on ${formatBusinessDateTime(appointment.scheduledStart, timezone)}`
+      : `at ${formatBusinessTime(appointment.scheduledStart, timezone)}`;
     const customerName =
       appointment.job.customer.displayName ??
       appointment.job.customer.companyName ??
       'the customer';
-    return `${appointment.job.title} with ${customerName} at ${time} ${suffix}`;
+    return `${appointment.job.title} with ${customerName} ${scheduledAt} ${suffix}`;
   }
 
   private async businessTimezone(businessId: string) {

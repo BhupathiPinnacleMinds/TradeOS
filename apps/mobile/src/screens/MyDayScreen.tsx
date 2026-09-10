@@ -4,6 +4,7 @@ import type {
 } from '@tradieos/shared';
 import {
   APPOINTMENT_STATUS_COLOURS,
+  formatBusinessCompactDateTimeRange,
   formatBusinessDate,
   formatBusinessTime,
   formatBusinessTimeRange,
@@ -316,6 +317,7 @@ function NextAppointment({
       }
       onTransition={(action) => onTransition(appointment, action)}
       role={role}
+      showScheduledDate
       timezone={timezone}
       userId={userId}
     />
@@ -383,10 +385,11 @@ function AppointmentCard({
       <View style={styles.cardHeader}>
         <Text style={styles.cardTime}>
           {showScheduledDate
-            ? `${formatBusinessDate(
+            ? formatBusinessCompactDateTimeRange(
                 appointment.scheduledStart,
+                appointment.scheduledEnd,
                 timezone,
-              )} · ${formatBusinessTime(appointment.scheduledStart, timezone)}`
+              )
             : formatBusinessTime(appointment.scheduledStart, timezone)}
         </Text>
         <View
@@ -405,12 +408,14 @@ function AppointmentCard({
         <Text style={styles.meta}>{customerCompany}</Text>
       ) : null}
       <Text style={styles.meta}>
-        {appointment.suburb} · {appointment.job.priority} priority ·{' '}
-        {formatBusinessTimeRange(
-          appointment.scheduledStart,
-          appointment.scheduledEnd,
-          timezone,
-        )}
+        {appointment.suburb} · {appointment.job.priority} priority
+        {showScheduledDate
+          ? null
+          : ` · ${formatBusinessTimeRange(
+              appointment.scheduledStart,
+              appointment.scheduledEnd,
+              timezone,
+            )}`}
       </Text>
       <View style={styles.actionRow}>
         {actions.map((action) =>

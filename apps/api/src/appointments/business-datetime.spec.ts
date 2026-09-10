@@ -1,5 +1,7 @@
 ﻿import {
   DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessCompactDate,
+  formatBusinessCompactDateTimeRange,
   formatBusinessDate,
   formatBusinessRelativeDateHeading,
   formatBusinessRelativeDay,
@@ -25,6 +27,18 @@ describe('business datetime utilities', () => {
         'Australia/Melbourne',
       ),
     ).toBe('8:00 pm – 10:00 pm');
+  });
+
+  it('formats compact My Day card dates and time ranges in the business timezone', () => {
+    const start = '2026-09-10T21:30:00.000Z';
+    const end = '2026-09-10T23:30:00.000Z';
+
+    expect(formatBusinessCompactDate(start, 'Australia/Melbourne')).toBe(
+      'Fri, 11 Sep',
+    );
+    expect(
+      formatBusinessCompactDateTimeRange(start, end, 'Australia/Melbourne'),
+    ).toBe('Fri, 11 Sep · 7:30 am – 9:30 am');
   });
 
   it('defaults unknown business timezones to Melbourne', () => {

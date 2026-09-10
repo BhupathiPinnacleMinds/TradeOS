@@ -87,17 +87,36 @@ describe('staging mobile regression UI contracts', () => {
     const completedTodayIndex = myDayScreen.indexOf(
       '<Section title="Completed today">',
     );
-    const showScheduledDateIndex = myDayScreen.indexOf('showScheduledDate');
+    const completedShowScheduledDateIndex = myDayScreen.indexOf(
+      'showScheduledDate',
+      completedTodayIndex,
+    );
 
     expect(myDayScreen).toContain('showScheduledDate');
     expect(laterTodayIndex).toBeGreaterThan(-1);
     expect(completedTodayIndex).toBeGreaterThan(laterTodayIndex);
-    expect(showScheduledDateIndex).toBeGreaterThan(completedTodayIndex);
+    expect(completedShowScheduledDateIndex).toBeGreaterThan(
+      completedTodayIndex,
+    );
+    expect(myDayScreen).toContain('formatBusinessCompactDateTimeRange');
     expect(myDayScreen).toContain(
-      '`${formatBusinessDate(\n                appointment.scheduledStart,\n                timezone,\n              )} · ${formatBusinessTime(appointment.scheduledStart, timezone)}`',
+      'formatBusinessCompactDateTimeRange(\n                appointment.scheduledStart,\n                appointment.scheduledEnd,\n                timezone,',
     );
     expect(myDayScreen).toContain(
       ': formatBusinessTime(appointment.scheduledStart, timezone)',
+    );
+  });
+
+  it('shows the scheduled date and time range on the My Day next appointment card', () => {
+    const myDayScreen = mobileSource('screens/MyDayScreen.tsx');
+
+    expect(myDayScreen).toContain('<NextAppointment');
+    expect(myDayScreen).toContain('showScheduledDate');
+    expect(myDayScreen).toContain(
+      'formatBusinessCompactDateTimeRange(\n                appointment.scheduledStart,\n                appointment.scheduledEnd,\n                timezone,',
+    );
+    expect(myDayScreen).toContain(
+      'showScheduledDate\n          ? null\n          : ` · ${formatBusinessTimeRange(',
     );
   });
 });

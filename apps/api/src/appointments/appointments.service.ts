@@ -443,14 +443,6 @@ export class AppointmentsService {
           .map((appointment) => [appointment.id, appointment]),
       ).values(),
     ];
-    const allMyDayAppointments = [
-      ...new Map(
-        [...mapped, ...completedToday].map((appointment) => [
-          appointment.id,
-          appointment,
-        ]),
-      ).values(),
-    ];
     const currentAppointment =
       CURRENT_MY_DAY_STATUSES.map((status) =>
         remaining.find((appointment) => appointment.status === status),
@@ -487,6 +479,26 @@ export class AppointmentsService {
           ? mappedFutureAppointment
           : null;
     }
+    const countedRemaining = [
+      ...new Map(
+        [
+          ...remaining,
+          ...(nextAppointment &&
+          !remaining.some(
+            (appointment) => appointment.id === nextAppointment.id,
+          )
+            ? [nextAppointment]
+            : []),
+        ].map((appointment) => [appointment.id, appointment]),
+      ).values(),
+    ];
+    const allMyDayAppointments = [
+      ...new Map(
+        [...mapped, ...completedToday, ...countedRemaining].map(
+          (appointment) => [appointment.id, appointment],
+        ),
+      ).values(),
+    ];
     const laterToday = remaining.filter(
       (appointment) => appointment.id !== nextAppointment?.id,
     );
@@ -500,7 +512,7 @@ export class AppointmentsService {
       completedToday,
       laterToday,
       nextAppointment,
-      remainingCount: remaining.length,
+      remainingCount: countedRemaining.length,
       technicianName:
         [currentUser.firstName, currentUser.lastName]
           .filter(Boolean)

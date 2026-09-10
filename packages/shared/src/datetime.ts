@@ -70,6 +70,24 @@ export function formatBusinessLongDate(
   }).format(toDate(value));
 }
 
+export function formatBusinessCompactDate(
+  value: Date | string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: normaliseBusinessTimezone(timezone),
+    weekday: 'short',
+  }).formatToParts(toDate(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  const month = part('month').slice(0, 3);
+  return [part('weekday'), `${part('day')} ${month}`]
+    .filter(Boolean)
+    .join(', ');
+}
+
 export function formatBusinessTime(
   value: Date | string,
   timezone: string = DEFAULT_BUSINESS_TIMEZONE,
@@ -100,6 +118,18 @@ export function formatBusinessDateTime(
 ) {
   return `${formatBusinessDate(value, timezone)} at ${formatBusinessTime(
     value,
+    timezone,
+  )}`;
+}
+
+export function formatBusinessCompactDateTimeRange(
+  start: Date | string,
+  end: Date | string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  return `${formatBusinessCompactDate(start, timezone)} · ${formatBusinessTimeRange(
+    start,
+    end,
     timezone,
   )}`;
 }
