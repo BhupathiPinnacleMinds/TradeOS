@@ -325,6 +325,170 @@ describe('JobsService', () => {
     });
   });
 
+  it('shows completed jobs with one completing technician', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, { filter: 'completed' });
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe(
+      'Completed by Ram G',
+    );
+  });
+
+  it('collapses several completed appointments by the same technician', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+        id: 'appointment-1',
+      }),
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+        id: 'appointment-2',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, { filter: 'completed' });
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe(
+      'Completed by Ram G',
+    );
+  });
+
+  it('summarises completed jobs with multiple completing technicians', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+      }),
+      appointment({
+        assignedUser: {
+          email: 'maya@example.com',
+          firstName: 'Maya',
+          id: 'tech-2',
+          lastName: 'K',
+        },
+        assignedUserId: 'tech-2',
+        id: 'appointment-2',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, { filter: 'completed' });
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe(
+      'Completed by multiple technicians',
+    );
+  });
+
+  it('does not show unassigned for completed jobs without technician history', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    const result = await service.findAll(owner, { filter: 'completed' });
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe(
+      'No technician recorded',
+    );
+  });
+
+  it('shows the next active appointment technician for active jobs', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+        completedAt: null,
+        status: 'CONFIRMED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe('Ram G');
+  });
+
+  it('shows unassigned for active jobs with an unassigned upcoming appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: null,
+        assignedUserId: null,
+        completedAt: null,
+        status: 'SCHEDULED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.technicianDisplayLabel).toBe('Unassigned');
+  });
+
+  it('keeps job technician history queries scoped to the current tenant', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+
+    await service.findAll(owner, { filter: 'completed' });
+
+    const [completedHistoryQuery] = prisma.appointment.findMany.mock
+      .calls[0] as [{ where: { businessId: string; jobId: { in: string[] } } }];
+    expect(completedHistoryQuery.where.businessId).toBe(owner.businessId);
+    expect(completedHistoryQuery.where.jobId.in).toEqual(['job-1']);
+  });
+
   it('limits technicians to assigned jobs', async () => {
     const { prisma, service } = createService();
 

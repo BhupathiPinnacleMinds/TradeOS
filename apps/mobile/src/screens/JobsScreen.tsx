@@ -214,9 +214,11 @@ function JobCard({
   job: Job;
   onPress(): void;
 }) {
-  const assignee = job.assignedTo
-    ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
-    : 'Unassigned';
+  const assignee =
+    job.technicianDisplayLabel ??
+    (job.assignedTo
+      ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
+      : 'Unassigned');
 
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={styles.card}>

@@ -90,6 +90,7 @@ export interface Job {
   updatedAt: string;
   customer: JobCustomerSummary;
   assignedTo: JobAssignedUser | null;
+  technicianDisplayLabel?: string;
 }
 
 export interface JobListResponse {

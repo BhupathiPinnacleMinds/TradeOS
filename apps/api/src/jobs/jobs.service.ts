@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type {
   Appointment,
+  AppointmentStatus,
   AppointmentSignature,
   AuthenticatedUser,
   Job,
@@ -35,6 +36,14 @@ const DEFAULT_PAGE_SIZE = 20;
 const READ_ONLY_JOB_ROLES = ['ACCOUNTANT', 'READ_ONLY', 'SALES'] as const;
 const TECHNICIAN_ROLE = 'TECHNICIAN';
 const COMPLETED_STATUSES = ['COMPLETED', 'CANCELLED'] as const;
+const ACTIONABLE_APPOINTMENT_STATUSES: AppointmentStatus[] = [
+  'SCHEDULED',
+  'CONFIRMED',
+  'ON_THE_WAY',
+  'ARRIVED',
+  'IN_PROGRESS',
+  'PAUSED',
+];
 
 type JobWithRelations = {
   id: string;
@@ -101,6 +110,16 @@ type JobAuditEntry = {
   metadata: unknown;
 };
 
+type JobTechnicianAppointmentSummary = {
+  assignedUser: {
+    firstName: string;
+    id: string;
+    lastName: string;
+  } | null;
+  assignedUserId: string | null;
+  jobId: string;
+};
+
 @Injectable()
 export class JobsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -132,8 +151,15 @@ export class JobsService {
       this.prisma.job.count({ where }),
     ]);
 
+    const technicianLabels = await this.jobTechnicianDisplayLabels(
+      currentUser.businessId,
+      records,
+    );
+
     return {
-      records: records.map((job) => this.toJob(job)),
+      records: records.map((job) =>
+        this.toJob(job, technicianLabels.get(job.id)),
+      ),
       total,
       page,
       pageSize,
@@ -892,6 +918,111 @@ export class JobsService {
     return job;
   }
 
+  private async jobTechnicianDisplayLabels(
+    businessId: string,
+    jobs: Array<Pick<JobWithRelations, 'assignedTo' | 'id' | 'status'>>,
+  ) {
+    const labels = new Map<string, string>();
+    if (jobs.length === 0) return labels;
+
+    const completedJobIds = jobs
+      .filter((job) => job.status === 'COMPLETED')
+      .map((job) => job.id);
+    const activeJobIds = jobs
+      .filter((job) => job.status !== 'COMPLETED')
+      .map((job) => job.id);
+
+    const [completedAppointments, actionableAppointments]: [
+      JobTechnicianAppointmentSummary[],
+      JobTechnicianAppointmentSummary[],
+    ] = await Promise.all([
+      completedJobIds.length
+        ? this.prisma.appointment.findMany({
+            where: {
+              assignedUserId: { not: null },
+              businessId,
+              completedAt: { not: null },
+              jobId: { in: completedJobIds },
+              status: 'COMPLETED',
+            },
+            select: {
+              assignedUser: {
+                select: { firstName: true, id: true, lastName: true },
+              },
+              assignedUserId: true,
+              jobId: true,
+            },
+            orderBy: { completedAt: 'desc' },
+          })
+        : Promise.resolve([] as JobTechnicianAppointmentSummary[]),
+      activeJobIds.length
+        ? this.prisma.appointment.findMany({
+            where: {
+              businessId,
+              jobId: { in: activeJobIds },
+              status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+            },
+            select: {
+              assignedUser: {
+                select: { firstName: true, id: true, lastName: true },
+              },
+              assignedUserId: true,
+              jobId: true,
+              scheduledStart: true,
+            },
+            orderBy: { scheduledStart: 'asc' },
+          })
+        : Promise.resolve([] as JobTechnicianAppointmentSummary[]),
+    ]);
+
+    for (const jobId of completedJobIds) {
+      const technicians = new Map<string, string>();
+      for (const appointment of completedAppointments) {
+        if (appointment.jobId !== jobId || !appointment.assignedUserId) {
+          continue;
+        }
+        technicians.set(
+          appointment.assignedUserId,
+          appointment.assignedUser
+            ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+            : 'Technician',
+        );
+      }
+
+      if (technicians.size === 0) {
+        labels.set(jobId, 'No technician recorded');
+      } else if (technicians.size === 1) {
+        labels.set(jobId, `Completed by ${[...technicians.values()][0]}`);
+      } else {
+        labels.set(jobId, 'Completed by multiple technicians');
+      }
+    }
+
+    for (const job of jobs) {
+      if (labels.has(job.id)) continue;
+      const nextAppointment = actionableAppointments.find(
+        (appointment) => appointment.jobId === job.id,
+      );
+      if (nextAppointment) {
+        labels.set(
+          job.id,
+          nextAppointment.assignedUser
+            ? `${nextAppointment.assignedUser.firstName} ${nextAppointment.assignedUser.lastName}`
+            : 'Unassigned',
+        );
+        continue;
+      }
+      labels.set(
+        job.id,
+        job.assignedTo
+          ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
+          : 'Unassigned',
+      );
+    }
+
+    return labels;
+  }
+
   private async assertCustomer(businessId: string, customerId: string) {
     const customer = await this.prisma.customer.findFirst({
       where: { businessId, id: customerId, isArchived: false },
@@ -1066,7 +1197,7 @@ export class JobsService {
     } satisfies Prisma.AppointmentInclude;
   }
 
-  private toJob(job: JobWithRelations): Job {
+  private toJob(job: JobWithRelations, technicianDisplayLabel?: string): Job {
     return {
       id: job.id,
       businessId: job.businessId,
@@ -1105,6 +1236,11 @@ export class JobsService {
       updatedAt: job.updatedAt.toISOString(),
       customer: job.customer,
       assignedTo: job.assignedTo,
+      technicianDisplayLabel:
+        technicianDisplayLabel ??
+        (job.assignedTo
+          ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
+          : 'Unassigned'),
     };
   }
 

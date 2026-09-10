@@ -119,4 +119,13 @@ describe('staging mobile regression UI contracts', () => {
       'showScheduledDate\n          ? null\n          : ` · ${formatBusinessTimeRange(',
     );
   });
+
+  it('renders the status-aware job technician label on job cards', () => {
+    const jobsScreen = mobileSource('screens/JobsScreen.tsx');
+
+    expect(jobsScreen).toContain('job.technicianDisplayLabel ??');
+    expect(jobsScreen).not.toContain(
+      "const assignee = job.assignedTo\n    ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`\n    : 'Unassigned';",
+    );
+  });
 });

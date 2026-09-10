@@ -9,13 +9,21 @@ import type {
 } from '@tradieos/shared';
 import {
   calculateInvoiceTotals,
+  DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessDate,
+  getBusinessDateParts,
+  normaliseBusinessTimezone,
   formatAudCents,
   parseInvoiceMoneyInput,
   parseInvoiceQuantityInput,
   roleCanCreateInvoices,
+  zonedTimeToUtc,
 } from '@tradieos/shared';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -42,6 +50,8 @@ import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'InvoiceForm'>;
+type InvoiceDateFieldName = 'dueDate' | 'issueDate';
+type InvoiceDatePickerState = { field: InvoiceDateFieldName } | null;
 type FormLineItem = Omit<
   InvoiceLineItemPayload,
   'quantity' | 'unitPriceCents'
@@ -51,12 +61,14 @@ type FormLineItem = Omit<
 };
 
 const units = ['hour', 'item', 'metre', 'square metre', 'fixed'];
+const DEFAULT_PAYMENT_TERMS_DAYS = 7;
 
 export function InvoiceFormScreen({ navigation, route }: Props) {
   const { customerId, customerSiteId, invoiceId, jobId, sourceQuoteId } =
     route.params ?? {};
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const [step, setStep] = useState(0);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -71,12 +83,15 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   );
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [issueDate, setIssueDate] = useState(() => new Date().toISOString());
-  const [dueDate, setDueDate] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 7);
-    return date.toISOString();
-  });
+  const [issueDate, setIssueDate] = useState(() =>
+    businessDateOnly(new Date(), businessTimezone),
+  );
+  const [dueDate, setDueDate] = useState(() =>
+    addBusinessDays(
+      businessDateOnly(new Date(), businessTimezone),
+      DEFAULT_PAYMENT_TERMS_DAYS,
+    ),
+  );
   const [pricingMode, setPricingMode] =
     useState<InvoicePayload['pricingMode']>('GST_EXCLUSIVE');
   const [discountType, setDiscountType] = useState<InvoiceDiscountType>('NONE');
@@ -101,6 +116,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   ]);
   const [isLoading, setIsLoading] = useState(Boolean(invoiceId));
   const [isSaving, setIsSaving] = useState(false);
+  const [datePicker, setDatePicker] = useState<InvoiceDatePickerState>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -127,8 +143,8 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
         setSelectedSourceQuoteId(invoice.sourceQuoteId ?? '');
         setTitle(invoice.title);
         setDescription(invoice.description ?? '');
-        setIssueDate(invoice.issueDate);
-        setDueDate(invoice.dueDate);
+        setIssueDate(businessDateOnly(invoice.issueDate, businessTimezone));
+        setDueDate(businessDateOnly(invoice.dueDate, businessTimezone));
         setPricingMode(invoice.pricingMode);
         setDiscountType(invoice.discountType);
         setDiscountValue(
@@ -166,8 +182,8 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
         setSourceQuoteSummary(response.sourceQuote);
         setTitle(draft.title);
         setDescription(draft.description ?? '');
-        setIssueDate(draft.issueDate);
-        setDueDate(draft.dueDate);
+        setIssueDate(businessDateOnly(draft.issueDate, businessTimezone));
+        setDueDate(businessDateOnly(draft.dueDate, businessTimezone));
         setPricingMode(draft.pricingMode);
         setDiscountType(draft.discountType ?? 'NONE');
         setDiscountValue(
@@ -201,6 +217,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   }, [
     customerId,
     customerSiteId,
+    businessTimezone,
     invoiceId,
     jobId,
     navigation,
@@ -240,6 +257,11 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
       pricingMode,
     ],
   );
+  const dateValidationError = useMemo(() => {
+    return compareDateOnly(dueDate, issueDate) < 0
+      ? 'Due date cannot be before the issue date.'
+      : null;
+  }, [dueDate, issueDate]);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -298,6 +320,13 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
       });
       return;
     }
+    if (dateValidationError) {
+      showToast({
+        message: dateValidationError,
+        tone: 'error',
+      });
+      return;
+    }
     setIsSaving(true);
     try {
       const payload: InvoicePayload = {
@@ -308,9 +337,9 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
         description,
         discountType,
         discountValue: discountInput.value ?? 0,
-        dueDate,
+        dueDate: dateOnlyToBusinessIso(dueDate, businessTimezone),
         internalNotes,
-        issueDate,
+        issueDate: dateOnlyToBusinessIso(issueDate, businessTimezone),
         jobId: selectedJobId || null,
         lineItems: parsedLineItems.validItems,
         paymentTerms,
@@ -335,6 +364,27 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
       });
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  function handleDatePickerChange(
+    event: DateTimePickerEvent,
+    selectedDate?: Date,
+  ) {
+    if (!datePicker) return;
+    if (Platform.OS !== 'ios') {
+      setDatePicker(null);
+    }
+    if (event.type === 'dismissed' || !selectedDate) return;
+
+    const nextDate = dateOnlyFromPickerDate(selectedDate);
+    if (datePicker.field === 'issueDate') {
+      setIssueDate(nextDate);
+      if (compareDateOnly(dueDate, nextDate) < 0) {
+        setDueDate(nextDate);
+      }
+    } else {
+      setDueDate(nextDate);
     }
   }
 
@@ -485,16 +535,38 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
               onChangeText={setDescription}
               value={description}
             />
-            <Field
-              label="Issue date (ISO)"
-              onChangeText={setIssueDate}
-              value={issueDate}
+            <DateField
+              label="Issue date"
+              onPress={() => setDatePicker({ field: 'issueDate' })}
+              value={formatInvoiceDate(issueDate, businessTimezone)}
             />
-            <Field
-              label="Due date (ISO)"
-              onChangeText={setDueDate}
-              value={dueDate}
+            <DateField
+              error={dateValidationError}
+              label="Due date"
+              onPress={() => setDatePicker({ field: 'dueDate' })}
+              value={formatInvoiceDate(dueDate, businessTimezone)}
             />
+            {datePicker ? (
+              <View style={styles.datePickerContainer}>
+                <DateTimePicker
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  mode="date"
+                  onChange={handleDatePickerChange}
+                  value={dateOnlyToPickerDate(
+                    datePicker.field === 'issueDate' ? issueDate : dueDate,
+                  )}
+                />
+                {Platform.OS === 'ios' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setDatePicker(null)}
+                    style={styles.doneButton}
+                  >
+                    <Text style={styles.doneText}>Done</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </Card>
         ) : null}
 
@@ -631,6 +703,14 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
 
         {step === 3 ? (
           <Card title="Review">
+            <SummaryText
+              label="Issue date"
+              value={formatInvoiceDate(issueDate, businessTimezone)}
+            />
+            <SummaryText
+              label="Due date"
+              value={formatInvoiceDate(dueDate, businessTimezone)}
+            />
             <Summary label="Subtotal" value={calculations.subtotalCents} />
             <Summary label="Discount" value={calculations.discountCents} />
             <Summary label="GST" value={calculations.gstCents} />
@@ -751,6 +831,66 @@ function centsToInput(cents: number) {
   return (cents / 100).toFixed(2).replace(/\.00$/, '');
 }
 
+function businessDateOnly(
+  value: Date | string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const parts = getBusinessDateParts(value, timezone);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(
+    parts.day,
+  ).padStart(2, '0')}`;
+}
+
+function parseDateOnly(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) {
+    return getBusinessDateParts(new Date());
+  }
+  return { day, month, year };
+}
+
+function addBusinessDays(value: string, days: number) {
+  const parts = parseDateOnly(value);
+  const next = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day + days),
+  );
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(
+    2,
+    '0',
+  )}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+
+function compareDateOnly(left: string, right: string) {
+  return left.localeCompare(right);
+}
+
+function dateOnlyToBusinessIso(
+  value: string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const parts = parseDateOnly(value);
+  return zonedTimeToUtc(parts, timezone).toISOString();
+}
+
+function dateOnlyToPickerDate(value: string) {
+  const parts = parseDateOnly(value);
+  return new Date(parts.year, parts.month - 1, parts.day);
+}
+
+function dateOnlyFromPickerDate(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(
+    2,
+    '0',
+  )}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function formatInvoiceDate(
+  value: string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  return formatBusinessDate(dateOnlyToBusinessIso(value, timezone), timezone);
+}
+
 function Card({ children, title }: { children: ReactNode; title: string }) {
   return (
     <View style={styles.card}>
@@ -779,6 +919,33 @@ function Chip({
         {label}
       </Text>
     </Pressable>
+  );
+}
+
+function DateField({
+  error,
+  label,
+  onPress,
+  value,
+}: {
+  error?: string | null;
+  label: string;
+  onPress(): void;
+  value: string;
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>{label}</Text>
+      <Pressable
+        accessibilityLabel={`${label}: ${value}`}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={[styles.input, styles.dateInput, error && styles.inputError]}
+      >
+        <Text style={styles.dateInputText}>{value}</Text>
+      </Pressable>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
   );
 }
 
@@ -889,6 +1056,39 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 44,
   },
+  dateInput: {
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  dateInputText: {
+    color: colours.ink,
+    fontWeight: '700',
+  },
+  datePickerContainer: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 8,
+  },
+  doneButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    borderColor: colours.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  doneText: {
+    color: colours.primary,
+    fontWeight: '900',
+  },
+  error: {
+    color: '#BE123C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   eyebrow: {
     color: colours.primary,
     fontSize: 12,
@@ -914,6 +1114,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     color: colours.ink,
     padding: 13,
+  },
+  inputError: {
+    borderColor: '#BE123C',
   },
   label: {
     color: colours.ink,
