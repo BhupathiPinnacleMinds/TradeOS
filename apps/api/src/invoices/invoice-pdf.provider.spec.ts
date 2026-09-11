@@ -87,7 +87,57 @@ const business = {
   postcode: '3000',
   state: 'VIC',
   suburb: 'Melbourne',
+  timezone: 'Australia/Melbourne',
 };
+
+describe('DeterministicInvoicePdfProvider invoices', () => {
+  it('formats invoice issue and due dates in the business timezone', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice: {
+        ...invoice,
+        dueDate: '2026-09-17T14:00:00.000Z',
+        issueDate: '2026-09-10T14:00:00.000Z',
+      },
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).toContain('Issue: 11/09/2026');
+    expect(text).toContain('Due: 18/09/2026');
+    expect(text).not.toContain('Issue: 10/09/2026');
+    expect(text).not.toContain('Due: 17/09/2026');
+  });
+
+  it('uses the resolved service address supplied by the invoice service', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice,
+      serviceAddress: '21 Villite Ave, Tarneit, VIC, 3029',
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).toContain(
+      'Service address: 21 Villite Ave, Tarneit, VIC, 3029',
+    );
+    expect(text).not.toContain('Service address to be confirmed');
+  });
+
+  it('keeps internal invoice notes out of the customer-facing PDF', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice: {
+        ...invoice,
+        internalNotes: 'Internal margin and scheduling notes.',
+      },
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).not.toContain('Internal margin and scheduling notes.');
+  });
+});
 
 describe('DeterministicInvoicePdfProvider receipts', () => {
   it('generates deterministic customer-safe payment receipt PDFs', () => {

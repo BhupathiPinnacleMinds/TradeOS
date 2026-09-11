@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { Invoice, InvoicePayment } from '@tradieos/shared';
-import { formatAudCents } from '@tradieos/shared';
+import { formatAudCents, formatBusinessDate } from '@tradieos/shared';
 
 export interface InvoicePdfResult {
   buffer: Buffer;
@@ -22,7 +22,9 @@ export interface InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
+    serviceAddress?: string | null;
   }): InvoicePdfResult;
   generateReceiptPdf(input: {
     receiptNumber: string;
@@ -38,6 +40,7 @@ export interface InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
   }): InvoicePdfResult;
 }
@@ -55,7 +58,9 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
+    serviceAddress?: string | null;
   }): InvoicePdfResult {
     const fileName = `Invoice-${input.invoice.invoiceNumber}.pdf`;
     const lines = this.lines(input);
@@ -82,6 +87,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
   }): InvoicePdfResult {
     const fileName = `Receipt-${input.receiptNumber}.pdf`;
@@ -107,7 +113,9 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
+    serviceAddress?: string | null;
   }) {
     const { business, invoice } = input;
     const businessAddress = [
@@ -118,17 +126,20 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
     ]
       .filter(Boolean)
       .join(', ');
-    const serviceAddress = invoice.customerSite
-      ? [
-          invoice.customerSite.addressLine1,
-          invoice.customerSite.addressLine2,
-          invoice.customerSite.suburb,
-          invoice.customerSite.state,
-          invoice.customerSite.postcode,
-        ]
-          .filter(Boolean)
-          .join(', ')
-      : 'Service address to be confirmed';
+    const serviceAddress =
+      input.serviceAddress !== undefined
+        ? (input.serviceAddress ?? 'Service address to be confirmed')
+        : invoice.customerSite
+          ? [
+              invoice.customerSite.addressLine1,
+              invoice.customerSite.addressLine2,
+              invoice.customerSite.suburb,
+              invoice.customerSite.state,
+              invoice.customerSite.postcode,
+            ]
+              .filter(Boolean)
+              .join(', ')
+          : 'Service address to be confirmed';
     const title =
       business.gstRegistered && invoice.gstCents > 0
         ? 'Tax Invoice'
@@ -145,8 +156,8 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       invoice.invoiceNumber,
       invoice.title,
       `Status: ${invoice.displayStatus}`,
-      `Issue: ${formatAuDate(invoice.issueDate)}`,
-      `Due: ${formatAuDate(invoice.dueDate)}`,
+      `Issue: ${formatBusinessDate(invoice.issueDate, business.timezone ?? undefined)}`,
+      `Due: ${formatBusinessDate(invoice.dueDate, business.timezone ?? undefined)}`,
       '',
       `Customer: ${invoice.customer.displayName}`,
       invoice.customer.email ? `Email: ${invoice.customer.email}` : null,
@@ -199,6 +210,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       suburb: string | null;
       state: string | null;
       postcode: string | null;
+      timezone?: string | null;
     };
   }) {
     const { business, invoice, payment, receiptNumber } = input;
@@ -224,7 +236,10 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       `Customer: ${invoice.customer.displayName}`,
       invoice.customer.email ? `Email: ${invoice.customer.email}` : null,
       '',
-      `Payment date: ${formatAuDate(payment.receivedAt)}`,
+      `Payment date: ${formatBusinessDate(
+        payment.receivedAt,
+        business.timezone ?? undefined,
+      )}`,
       `Payment amount: ${formatAudCents(payment.amountCents)}`,
       `Payment method: ${payment.method.replaceAll('_', ' ')}`,
       payment.reference ? `Reference: ${payment.reference}` : null,
@@ -236,14 +251,6 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       'Thank you for your payment.',
     ].filter((line): line is string => line !== null && line !== undefined);
   }
-}
-
-function formatAuDate(value: string) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(new Date(value));
 }
 
 function createSimplePdf(lines: string[]) {

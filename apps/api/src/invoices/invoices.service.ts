@@ -1334,6 +1334,7 @@ export class InvoicesService {
     const generated = this.pdfProvider.generateInvoicePdf({
       business,
       invoice: this.toInvoice(invoice),
+      serviceAddress: this.resolveInvoiceServiceAddress(invoice),
     });
     const objectKey = this.storage.createObjectKey({
       businessId: currentUser.businessId,
@@ -1373,6 +1374,51 @@ export class InvoicesService {
         version: invoice.version,
       },
     });
+  }
+
+  private resolveInvoiceServiceAddress(invoice: InvoiceRecord) {
+    return (
+      this.formatServiceAddress(invoice.customerSite) ??
+      this.formatServiceAddress(invoice.job) ??
+      this.formatServiceAddress(invoice.sourceQuote?.customerSite) ??
+      null
+    );
+  }
+
+  private formatServiceAddress(
+    address?: {
+      addressLine1?: string | null;
+      addressLine2?: string | null;
+      postcode?: string | null;
+      state?: string | null;
+      suburb?: string | null;
+    } | null,
+  ) {
+    const addressLine1 = address?.addressLine1?.trim();
+    if (!addressLine1 || this.isPlaceholderServiceAddress(addressLine1)) {
+      return null;
+    }
+    const parts = [
+      addressLine1,
+      address?.addressLine2,
+      address?.suburb,
+      address?.state,
+      address?.postcode,
+    ]
+      .map((part) => part?.trim())
+      .filter(
+        (part): part is string =>
+          typeof part === 'string' &&
+          part.length > 0 &&
+          !this.isPlaceholderServiceAddress(part),
+      );
+    return parts.length > 0 ? parts.join(', ') : null;
+  }
+
+  private isPlaceholderServiceAddress(value: string) {
+    return /^(service\s+)?address\s+to\s+be\s+confirmed\.?$/i.test(
+      value.trim(),
+    );
   }
 
   private async generateAndStoreReceipt(
@@ -1653,15 +1699,32 @@ export class InvoicesService {
       },
       job: {
         select: {
+          addressLine1: true,
+          addressLine2: true,
           assignedToUserId: true,
           id: true,
           jobNumber: true,
+          postcode: true,
+          state: true,
+          suburb: true,
           title: true,
         },
       },
       lineItems: { orderBy: { position: 'asc' as const } },
       sourceQuote: {
         select: {
+          customerSite: {
+            select: {
+              addressLine1: true,
+              addressLine2: true,
+              id: true,
+              label: true,
+              postcode: true,
+              state: true,
+              suburb: true,
+            },
+          },
+          customerSiteId: true,
           id: true,
           quoteNumber: true,
           status: true,
