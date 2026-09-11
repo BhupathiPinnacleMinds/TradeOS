@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { Linking, Platform } from 'react-native';
 import {
   ApiRequestError,
   buildAuthenticatedHeaders,
@@ -10,6 +11,9 @@ import {
 declare const __DEV__: boolean;
 
 const INVOICE_CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}tradieos-invoices/`;
+const ANDROID_GRANT_READ_URI_PERMISSION = 1;
+const ANDROID_VIEW_ACTION = 'android.intent.action.VIEW';
+const INVOICE_PDF_MIME_TYPE = 'application/pdf';
 
 function safeFileName(fileName: string) {
   const cleaned = fileName
@@ -98,6 +102,20 @@ export async function downloadAuthenticatedInvoicePdf(
   return result.uri;
 }
 
+export async function openDownloadedInvoicePdf(
+  localUri: string,
+  invoiceId: string,
+) {
+  await openDownloadedInvoiceDocument({
+    downloadErrorCode: 'INVOICE_PDF_DOWNLOAD_FAILED',
+    errorCode: 'INVOICE_PDF_OPEN_FAILED',
+    fileCheckErrorCode: 'INVOICE_PDF_LOCAL_FILE_CHECK_FAILED',
+    invoiceId,
+    localUri,
+    message: "We couldn't open this invoice PDF.",
+  });
+}
+
 export async function downloadAuthenticatedInvoicePaymentReceipt(
   token: string,
   invoiceId: string,
@@ -177,4 +195,85 @@ export async function downloadAuthenticatedInvoicePaymentReceipt(
   }
 
   return result.uri;
+}
+
+export async function openDownloadedInvoicePaymentReceipt(
+  localUri: string,
+  invoiceId: string,
+  paymentId: string,
+) {
+  await openDownloadedInvoiceDocument({
+    downloadErrorCode: 'INVOICE_RECEIPT_DOWNLOAD_FAILED',
+    errorCode: 'INVOICE_RECEIPT_OPEN_FAILED',
+    fileCheckErrorCode: 'INVOICE_RECEIPT_LOCAL_FILE_CHECK_FAILED',
+    invoiceId,
+    localUri,
+    message: "We couldn't open this payment receipt.",
+    paymentId,
+  });
+}
+
+async function openDownloadedInvoiceDocument({
+  errorCode,
+  downloadErrorCode,
+  fileCheckErrorCode,
+  invoiceId,
+  localUri,
+  message,
+  paymentId,
+}: {
+  errorCode: string;
+  downloadErrorCode: string;
+  fileCheckErrorCode: string;
+  invoiceId: string;
+  localUri: string;
+  message: string;
+  paymentId?: string;
+}) {
+  if (Platform.OS === 'web') {
+    await Linking.openURL(localUri);
+    return;
+  }
+
+  const fileInfo = await FileSystem.getInfoAsync(localUri).catch(
+    (error: unknown) => {
+      if (__DEV__) {
+        console.warn('[TradieOS invoice PDF open file check failed]', {
+          code: fileCheckErrorCode,
+          invoiceId,
+          message: error instanceof Error ? error.message : String(error),
+          paymentId,
+        });
+      }
+      return null;
+    },
+  );
+
+  if (!fileInfo?.exists) {
+    throw new ApiRequestError(message, null, downloadErrorCode);
+  }
+
+  try {
+    if (Platform.OS === 'android') {
+      const contentUri = await FileSystem.getContentUriAsync(localUri);
+      await IntentLauncher.startActivityAsync(ANDROID_VIEW_ACTION, {
+        data: contentUri,
+        flags: ANDROID_GRANT_READ_URI_PERMISSION,
+        type: INVOICE_PDF_MIME_TYPE,
+      });
+      return;
+    }
+
+    await Linking.openURL(localUri);
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[TradieOS invoice PDF open failed]', {
+        code: errorCode,
+        invoiceId,
+        message: error instanceof Error ? error.message : String(error),
+        paymentId,
+      });
+    }
+    throw new ApiRequestError(message, null, errorCode);
+  }
 }

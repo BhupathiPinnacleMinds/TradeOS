@@ -15,7 +15,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -37,6 +36,8 @@ import {
 import {
   downloadAuthenticatedInvoicePaymentReceipt,
   downloadAuthenticatedInvoicePdf,
+  openDownloadedInvoicePaymentReceipt,
+  openDownloadedInvoicePdf,
 } from '../api/invoiceDocuments';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
@@ -175,7 +176,12 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
       invoice.id,
       fileName ?? `Invoice-${invoice.invoiceNumber}.pdf`,
     );
-    await Linking.openURL(localUri);
+    try {
+      await openDownloadedInvoicePdf(localUri, invoice.id);
+    } catch (openError) {
+      await load();
+      throw openError;
+    }
   }
 
   async function openReceipt(paymentId: string, fileName?: string) {
@@ -186,7 +192,16 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
       paymentId,
       fileName ?? `Receipt-${invoice.invoiceNumber}-${paymentId}.pdf`,
     );
-    await Linking.openURL(localUri);
+    try {
+      await openDownloadedInvoicePaymentReceipt(
+        localUri,
+        invoice.id,
+        paymentId,
+      );
+    } catch (openError) {
+      await load();
+      throw openError;
+    }
   }
 
   async function savePayment() {
@@ -461,7 +476,9 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
             <Pressable
               accessibilityRole="button"
               key={document.id}
-              onPress={() => void openPdf(document.fileName)}
+              onPress={() =>
+                void mutate('pdf', () => openPdf(document.fileName))
+              }
               style={styles.documentRow}
             >
               <Text style={styles.link}>{document.fileName}</Text>

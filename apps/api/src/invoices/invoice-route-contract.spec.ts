@@ -3,6 +3,14 @@ import { join } from 'path';
 
 describe('invoice route contract', () => {
   const root = join(__dirname, '..', '..');
+  const repoRoot = join(root, '..', '..');
+
+  function mobileSource(relativePath: string) {
+    return readFileSync(
+      join(repoRoot, 'apps', 'mobile', 'src', relativePath),
+      'utf8',
+    );
+  }
 
   it('registers protected invoice routes', () => {
     const controller = readFileSync(
@@ -43,5 +51,40 @@ describe('invoice route contract', () => {
     );
 
     expect(service).toContain("this.config.get<string>('APP_PUBLIC_URL')");
+  });
+
+  it('opens downloaded invoice PDFs through an Android content URI', () => {
+    const helper = mobileSource('api/invoiceDocuments.ts');
+    const screen = mobileSource('screens/InvoiceDetailsScreen.tsx');
+
+    expect(helper).toContain(
+      "import * as IntentLauncher from 'expo-intent-launcher';",
+    );
+    expect(helper).toContain('export async function openDownloadedInvoicePdf');
+    expect(helper).toContain(
+      'export async function openDownloadedInvoicePaymentReceipt',
+    );
+    expect(helper).toContain('FileSystem.getInfoAsync(localUri)');
+    expect(helper).toContain('if (!fileInfo?.exists)');
+    expect(helper).toContain('FileSystem.getContentUriAsync(localUri)');
+    expect(helper).toContain('IntentLauncher.startActivityAsync');
+    expect(helper).toContain('data: contentUri');
+    expect(helper).toContain('flags: ANDROID_GRANT_READ_URI_PERMISSION');
+    expect(helper).toContain('type: INVOICE_PDF_MIME_TYPE');
+    expect(helper).toContain(
+      "const INVOICE_PDF_MIME_TYPE = 'application/pdf';",
+    );
+    expect(helper).toContain('headers: buildAuthenticatedHeaders(token)');
+    expect(screen).toContain(
+      'await openDownloadedInvoicePdf(localUri, invoice.id);',
+    );
+    expect(screen).toContain('await openDownloadedInvoicePaymentReceipt(');
+    expect(screen).toContain(
+      'localUri,\n        invoice.id,\n        paymentId,',
+    );
+    expect(screen).toContain(
+      "void mutate('pdf', () => openPdf(document.fileName))",
+    );
+    expect(screen).not.toContain('await Linking.openURL(localUri);');
   });
 });
