@@ -631,7 +631,7 @@ function SendModal({
           value={message}
         />
         <Text style={styles.muted}>
-          Local development uses the console email provider only. Tori will not
+          We'll email this invoice with a secure customer link. Tori will not
           send without your confirmation.
         </Text>
         <View style={styles.modalActions}>

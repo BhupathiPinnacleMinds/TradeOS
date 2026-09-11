@@ -37,7 +37,7 @@ import type { StorageProvider } from '../media/storage-provider';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
-  ConsoleInvoiceEmailProvider,
+  createInvoiceEmailProvider,
   type InvoiceEmailProvider,
 } from './invoice-email.provider';
 import {
@@ -67,8 +67,7 @@ type InvoiceRecord = Prisma.InvoiceGetPayload<{
 
 @Injectable()
 export class InvoicesService {
-  private readonly emailProvider: InvoiceEmailProvider =
-    new ConsoleInvoiceEmailProvider();
+  private readonly emailProvider: InvoiceEmailProvider;
   private readonly pdfProvider: InvoicePdfProvider =
     new DeterministicInvoicePdfProvider();
 
@@ -78,7 +77,22 @@ export class InvoicesService {
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly communications: CustomerCommunicationsService,
     private readonly notifications: NotificationsService,
-  ) {}
+  ) {
+    this.emailProvider = createInvoiceEmailProvider({
+      apiKey: this.getConfigValue('RESEND_API_KEY'),
+      fromAddress: this.getConfigValue('EMAIL_FROM_ADDRESS'),
+      fromName: this.getConfigValue('EMAIL_FROM_NAME', 'TradieOS'),
+      isProduction: this.getConfigValue('NODE_ENV') === 'production',
+      provider: this.getConfigValue('EMAIL_PROVIDER', 'console'),
+    });
+  }
+
+  private getConfigValue(key: string, defaultValue?: string) {
+    const config = this.config as {
+      get?: (key: string, defaultValue?: string) => string | undefined;
+    };
+    return config.get?.(key, defaultValue) ?? defaultValue;
+  }
 
   async findAll(
     currentUser: AuthenticatedUser,

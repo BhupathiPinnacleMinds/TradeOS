@@ -14,6 +14,136 @@ const owner: AuthenticatedUser = {
 };
 
 describe('InvoicesService PDF generation', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('sends invoices through the configured Resend provider without enabling broader customer communications', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      json: () => Promise.resolve({ id: 'em_invoice_123' }),
+      ok: true,
+      status: 200,
+    } as Response);
+    const tx = createTransactionMock();
+    const prisma = createPrismaMock(tx);
+    prisma.invoice.findFirst
+      .mockResolvedValueOnce(invoiceRecord())
+      .mockResolvedValueOnce(
+        invoiceRecord({
+          sentAt: new Date('2026-09-11T01:00:00.000Z'),
+          status: 'SENT',
+        }),
+      );
+    const storage = createStorageMock();
+    type InvoiceSentPayload = {
+      businessId: string;
+      createdBy: string;
+      invoiceId: string;
+      publicUrl: string;
+    };
+    const invoiceSent = jest
+      .fn<Promise<void>, [InvoiceSentPayload]>()
+      .mockResolvedValue(undefined);
+    const service = new InvoicesService(
+      prisma as never,
+      createConfigMock({
+        APP_PUBLIC_URL: 'https://staging.tradieos.com',
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+        EMAIL_FROM_ADDRESS: 'accounts@tradieos.com',
+        EMAIL_FROM_NAME: 'TradieOS Staging',
+        EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test_key',
+      }) as never,
+      storage as never,
+      { invoiceSent } as never,
+      {} as never,
+    );
+
+    const response = await service.send(owner, 'invoice-1', {
+      message: 'Please review this invoice.',
+      subject: 'Invoice INV-2026-000003 from Pioneer',
+      to: 'sam@example.com',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.resend.com/emails',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const request = fetchMock.mock.calls[0]?.[1];
+    const rawBody = request?.body;
+    if (typeof rawBody !== 'string') {
+      throw new Error('Expected Resend request body to be serialized JSON.');
+    }
+    const body = JSON.parse(rawBody) as {
+      from: string;
+      subject: string;
+      text: string;
+      to: string;
+    };
+    expect(body).toMatchObject({
+      from: 'TradieOS Staging <accounts@tradieos.com>',
+      subject: 'Invoice INV-2026-000003 from Pioneer',
+      to: 'sam@example.com',
+    });
+    expect(body.text).toContain('https://staging.tradieos.com/invoice/');
+    const invoiceUpdateCalls = tx.invoice.update.mock.calls as Array<
+      [
+        {
+          data: { status?: string };
+        },
+      ]
+    >;
+    expect(invoiceUpdateCalls[0]?.[0].data.status).toBe('SENT');
+    const invoiceSentPayload = invoiceSent.mock.calls[0]?.[0];
+    expect(invoiceSentPayload).toEqual(
+      expect.objectContaining({
+        businessId: owner.businessId,
+        createdBy: owner.id,
+        invoiceId: 'invoice-1',
+      }),
+    );
+    expect(invoiceSentPayload?.publicUrl).toContain(
+      'https://staging.tradieos.com/invoice/',
+    );
+    expect(response.invoice.status).toBe('SENT');
+  });
+
+  it('does not report successful invoice delivery when the configured provider fails', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      json: () => Promise.resolve({ message: 'domain not verified' }),
+      ok: false,
+      status: 403,
+    } as Response);
+    const tx = createTransactionMock();
+    const prisma = createPrismaMock(tx);
+    const storage = createStorageMock();
+    const invoiceSent = jest.fn().mockResolvedValue(undefined);
+    const service = new InvoicesService(
+      prisma as never,
+      createConfigMock({
+        APP_PUBLIC_URL: 'https://staging.tradieos.com',
+        EMAIL_FROM_ADDRESS: 'accounts@tradieos.com',
+        EMAIL_FROM_NAME: 'TradieOS Staging',
+        EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test_key',
+      }) as never,
+      storage as never,
+      { invoiceSent } as never,
+      {} as never,
+    );
+
+    await expect(
+      service.send(owner, 'invoice-1', {
+        message: 'Please review this invoice.',
+        subject: 'Invoice INV-2026-000003 from Pioneer',
+        to: 'sam@example.com',
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'INVOICE_SEND_FAILED' },
+    });
+    expect(invoiceSent).not.toHaveBeenCalled();
+  });
+
   it('uses the linked job service address when the invoice/source quote site is only a placeholder', async () => {
     const tx = createTransactionMock();
     const prisma = createPrismaMock(tx);
@@ -150,17 +280,27 @@ function createPrismaMock(
   invoiceOverrides: Record<string, unknown> = {},
 ) {
   return {
-    $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) =>
-      Promise.resolve(callback(tx)),
+    $transaction: jest.fn(
+      (
+        input: Array<Promise<unknown>> | ((transaction: typeof tx) => unknown),
+      ) =>
+        Array.isArray(input) ? Promise.all(input) : Promise.resolve(input(tx)),
     ),
     auditLog: {
       create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     business: {
       findUnique: jest.fn().mockResolvedValue(business),
     },
     invoice: {
       findFirst: jest.fn().mockResolvedValue(invoiceRecord(invoiceOverrides)),
+    },
+    invoicePayment: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    invoicePdfDocument: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
   };
 }
@@ -169,11 +309,37 @@ function createTransactionMock(
   existingDocument: Record<string, unknown> | null = null,
 ) {
   return {
+    auditLog: {
+      create: jest.fn(),
+    },
+    invoice: {
+      update: jest.fn().mockResolvedValue(
+        invoiceRecord({
+          sentAt: new Date('2026-09-11T01:00:00.000Z'),
+          status: 'SENT',
+        }),
+      ),
+    },
     invoicePdfDocument: {
       create: jest.fn().mockResolvedValue(invoicePdfDocument()),
       findFirst: jest.fn().mockResolvedValue(existingDocument),
       update: jest.fn().mockResolvedValue(invoicePdfDocument()),
     },
+    invoicePublicAccessToken: {
+      create: jest.fn().mockResolvedValue({
+        id: 'public-token-1',
+        rawToken: 'raw-invoice-token',
+      }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+  };
+}
+
+function createConfigMock(values: Record<string, string>) {
+  return {
+    get: jest.fn(
+      (key: string, defaultValue?: string) => values[key] ?? defaultValue,
+    ),
   };
 }
 
@@ -286,7 +452,26 @@ function invoiceRecord(overrides: Record<string, unknown> = {}) {
       title: 'Plumbing job test',
     },
     jobId: 'job-1',
-    lineItems: [],
+    lineItems: [
+      {
+        businessId: 'business-1',
+        createdAt: new Date('2026-09-11T00:00:00.000Z'),
+        description: null,
+        id: 'invoice-line-1',
+        invoiceId: 'invoice-1',
+        lineGstCents: 1200,
+        lineSubtotalCents: 12000,
+        lineTotalCents: 13200,
+        name: 'Labour',
+        position: 0,
+        quantity: { toString: () => '1' },
+        taxable: true,
+        type: 'LABOUR',
+        unit: 'hour',
+        unitPriceCents: 12000,
+        updatedAt: new Date('2026-09-11T00:00:00.000Z'),
+      },
+    ],
     paidAt: null,
     paymentTerms: 'Payment due within 7 days.',
     pricingMode: 'GST_EXCLUSIVE',
