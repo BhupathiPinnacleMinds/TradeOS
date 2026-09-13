@@ -19,6 +19,7 @@ import {
   ListInvoicesQueryDto,
   RecordInvoicePaymentDto,
   SendInvoiceDto,
+  UpdateInvoicePaymentDeclarationDto,
   UpsertInvoiceDto,
 } from './dto/invoices.dto';
 import { InvoicesService } from './invoices.service';
@@ -124,6 +125,52 @@ export class InvoicesController {
         userId: currentUser.id,
       },
       () => this.invoices.recordPayment(currentUser, id, dto),
+    );
+  }
+
+  @Post(':id/payment-declarations/:declarationId/confirm')
+  confirmPaymentDeclaration(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('declarationId') declarationId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.paymentDeclaration.confirm',
+        request: { declarationId, id },
+        userId: currentUser.id,
+      },
+      () =>
+        this.invoices.confirmPaymentDeclaration(currentUser, id, declarationId),
+    );
+  }
+
+  @Post(':id/payment-declarations/:declarationId/reject')
+  rejectPaymentDeclaration(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('declarationId') declarationId: string,
+    @Body() dto: UpdateInvoicePaymentDeclarationDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.idempotency.runAuthenticated(
+      {
+        businessId: currentUser.businessId,
+        idempotencyKey,
+        operation: 'invoice.paymentDeclaration.reject',
+        request: { declarationId, dto, id },
+        userId: currentUser.id,
+      },
+      () =>
+        this.invoices.rejectPaymentDeclaration(
+          currentUser,
+          id,
+          declarationId,
+          dto,
+        ),
     );
   }
 

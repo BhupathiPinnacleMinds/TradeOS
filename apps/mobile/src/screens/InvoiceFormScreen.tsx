@@ -367,6 +367,16 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
     }
   }
 
+  function goNext() {
+    const validationError = validateStep({ selectedCustomerId, step });
+    if (validationError) {
+      setStep(validationError.step);
+      showToast({ message: validationError.message, tone: 'error' });
+      return;
+    }
+    setStep((current) => Math.min(3, current + 1));
+  }
+
   function handleDatePickerChange(
     event: DateTimePickerEvent,
     selectedDate?: Date,
@@ -741,7 +751,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
           {step < 3 ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => setStep(step + 1)}
+              onPress={goNext}
               style={styles.primaryButton}
             >
               <Text style={styles.primaryText}>Next</Text>
@@ -793,6 +803,19 @@ function parseLineItems(items: FormLineItem[]) {
     });
   });
   return { errors, validItems };
+}
+
+function validateStep({
+  selectedCustomerId,
+  step,
+}: {
+  selectedCustomerId: string;
+  step: number;
+}) {
+  if (step === 0 && !selectedCustomerId) {
+    return { message: 'Select a customer.', step: 0 };
+  }
+  return null;
 }
 
 function invoicePayloadLineToFormLine(

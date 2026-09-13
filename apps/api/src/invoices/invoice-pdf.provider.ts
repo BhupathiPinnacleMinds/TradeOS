@@ -1,5 +1,9 @@
 import { createHash } from 'crypto';
-import type { Invoice, InvoicePayment } from '@tradieos/shared';
+import type {
+  Invoice,
+  InvoicePayment,
+  InvoicePaymentInstructions,
+} from '@tradieos/shared';
 import { formatAudCents, formatBusinessDate } from '@tradieos/shared';
 
 export interface InvoicePdfResult {
@@ -24,6 +28,7 @@ export interface InvoicePdfProvider {
       postcode: string | null;
       timezone?: string | null;
     };
+    paymentInstructions?: InvoicePaymentInstructions;
     serviceAddress?: string | null;
   }): InvoicePdfResult;
   generateReceiptPdf(input: {
@@ -60,6 +65,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       postcode: string | null;
       timezone?: string | null;
     };
+    paymentInstructions?: InvoicePaymentInstructions;
     serviceAddress?: string | null;
   }): InvoicePdfResult {
     const fileName = `Invoice-${input.invoice.invoiceNumber}.pdf`;
@@ -115,6 +121,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       postcode: string | null;
       timezone?: string | null;
     };
+    paymentInstructions?: InvoicePaymentInstructions;
     serviceAddress?: string | null;
   }) {
     const { business, invoice } = input;
@@ -144,6 +151,18 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       business.gstRegistered && invoice.gstCents > 0
         ? 'Tax Invoice'
         : 'Invoice';
+    const paymentInstructionLines = input.paymentInstructions?.hasBankDetails
+      ? [
+          `Account name: ${input.paymentInstructions.accountName}`,
+          input.paymentInstructions.bankName
+            ? `Bank: ${input.paymentInstructions.bankName}`
+            : null,
+          `BSB: ${input.paymentInstructions.bsb}`,
+          `Account number: ${input.paymentInstructions.accountNumber}`,
+          `Reference: ${input.paymentInstructions.reference}`,
+          input.paymentInstructions.customInstructions,
+        ]
+      : [invoice.paymentTerms || 'Payment instructions to be confirmed.'];
 
     return [
       business.name,
@@ -189,7 +208,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       `Balance due: ${formatAudCents(invoice.balanceDueCents)}`,
       '',
       'Payment instructions',
-      invoice.paymentTerms || 'Payment instructions to be confirmed.',
+      ...paymentInstructionLines,
       '',
       'Customer notes',
       invoice.customerNotes || 'No customer notes.',

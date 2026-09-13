@@ -1,7 +1,12 @@
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { ReactNode, RefObject } from 'react';
-import type { Invoice, InvoicePaymentMethod } from '@tradieos/shared';
+import type {
+  Invoice,
+  InvoicePaymentDeclaration,
+  InvoicePaymentInstructions,
+  InvoicePaymentMethod,
+} from '@tradieos/shared';
 import {
   INVOICE_PAYMENT_METHODS,
   formatAudCents,
@@ -27,9 +32,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ApiRequestError,
+  confirmInvoicePaymentDeclarationRequest,
   friendlyInvoiceMutationError,
   invoiceDetailRequest,
   recordInvoicePaymentRequest,
+  rejectInvoicePaymentDeclarationRequest,
   sendInvoiceRequest,
   voidInvoiceRequest,
 } from '../api/client';
@@ -58,6 +65,11 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
   const [payments, setPayments] = useState<
     NonNullable<Awaited<ReturnType<typeof invoiceDetailRequest>>['payments']>
   >([]);
+  const [paymentDeclarations, setPaymentDeclarations] = useState<
+    InvoicePaymentDeclaration[]
+  >([]);
+  const [paymentInstructions, setPaymentInstructions] =
+    useState<InvoicePaymentInstructions | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +97,8 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
       setInvoice(response.invoice);
       setDocuments(response.documents ?? []);
       setPayments(response.payments ?? []);
+      setPaymentDeclarations(response.paymentDeclarations ?? []);
+      setPaymentInstructions(response.paymentInstructions ?? null);
       navigation.setOptions({ title: response.invoice.invoiceNumber });
     } catch (loadError) {
       setError(
@@ -147,6 +161,9 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
     documents.find((document) => document.version === invoice.version) ??
     documents[0] ??
     null;
+  const pendingPaymentDeclarations = paymentDeclarations.filter(
+    (declaration) => declaration.status === 'PENDING',
+  );
   const availableActions = new Set(
     getInvoiceAvailableActions({
       balanceDueCents: invoice.balanceDueCents,
@@ -245,6 +262,24 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function confirmPaymentDeclaration(declarationId: string) {
+    if (!token || !invoice) return;
+    await confirmInvoicePaymentDeclarationRequest(
+      token,
+      invoice.id,
+      declarationId,
+    );
+  }
+
+  async function rejectPaymentDeclaration(declarationId: string) {
+    if (!token || !invoice) return;
+    await rejectInvoicePaymentDeclarationRequest(
+      token,
+      invoice.id,
+      declarationId,
+    );
   }
 
   return (
@@ -378,6 +413,37 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
         </Text>
       </Card>
 
+      <Card title="Payment details">
+        {paymentInstructions?.hasBankDetails ? (
+          <View style={styles.paymentDetails}>
+            <Text style={styles.meta}>
+              Account name: {paymentInstructions.accountName}
+            </Text>
+            {paymentInstructions.bankName ? (
+              <Text style={styles.meta}>
+                Bank: {paymentInstructions.bankName}
+              </Text>
+            ) : null}
+            <Text style={styles.meta}>BSB: {paymentInstructions.bsb}</Text>
+            <Text style={styles.meta}>
+              Account number: {paymentInstructions.accountNumber}
+            </Text>
+            <Text style={styles.meta}>
+              Reference: {paymentInstructions.reference}
+            </Text>
+            {paymentInstructions.customInstructions ? (
+              <Text style={styles.meta}>
+                {paymentInstructions.customInstructions}
+              </Text>
+            ) : null}
+          </View>
+        ) : (
+          <Text style={styles.muted}>
+            No bank payment details configured yet.
+          </Text>
+        )}
+      </Card>
+
       <Card title="Line items">
         {invoice.lineItems.map((item) => (
           <View key={item.id} style={styles.lineItem}>
@@ -403,6 +469,69 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
         <Total label="Credit applied" value={invoice.creditAppliedCents} />
         <Total label="Paid" value={invoice.amountPaidCents} />
         <Total label="Balance due" value={invoice.balanceDueCents} strong />
+      </Card>
+
+      <Card title="Payment declarations">
+        {pendingPaymentDeclarations.length === 0 ? (
+          <Text style={styles.muted}>No pending customer payment updates.</Text>
+        ) : (
+          pendingPaymentDeclarations.map((declaration) => (
+            <View key={declaration.id} style={styles.paymentRow}>
+              <View style={styles.paymentCopy}>
+                <Text style={styles.lineName}>
+                  {formatAudCents(declaration.amountCents)}
+                </Text>
+                <Text style={styles.muted}>
+                  {declaration.method.replaceAll('_', ' ')} · Submitted{' '}
+                  {formatBusinessDateTime(
+                    declaration.submittedAt,
+                    user?.business.timezone,
+                  )}
+                </Text>
+                {declaration.reference ? (
+                  <Text style={styles.muted}>
+                    Reference: {declaration.reference}
+                  </Text>
+                ) : null}
+                {declaration.note ? (
+                  <Text style={styles.muted}>Note: {declaration.note}</Text>
+                ) : null}
+              </View>
+              <View style={styles.declarationActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={Boolean(busyAction)}
+                  onPress={() =>
+                    void mutate('declaration', () =>
+                      confirmPaymentDeclaration(declaration.id),
+                    )
+                  }
+                  style={[
+                    styles.receiptButton,
+                    Boolean(busyAction) && styles.disabledAction,
+                  ]}
+                >
+                  <Text style={styles.receiptButtonText}>Confirm</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={Boolean(busyAction)}
+                  onPress={() =>
+                    void mutate('declaration', () =>
+                      rejectPaymentDeclaration(declaration.id),
+                    )
+                  }
+                  style={[
+                    styles.rejectDeclarationButton,
+                    Boolean(busyAction) && styles.disabledAction,
+                  ]}
+                >
+                  <Text style={styles.rejectDeclarationButtonText}>Reject</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
       </Card>
 
       <Card title="Payment history">
@@ -915,6 +1044,10 @@ const styles = StyleSheet.create({
   dangerText: {
     color: '#be123c',
   },
+  declarationActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   disabledAction: {
     opacity: 0.6,
   },
@@ -1037,6 +1170,9 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
+  paymentDetails: {
+    gap: 6,
+  },
   paymentRow: {
     alignItems: 'flex-start',
     borderBottomColor: colours.border,
@@ -1064,6 +1200,18 @@ const styles = StyleSheet.create({
   },
   receiptButtonText: {
     color: colours.primary,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  rejectDeclarationButton: {
+    borderColor: '#fecdd3',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  rejectDeclarationButtonText: {
+    color: '#be123c',
     fontSize: 12,
     fontWeight: '900',
   },

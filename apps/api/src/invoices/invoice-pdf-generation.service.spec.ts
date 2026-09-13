@@ -299,6 +299,9 @@ function createPrismaMock(
     invoicePayment: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    invoicePaymentDeclaration: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     invoicePdfDocument: {
       findMany: jest.fn().mockResolvedValue([]),
     },

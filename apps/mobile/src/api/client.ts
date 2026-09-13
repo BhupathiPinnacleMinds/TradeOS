@@ -13,6 +13,8 @@ import type {
   AppointmentTransitionAction,
   AppointmentWorkLogPayload,
   AppointmentStatus,
+  BusinessPaymentInstructionsPayload,
+  BusinessPaymentInstructionsResponse,
   BusinessRole,
   CompleteAppointmentPayload,
   CustomerDetailResponse,
@@ -32,6 +34,7 @@ import type {
   InvoiceDraftResponse,
   InvoiceDetailResponse,
   InvoiceListResponse,
+  InvoicePaymentMethod,
   InvoicePayload,
   AccountsReceivableResponse,
   PublicInvoiceResponse,
@@ -684,6 +687,27 @@ export function updateCommunicationSettingsRequest(
   );
 }
 
+export function businessPaymentInstructionsRequest(token: string) {
+  return apiRequest<BusinessPaymentInstructionsResponse>(
+    '/business/payment-instructions',
+    { token },
+  );
+}
+
+export function updateBusinessPaymentInstructionsRequest(
+  token: string,
+  input: BusinessPaymentInstructionsPayload,
+) {
+  return apiRequest<BusinessPaymentInstructionsResponse>(
+    '/business/payment-instructions',
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
 export function communicationPreferencesRequest(
   token: string,
   customerId: string,
@@ -1193,6 +1217,48 @@ export function recordInvoicePaymentRequest(
   });
 }
 
+export function confirmInvoicePaymentDeclarationRequest(
+  token: string,
+  invoiceId: string,
+  declarationId: string,
+  idempotencyKey?: string,
+) {
+  return apiRequest<InvoiceDetailResponse>(
+    `/invoices/${invoiceId}/payment-declarations/${declarationId}/confirm`,
+    {
+      headers: idempotencyHeaders(
+        'invoice-payment-declaration-confirm',
+        idempotencyKey,
+        `${invoiceId}:${declarationId}`,
+      ),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export function rejectInvoicePaymentDeclarationRequest(
+  token: string,
+  invoiceId: string,
+  declarationId: string,
+  reason?: string,
+  idempotencyKey?: string,
+) {
+  return apiRequest<InvoiceDetailResponse>(
+    `/invoices/${invoiceId}/payment-declarations/${declarationId}/reject`,
+    {
+      body: JSON.stringify({ reason }),
+      headers: idempotencyHeaders(
+        'invoice-payment-declaration-reject',
+        idempotencyKey,
+        `${invoiceId}:${declarationId}:${reason ?? ''}`,
+      ),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export function voidInvoiceRequest(
   token: string,
   invoiceId: string,
@@ -1215,6 +1281,36 @@ export function publicInvoiceViewRequest(publicToken: string) {
   return apiRequest<PublicInvoiceResponse>(
     `/public/invoices/${encodeURIComponent(publicToken)}/view`,
     { method: 'POST' },
+  );
+}
+
+export function publicInvoicePdfUrl(publicToken: string) {
+  return buildApiRequestUrl(
+    `/public/invoices/${encodeURIComponent(publicToken)}/pdf`,
+  );
+}
+
+export function publicInvoicePaymentDeclarationRequest(
+  publicToken: string,
+  input: {
+    amountCents: number;
+    method: InvoicePaymentMethod;
+    note?: string;
+    reference?: string;
+  },
+  idempotencyKey?: string,
+) {
+  return apiRequest<PublicInvoiceResponse>(
+    `/public/invoices/${encodeURIComponent(publicToken)}/payment-declarations`,
+    {
+      body: JSON.stringify(input),
+      headers: idempotencyHeaders(
+        'public-invoice-payment-declaration',
+        idempotencyKey,
+        `${publicToken}:${JSON.stringify(input)}`,
+      ),
+      method: 'POST',
+    },
   );
 }
 

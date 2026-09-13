@@ -39,10 +39,18 @@ export const INVOICE_PAYMENT_METHODS = [
   'OTHER',
 ] as const;
 
+export const INVOICE_PAYMENT_DECLARATION_STATUSES = [
+  'PENDING',
+  'CONFIRMED',
+  'REJECTED',
+] as const;
+
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 export type InvoiceDisplayStatus = InvoiceStatus;
 export type InvoiceLineItemType = (typeof INVOICE_LINE_ITEM_TYPES)[number];
 export type InvoicePaymentMethod = (typeof INVOICE_PAYMENT_METHODS)[number];
+export type InvoicePaymentDeclarationStatus =
+  (typeof INVOICE_PAYMENT_DECLARATION_STATUSES)[number];
 export type InvoicePricingMode = QuotePricingMode;
 export type InvoiceDiscountType = QuoteDiscountType;
 export type InvoiceSortBy = 'createdAt' | 'dueDate' | 'totalCents' | 'status';
@@ -201,6 +209,46 @@ export interface InvoicePayment {
   receiptDocument: InvoiceReceiptDocumentSummary | null;
 }
 
+export interface InvoicePaymentDeclaration {
+  id: string;
+  businessId: string;
+  invoiceId: string;
+  customerId: string;
+  amountCents: number;
+  method: InvoicePaymentMethod;
+  reference: string | null;
+  note: string | null;
+  status: InvoicePaymentDeclarationStatus;
+  submittedAt: string;
+  confirmedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  paymentId: string | null;
+}
+
+export interface InvoicePaymentInstructions {
+  accountName: string | null;
+  bankName: string | null;
+  bsb: string | null;
+  accountNumber: string | null;
+  reference: string;
+  customInstructions: string | null;
+  hasBankDetails: boolean;
+}
+
+export interface BusinessPaymentInstructionsPayload {
+  accountName?: string | null;
+  bankName?: string | null;
+  bsb?: string | null;
+  accountNumber?: string | null;
+  referenceInstructions?: string | null;
+  customInstructions?: string | null;
+}
+
+export interface BusinessPaymentInstructionsResponse {
+  paymentInstructions: InvoicePaymentInstructions;
+}
+
 export interface InvoiceReceiptDocumentSummary {
   id: string;
   paymentId: string;
@@ -285,6 +333,8 @@ export interface InvoiceDetailResponse {
     metadata: Record<string, unknown> | null;
   }>;
   documents?: InvoiceDocumentSummary[];
+  paymentDeclarations?: InvoicePaymentDeclaration[];
+  paymentInstructions?: InvoicePaymentInstructions;
   payments?: InvoicePayment[];
   publicInvoiceUrl?: string;
 }
@@ -367,6 +417,9 @@ export interface PublicInvoiceResponse {
     customerNotes: string | null;
     version: number;
   };
+  documents?: InvoiceDocumentSummary[];
+  paymentDeclarations?: InvoicePaymentDeclaration[];
+  paymentInstructions?: InvoicePaymentInstructions;
 }
 
 export interface InvoiceLineItemPayload {

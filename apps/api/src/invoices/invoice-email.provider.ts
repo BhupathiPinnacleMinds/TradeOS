@@ -3,6 +3,7 @@ import {
   type EmailDeliveryResult,
   type EmailProvider,
 } from '../members/email-provider';
+import type { InvoicePaymentInstructions } from '@tradieos/shared';
 
 export interface InvoiceEmailInput {
   to: string;
@@ -11,6 +12,7 @@ export interface InvoiceEmailInput {
   businessName: string;
   invoiceNumber: string;
   invoiceUrl: string;
+  paymentInstructions?: InvoicePaymentInstructions;
   pdfFileName: string;
 }
 
@@ -67,7 +69,9 @@ function invoiceEmailText(input: InvoiceEmailInput) {
 
 Review invoice ${input.invoiceNumber}: ${input.invoiceUrl}
 
-A PDF copy is available from the secure invoice link.`;
+A PDF copy is available from the secure invoice link.${paymentInstructionsText(
+    input.paymentInstructions,
+  )}`;
 }
 
 function invoiceEmailHtml(input: InvoiceEmailInput) {
@@ -77,6 +81,45 @@ function invoiceEmailHtml(input: InvoiceEmailInput) {
       input.invoiceNumber,
     )}</a></p>
     <p>A PDF copy is available from the secure invoice link.</p>
+    ${paymentInstructionsHtml(input.paymentInstructions)}
+  `;
+}
+
+function paymentInstructionsText(instructions?: InvoicePaymentInstructions) {
+  if (!instructions?.hasBankDetails) return '';
+  return `
+
+Payment details:
+Account name: ${instructions.accountName}
+${instructions.bankName ? `Bank: ${instructions.bankName}\n` : ''}BSB: ${
+    instructions.bsb
+  }
+Account number: ${instructions.accountNumber}
+Reference: ${instructions.reference}${
+    instructions.customInstructions
+      ? `\n${instructions.customInstructions}`
+      : ''
+  }`;
+}
+
+function paymentInstructionsHtml(instructions?: InvoicePaymentInstructions) {
+  if (!instructions?.hasBankDetails) return '';
+  return `
+    <p><strong>Payment details</strong><br />
+    Account name: ${escapeHtml(instructions.accountName ?? '')}<br />
+    ${
+      instructions.bankName
+        ? `Bank: ${escapeHtml(instructions.bankName)}<br />`
+        : ''
+    }
+    BSB: ${escapeHtml(instructions.bsb ?? '')}<br />
+    Account number: ${escapeHtml(instructions.accountNumber ?? '')}<br />
+    Reference: ${escapeHtml(instructions.reference)}</p>
+    ${
+      instructions.customInstructions
+        ? `<p>${escapeHtml(instructions.customInstructions)}</p>`
+        : ''
+    }
   `;
 }
 

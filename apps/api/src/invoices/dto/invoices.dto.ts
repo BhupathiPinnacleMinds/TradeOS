@@ -18,6 +18,7 @@ import {
 import {
   INVOICE_DISCOUNT_TYPES,
   INVOICE_LINE_ITEM_TYPES,
+  INVOICE_PAYMENT_DECLARATION_STATUSES,
   INVOICE_PAYMENT_METHODS,
   INVOICE_PRICING_MODES,
   INVOICE_STATUSES,
@@ -83,6 +84,38 @@ export class ListInvoicesQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: SortOrder;
+}
+
+export class PublicInvoicePaymentDeclarationDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100_000_000)
+  amountCents!: number;
+
+  @IsIn(INVOICE_PAYMENT_METHODS)
+  method!: InvoicePaymentMethod;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
+export class UpdateInvoicePaymentDeclarationDto {
+  @IsOptional()
+  @IsIn(INVOICE_PAYMENT_DECLARATION_STATUSES)
+  status?: 'CONFIRMED' | 'REJECTED';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  reason?: string;
 }
 
 export class AccountsReceivableQueryDto {

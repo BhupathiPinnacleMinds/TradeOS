@@ -11,6 +11,9 @@ import type {
   InvoiceLineItemPayload,
   InvoiceListResponse,
   InvoicePayment,
+  InvoicePaymentDeclaration,
+  InvoicePaymentInstructions,
+  InvoicePaymentMethod,
   InvoiceReceiptDocumentSummary,
   InvoiceStatus,
   PublicInvoiceResponse,
@@ -48,8 +51,10 @@ import type {
   ListInvoicesQueryDto,
   AccountsReceivableQueryDto,
   InvoiceDraftQueryDto,
+  PublicInvoicePaymentDeclarationDto,
   RecordInvoicePaymentDto,
   SendInvoiceDto,
+  UpdateInvoicePaymentDeclarationDto,
   UpsertInvoiceDto,
 } from './dto/invoices.dto';
 
@@ -433,32 +438,39 @@ export class InvoicesService {
   ): Promise<InvoiceDetailResponse> {
     this.assertRole(currentUser, INVOICE_VIEW_ROLES);
     const invoice = await this.getInvoiceForUser(currentUser, id);
-    const [activity, documents, payments] = await this.prisma.$transaction([
-      this.prisma.auditLog.findMany({
-        where: {
-          businessId: currentUser.businessId,
-          entityId: invoice.id,
-          entityType: 'Invoice',
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      }),
-      this.prisma.invoicePdfDocument.findMany({
-        where: { businessId: currentUser.businessId, invoiceId: invoice.id },
-        orderBy: { generatedAt: 'desc' },
-      }),
-      this.prisma.invoicePayment.findMany({
-        where: { businessId: currentUser.businessId, invoiceId: invoice.id },
-        include: {
-          creator: { select: { email: true, firstName: true, lastName: true } },
-          receiptDocuments: {
-            orderBy: { generatedAt: 'desc' },
-            take: 1,
+    const [activity, documents, payments, declarations] =
+      await this.prisma.$transaction([
+        this.prisma.auditLog.findMany({
+          where: {
+            businessId: currentUser.businessId,
+            entityId: invoice.id,
+            entityType: 'Invoice',
           },
-        },
-        orderBy: { receivedAt: 'desc' },
-      }),
-    ]);
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.invoicePdfDocument.findMany({
+          where: { businessId: currentUser.businessId, invoiceId: invoice.id },
+          orderBy: { generatedAt: 'desc' },
+        }),
+        this.prisma.invoicePayment.findMany({
+          where: { businessId: currentUser.businessId, invoiceId: invoice.id },
+          include: {
+            creator: {
+              select: { email: true, firstName: true, lastName: true },
+            },
+            receiptDocuments: {
+              orderBy: { generatedAt: 'desc' },
+              take: 1,
+            },
+          },
+          orderBy: { receivedAt: 'desc' },
+        }),
+        this.prisma.invoicePaymentDeclaration.findMany({
+          where: { businessId: currentUser.businessId, invoiceId: invoice.id },
+          orderBy: { submittedAt: 'desc' },
+        }),
+      ]);
 
     return {
       activity: activity.map((entry) => ({
@@ -468,6 +480,10 @@ export class InvoicesService {
       })),
       documents: documents.map((document) => this.toPdfDocument(document)),
       invoice: this.toInvoice(invoice),
+      paymentDeclarations: declarations.map((declaration) =>
+        this.toPaymentDeclaration(declaration),
+      ),
+      paymentInstructions: this.toPaymentInstructions(invoice),
       payments: payments.map((payment) => this.toPayment(payment)),
     };
   }
@@ -658,6 +674,7 @@ export class InvoicesService {
       invoiceNumber: invoice.invoiceNumber,
       invoiceUrl: publicUrl,
       message,
+      paymentInstructions: this.toPaymentInstructions(result.invoice),
       pdfFileName: result.pdf.fileName,
       subject,
       to,
@@ -715,6 +732,237 @@ export class InvoicesService {
     dto: RecordInvoicePaymentDto,
   ) {
     const invoice = await this.getInvoiceForUser(currentUser, id);
+    this.assertPaymentCanBeRecorded(currentUser, invoice, dto.amountCents);
+    const paymentId = await this.prisma.$transaction(async (tx) => {
+      const result = await this.applyInvoicePayment(tx, currentUser, invoice, {
+        amountCents: dto.amountCents,
+        method: dto.method,
+        notes: dto.notes?.trim() || null,
+        receivedAt: new Date(dto.receivedAt),
+        reference: dto.reference?.trim() || null,
+      });
+      return result.paymentId;
+    });
+    await this.communications.paymentRecorded({
+      businessId: currentUser.businessId,
+      createdBy: currentUser.id,
+      invoiceId: id,
+      paymentId,
+    });
+    await this.notifyPaymentRecorded(currentUser, invoice, dto.amountCents);
+    return this.findOne(currentUser, id);
+  }
+
+  async publicDeclarePayment(
+    rawToken: string,
+    dto: PublicInvoicePaymentDeclarationDto,
+  ): Promise<PublicInvoiceResponse> {
+    const context = await this.resolvePublicToken(rawToken);
+    this.assertPublicPaymentDeclarationAllowed(
+      context.invoice,
+      dto.amountCents,
+    );
+    const reference = dto.reference?.trim() || null;
+    const note = dto.note?.trim() || null;
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.invoicePaymentDeclaration.findFirst({
+        where: {
+          amountCents: dto.amountCents,
+          businessId: context.invoice.businessId,
+          customerId: context.invoice.customerId,
+          invoiceId: context.invoice.id,
+          method: dto.method,
+          note,
+          reference,
+          status: 'PENDING',
+        },
+      });
+      if (existing) return { created: false, declaration: existing };
+      const created = await tx.invoicePaymentDeclaration.create({
+        data: {
+          amountCents: dto.amountCents,
+          businessId: context.invoice.businessId,
+          customerId: context.invoice.customerId,
+          invoiceId: context.invoice.id,
+          method: dto.method,
+          note,
+          reference,
+        },
+      });
+      await this.writeAudit(
+        tx,
+        { businessId: context.invoice.businessId, id: null },
+        'INVOICE_PAYMENT_DECLARED',
+        context.invoice,
+        {
+          amountCents: dto.amountCents,
+          declarationId: created.id,
+          method: dto.method,
+        },
+      );
+      return { created: true, declaration: created };
+    });
+    if (result.created) {
+      await this.notifyPaymentDeclared(
+        context.invoice,
+        result.declaration.amountCents,
+      );
+    }
+    const refreshed = await this.prisma.invoice.findUniqueOrThrow({
+      where: {
+        id_businessId: {
+          businessId: context.invoice.businessId,
+          id: context.invoice.id,
+        },
+      },
+      include: this.invoiceInclude(),
+    });
+    return this.toPublicInvoice(refreshed);
+  }
+
+  async confirmPaymentDeclaration(
+    currentUser: AuthenticatedUser,
+    id: string,
+    declarationId: string,
+  ): Promise<InvoiceDetailResponse> {
+    const invoice = await this.getInvoiceForUser(currentUser, id);
+    const declaration = await this.prisma.invoicePaymentDeclaration.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        id: declarationId,
+        invoiceId: invoice.id,
+      },
+    });
+    if (!declaration) {
+      throw this.domainError(
+        'INVOICE_PAYMENT_DECLARATION_NOT_FOUND',
+        'Payment declaration could not be found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (declaration.status !== 'PENDING') {
+      throw this.domainError(
+        'INVOICE_PAYMENT_DECLARATION_CLOSED',
+        'This payment declaration has already been handled.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    this.assertPaymentCanBeRecorded(
+      currentUser,
+      invoice,
+      declaration.amountCents,
+    );
+    const paymentId = await this.prisma.$transaction(async (tx) => {
+      const pending = await tx.invoicePaymentDeclaration.findFirst({
+        where: {
+          businessId: currentUser.businessId,
+          id: declarationId,
+          invoiceId: invoice.id,
+          status: 'PENDING',
+        },
+      });
+      if (!pending) {
+        throw this.domainError(
+          'INVOICE_PAYMENT_DECLARATION_CLOSED',
+          'This payment declaration has already been handled.',
+          HttpStatus.CONFLICT,
+        );
+      }
+      const result = await this.applyInvoicePayment(tx, currentUser, invoice, {
+        amountCents: pending.amountCents,
+        method: pending.method,
+        notes: pending.note,
+        receivedAt: pending.submittedAt,
+        reference: pending.reference,
+      });
+      await tx.invoicePaymentDeclaration.update({
+        where: { id: pending.id },
+        data: {
+          confirmedAt: new Date(),
+          paymentId: result.paymentId,
+          status: 'CONFIRMED',
+        },
+      });
+      await this.writeAudit(
+        tx,
+        currentUser,
+        'INVOICE_PAYMENT_DECLARATION_CONFIRMED',
+        result.invoice,
+        {
+          declarationId: pending.id,
+          paymentId: result.paymentId,
+        },
+      );
+      return result.paymentId;
+    });
+    await this.communications.paymentRecorded({
+      businessId: currentUser.businessId,
+      createdBy: currentUser.id,
+      invoiceId: id,
+      paymentId,
+    });
+    await this.notifyPaymentRecorded(
+      currentUser,
+      invoice,
+      declaration.amountCents,
+    );
+    return this.findOne(currentUser, id);
+  }
+
+  async rejectPaymentDeclaration(
+    currentUser: AuthenticatedUser,
+    id: string,
+    declarationId: string,
+    dto: UpdateInvoicePaymentDeclarationDto,
+  ): Promise<InvoiceDetailResponse> {
+    const invoice = await this.getInvoiceForUser(currentUser, id);
+    if (!INVOICE_PAYMENT_WRITE_ROLES.includes(currentUser.role)) {
+      throw this.domainError(
+        'INVOICE_ACCESS_DENIED',
+        'You do not have permission to manage invoice payments.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    const declaration = await this.prisma.invoicePaymentDeclaration.findFirst({
+      where: {
+        businessId: currentUser.businessId,
+        id: declarationId,
+        invoiceId: invoice.id,
+        status: 'PENDING',
+      },
+    });
+    if (!declaration) {
+      throw this.domainError(
+        'INVOICE_PAYMENT_DECLARATION_NOT_FOUND',
+        'Payment declaration could not be found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.invoicePaymentDeclaration.update({
+        where: { id: declaration.id },
+        data: {
+          rejectedAt: new Date(),
+          rejectionReason: dto.reason?.trim() || null,
+          status: 'REJECTED',
+        },
+      });
+      await this.writeAudit(
+        tx,
+        currentUser,
+        'INVOICE_PAYMENT_DECLARATION_REJECTED',
+        invoice,
+        { declarationId: declaration.id },
+      );
+    });
+    return this.findOne(currentUser, id);
+  }
+
+  private assertPaymentCanBeRecorded(
+    currentUser: AuthenticatedUser,
+    invoice: InvoiceRecord,
+    amountCents: number,
+  ) {
     if (!INVOICE_PAYMENT_WRITE_ROLES.includes(currentUser.role)) {
       throw this.domainError(
         'INVOICE_ACCESS_DENIED',
@@ -743,71 +991,113 @@ export class InvoicesService {
         HttpStatus.CONFLICT,
       );
     }
-    if (dto.amountCents > invoice.balanceDueCents) {
+    if (amountCents > invoice.balanceDueCents) {
       throw this.domainError(
         'INVOICE_PAYMENT_EXCEEDS_BALANCE',
         'Payment cannot exceed the current balance due.',
         HttpStatus.BAD_REQUEST,
       );
     }
+  }
 
-    const paymentId = await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.invoicePayment.create({
-        data: {
-          amountCents: dto.amountCents,
+  private assertPublicPaymentDeclarationAllowed(
+    invoice: InvoiceRecord,
+    amountCents: number,
+  ) {
+    if (invoice.status === 'VOID') {
+      throw this.domainError(
+        'INVOICE_VOID',
+        'This invoice is no longer payable.',
+        HttpStatus.GONE,
+      );
+    }
+    if (invoice.status === 'DRAFT') {
+      throw this.domainError(
+        'INVOICE_INVALID_STATUS',
+        'This invoice is not ready for payment yet.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (invoice.status === 'PAID' || invoice.balanceDueCents <= 0) {
+      throw this.domainError(
+        'INVOICE_ALREADY_PAID',
+        'This invoice has already been paid.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (amountCents > invoice.balanceDueCents) {
+      throw this.domainError(
+        'INVOICE_PAYMENT_EXCEEDS_BALANCE',
+        'Payment cannot exceed the current balance due.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  private async applyInvoicePayment(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    invoice: InvoiceRecord,
+    input: {
+      amountCents: number;
+      method: InvoicePaymentMethod;
+      notes: string | null;
+      receivedAt: Date;
+      reference: string | null;
+    },
+  ) {
+    const payment = await tx.invoicePayment.create({
+      data: {
+        amountCents: input.amountCents,
+        businessId: currentUser.businessId,
+        createdBy: currentUser.id,
+        invoiceId: invoice.id,
+        method: input.method,
+        notes: input.notes,
+        receivedAt: input.receivedAt,
+        reference: input.reference,
+      },
+    });
+    const amountPaidCents = invoice.amountPaidCents + input.amountCents;
+    const balanceDueCents = Math.max(
+      0,
+      invoice.totalCents - invoice.creditAppliedCents - amountPaidCents,
+    );
+    const status: InvoiceStatus =
+      balanceDueCents === 0 ? 'PAID' : 'PARTIALLY_PAID';
+    const updated = await tx.invoice.update({
+      where: {
+        id_businessId: {
           businessId: currentUser.businessId,
-          createdBy: currentUser.id,
-          invoiceId: invoice.id,
-          method: dto.method,
-          notes: dto.notes?.trim() || null,
-          receivedAt: new Date(dto.receivedAt),
-          reference: dto.reference?.trim() || null,
+          id: invoice.id,
         },
-      });
-      const amountPaidCents = invoice.amountPaidCents + dto.amountCents;
-      const balanceDueCents = Math.max(
-        0,
-        invoice.totalCents - invoice.creditAppliedCents - amountPaidCents,
-      );
-      const status: InvoiceStatus =
-        balanceDueCents === 0 ? 'PAID' : 'PARTIALLY_PAID';
-      const updated = await tx.invoice.update({
-        where: { id_businessId: { businessId: currentUser.businessId, id } },
-        data: {
-          amountPaidCents,
-          balanceDueCents,
-          paidAt: status === 'PAID' ? new Date() : null,
-          status,
-          updatedBy: currentUser.id,
-        },
-        include: this.invoiceInclude(),
-      });
-      await this.writeAudit(
-        tx,
-        currentUser,
-        'INVOICE_PAYMENT_RECORDED',
-        updated,
-        {
-          amountCents: dto.amountCents,
-          balanceDueCents,
-          method: dto.method,
-        },
-      );
-      if (status === 'PAID') {
-        await this.writeAudit(tx, currentUser, 'INVOICE_PAID', updated, {
-          amountPaidCents,
-        });
-      }
-      return payment.id;
+      },
+      data: {
+        amountPaidCents,
+        balanceDueCents,
+        paidAt: status === 'PAID' ? new Date() : null,
+        status,
+        updatedBy: currentUser.id,
+      },
+      include: this.invoiceInclude(),
     });
-    await this.communications.paymentRecorded({
-      businessId: currentUser.businessId,
-      createdBy: currentUser.id,
-      invoiceId: id,
-      paymentId,
-    });
-    await this.notifyPaymentRecorded(currentUser, invoice, dto.amountCents);
-    return this.findOne(currentUser, id);
+    await this.writeAudit(
+      tx,
+      currentUser,
+      'INVOICE_PAYMENT_RECORDED',
+      updated,
+      {
+        amountCents: input.amountCents,
+        balanceDueCents,
+        method: input.method,
+      },
+    );
+    if (status === 'PAID') {
+      await this.writeAudit(tx, currentUser, 'INVOICE_PAID', updated, {
+        amountPaidCents,
+      });
+    }
+    return { invoice: updated, paymentId: payment.id };
   }
 
   async paymentReceipt(
@@ -910,6 +1200,26 @@ export class InvoicesService {
   async publicFindOne(rawToken: string): Promise<PublicInvoiceResponse> {
     const context = await this.resolvePublicToken(rawToken);
     return this.toPublicInvoice(context.invoice);
+  }
+
+  async publicPdf(rawToken: string) {
+    const context = await this.resolvePublicToken(rawToken);
+    const business = await this.getBusiness(context.invoice.businessId);
+    const publicActor = {
+      businessId: context.invoice.businessId,
+      id: null,
+    };
+    const document = await this.prisma.$transaction((tx) =>
+      this.generateAndStorePdf(tx, publicActor, context.invoice, business),
+    );
+    const buffer = await this.storage.readObject({
+      objectKey: document.objectKey,
+    });
+    return {
+      buffer,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
+    };
   }
 
   async publicView(rawToken: string): Promise<PublicInvoiceResponse> {
@@ -1333,7 +1643,7 @@ export class InvoicesService {
 
   private async generateAndStorePdf(
     tx: Prisma.TransactionClient,
-    currentUser: AuthenticatedUser,
+    currentUser: { businessId: string; id: string | null },
     invoice: InvoiceRecord,
     business: Awaited<ReturnType<InvoicesService['getBusiness']>>,
   ) {
@@ -1348,6 +1658,7 @@ export class InvoicesService {
     const generated = this.pdfProvider.generateInvoicePdf({
       business,
       invoice: this.toInvoice(invoice),
+      paymentInstructions: this.toPaymentInstructions(invoice),
       serviceAddress: this.resolveInvoiceServiceAddress(invoice),
     });
     const objectKey = this.storage.createObjectKey({
@@ -1627,6 +1938,12 @@ export class InvoicesService {
         gstRegistered: true,
         id: true,
         name: true,
+        paymentAccountName: true,
+        paymentAccountNumber: true,
+        paymentBankName: true,
+        paymentBsb: true,
+        paymentInstructions: true,
+        paymentReferenceInstructions: true,
         phone: true,
         postcode: true,
         state: true,
@@ -1675,6 +1992,28 @@ export class InvoicesService {
     });
   }
 
+  private async notifyPaymentDeclared(
+    invoice: InvoiceRecord,
+    amountCents: number,
+  ) {
+    await this.notifications.createForRoles({
+      actorUserId: null,
+      body: `${invoice.customer.displayName} marked ${
+        invoice.invoiceNumber
+      } as paid for ${formatAudCents(amountCents)}.`,
+      businessId: invoice.businessId,
+      entityId: invoice.id,
+      entityType: 'invoice',
+      metadata: {
+        amountCents,
+        invoiceNumber: invoice.invoiceNumber,
+      },
+      roles: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'ACCOUNTANT'],
+      title: 'Payment declaration received',
+      type: 'PAYMENT_DECLARED',
+    });
+  }
+
   private invoiceInclude() {
     return {
       business: {
@@ -1685,6 +2024,12 @@ export class InvoicesService {
           gstRegistered: true,
           id: true,
           name: true,
+          paymentAccountName: true,
+          paymentAccountNumber: true,
+          paymentBankName: true,
+          paymentBsb: true,
+          paymentInstructions: true,
+          paymentReferenceInstructions: true,
           phone: true,
           postcode: true,
           state: true,
@@ -1725,6 +2070,8 @@ export class InvoicesService {
         },
       },
       lineItems: { orderBy: { position: 'asc' as const } },
+      paymentDeclarations: { orderBy: { submittedAt: 'desc' as const } },
+      pdfDocuments: { orderBy: { generatedAt: 'desc' as const } },
       sourceQuote: {
         select: {
           customerSite: {
@@ -1921,6 +2268,61 @@ export class InvoicesService {
     };
   }
 
+  private toPaymentDeclaration(declaration: {
+    amountCents: number;
+    businessId: string;
+    confirmedAt: Date | null;
+    customerId: string;
+    id: string;
+    invoiceId: string;
+    method: string;
+    note: string | null;
+    paymentId: string | null;
+    reference: string | null;
+    rejectedAt: Date | null;
+    rejectionReason: string | null;
+    status: string;
+    submittedAt: Date;
+  }): InvoicePaymentDeclaration {
+    return {
+      amountCents: declaration.amountCents,
+      businessId: declaration.businessId,
+      confirmedAt: declaration.confirmedAt?.toISOString() ?? null,
+      customerId: declaration.customerId,
+      id: declaration.id,
+      invoiceId: declaration.invoiceId,
+      method: declaration.method as InvoicePaymentDeclaration['method'],
+      note: declaration.note,
+      paymentId: declaration.paymentId,
+      reference: declaration.reference,
+      rejectedAt: declaration.rejectedAt?.toISOString() ?? null,
+      rejectionReason: declaration.rejectionReason,
+      status: declaration.status as InvoicePaymentDeclaration['status'],
+      submittedAt: declaration.submittedAt.toISOString(),
+    };
+  }
+
+  private toPaymentInstructions(
+    invoice: InvoiceRecord,
+  ): InvoicePaymentInstructions {
+    const business = invoice.business;
+    const reference =
+      business?.paymentReferenceInstructions?.trim() || invoice.invoiceNumber;
+    const accountName = business?.paymentAccountName?.trim() || null;
+    const bankName = business?.paymentBankName?.trim() || null;
+    const bsb = business?.paymentBsb?.trim() || null;
+    const accountNumber = business?.paymentAccountNumber?.trim() || null;
+    return {
+      accountName,
+      accountNumber,
+      bankName,
+      bsb,
+      customInstructions: business?.paymentInstructions?.trim() || null,
+      hasBankDetails: Boolean(accountName && bsb && accountNumber),
+      reference,
+    };
+  }
+
   private sumBalances(rows: Array<{ balanceDueCents: number }>) {
     return rows.reduce((sum, row) => sum + row.balanceDueCents, 0);
   }
@@ -1998,6 +2400,13 @@ export class InvoicesService {
         totalCents: safe.totalCents,
         version: safe.version,
       },
+      documents: invoice.pdfDocuments.map((document) =>
+        this.toPdfDocument(document),
+      ),
+      paymentDeclarations: invoice.paymentDeclarations.map((declaration) =>
+        this.toPaymentDeclaration(declaration),
+      ),
+      paymentInstructions: this.toPaymentInstructions(invoice),
     };
   }
 

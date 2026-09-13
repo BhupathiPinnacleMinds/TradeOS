@@ -1,8 +1,20 @@
-import type { CustomerCommunicationSettings } from '@tradieos/shared';
+import type {
+  CustomerCommunicationSettings,
+  InvoicePaymentInstructions,
+} from '@tradieos/shared';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import {
+  businessPaymentInstructionsRequest,
   communicationSettingsRequest,
+  updateBusinessPaymentInstructionsRequest,
   updateCommunicationSettingsRequest,
 } from '../api/client';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +26,16 @@ export function SettingsScreen() {
   const { logout, signOutAllDevices, token, user } = useAuth();
   const [communicationSettings, setCommunicationSettings] =
     useState<CustomerCommunicationSettings | null>(null);
+  const [paymentInstructions, setPaymentInstructions] =
+    useState<InvoicePaymentInstructions | null>(null);
+  const [paymentForm, setPaymentForm] = useState({
+    accountName: '',
+    accountNumber: '',
+    bankName: '',
+    bsb: '',
+    customInstructions: '',
+    referenceInstructions: '',
+  });
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const canAccessSettings = canViewBusinessSettings(user?.role);
@@ -23,7 +45,48 @@ export function SettingsScreen() {
     communicationSettingsRequest(token)
       .then((response) => setCommunicationSettings(response.settings))
       .catch(() => setCommunicationSettings(null));
+    businessPaymentInstructionsRequest(token)
+      .then((response) => {
+        setPaymentInstructions(response.paymentInstructions);
+        setPaymentForm({
+          accountName: response.paymentInstructions.accountName ?? '',
+          accountNumber: response.paymentInstructions.accountNumber ?? '',
+          bankName: response.paymentInstructions.bankName ?? '',
+          bsb: response.paymentInstructions.bsb ?? '',
+          customInstructions:
+            response.paymentInstructions.customInstructions ?? '',
+          referenceInstructions: response.paymentInstructions.reference ?? '',
+        });
+      })
+      .catch(() => setPaymentInstructions(null));
   }, [canAccessSettings, token]);
+
+  async function savePaymentInstructions() {
+    if (!token || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      const response = await updateBusinessPaymentInstructionsRequest(token, {
+        accountName: paymentForm.accountName,
+        accountNumber: paymentForm.accountNumber,
+        bankName: paymentForm.bankName,
+        bsb: paymentForm.bsb,
+        customInstructions: paymentForm.customInstructions,
+        referenceInstructions: paymentForm.referenceInstructions,
+      });
+      setPaymentInstructions(response.paymentInstructions);
+      setPaymentForm({
+        accountName: response.paymentInstructions.accountName ?? '',
+        accountNumber: response.paymentInstructions.accountNumber ?? '',
+        bankName: response.paymentInstructions.bankName ?? '',
+        bsb: response.paymentInstructions.bsb ?? '',
+        customInstructions:
+          response.paymentInstructions.customInstructions ?? '',
+        referenceInstructions: response.paymentInstructions.reference ?? '',
+      });
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
 
   async function toggleCommunicationSetting(
     key: keyof CustomerCommunicationSettings,
@@ -60,7 +123,10 @@ export function SettingsScreen() {
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>Settings</Text>
         {!canAccessSettings ? (
           <>
@@ -132,6 +198,97 @@ export function SettingsScreen() {
                 {user?.firstName} {user?.lastName}
               </Text>
               <Text style={styles.meta}>{user?.email}</Text>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.label}>Invoice payment details</Text>
+              <Text style={styles.meta}>
+                These bank details appear on customer invoice links, invoice
+                PDFs and invoice emails.
+              </Text>
+              <TextInput
+                accessibilityLabel="Account name"
+                onChangeText={(accountName) =>
+                  setPaymentForm((current) => ({ ...current, accountName }))
+                }
+                placeholder="Account name"
+                style={styles.input}
+                value={paymentForm.accountName}
+              />
+              <TextInput
+                accessibilityLabel="Bank name"
+                onChangeText={(bankName) =>
+                  setPaymentForm((current) => ({ ...current, bankName }))
+                }
+                placeholder="Bank name (optional)"
+                style={styles.input}
+                value={paymentForm.bankName}
+              />
+              <TextInput
+                accessibilityLabel="BSB"
+                keyboardType="number-pad"
+                onChangeText={(bsb) =>
+                  setPaymentForm((current) => ({ ...current, bsb }))
+                }
+                placeholder="BSB"
+                style={styles.input}
+                value={paymentForm.bsb}
+              />
+              <TextInput
+                accessibilityLabel="Account number"
+                keyboardType="number-pad"
+                onChangeText={(accountNumber) =>
+                  setPaymentForm((current) => ({ ...current, accountNumber }))
+                }
+                placeholder="Account number"
+                style={styles.input}
+                value={paymentForm.accountNumber}
+              />
+              <TextInput
+                accessibilityLabel="Payment reference instructions"
+                onChangeText={(referenceInstructions) =>
+                  setPaymentForm((current) => ({
+                    ...current,
+                    referenceInstructions,
+                  }))
+                }
+                placeholder="Reference instructions"
+                style={styles.input}
+                value={paymentForm.referenceInstructions}
+              />
+              <TextInput
+                accessibilityLabel="Payment instructions"
+                multiline
+                onChangeText={(customInstructions) =>
+                  setPaymentForm((current) => ({
+                    ...current,
+                    customInstructions,
+                  }))
+                }
+                placeholder="Additional payment instructions (optional)"
+                style={[styles.input, styles.textArea]}
+                value={paymentForm.customInstructions}
+              />
+              <Pressable
+                accessibilityRole="button"
+                disabled={settingsBusy}
+                onPress={() => void savePaymentInstructions()}
+                style={({ pressed }) => [
+                  styles.saveButton,
+                  pressed && styles.buttonPressed,
+                  settingsBusy && styles.buttonDisabled,
+                ]}
+              >
+                <Text style={styles.saveText}>Save payment details</Text>
+              </Pressable>
+              {paymentInstructions?.hasBankDetails ? (
+                <Text style={styles.meta}>Payment details are configured.</Text>
+              ) : (
+                <Text style={styles.meta}>
+                  Add account name, BSB and account number to show bank details
+                  on invoices.
+                </Text>
+              )}
             </View>
 
             {communicationSettings ? (
@@ -285,6 +442,25 @@ const styles = StyleSheet.create({
   },
   value: { color: colours.ink, fontSize: 20, fontWeight: '800', marginTop: 8 },
   meta: { color: colours.muted, marginTop: 5 },
+  input: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    color: colours.ink,
+    fontSize: 15,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  saveButton: {
+    alignItems: 'center',
+    backgroundColor: colours.primary,
+    borderRadius: 14,
+    marginTop: 14,
+    paddingVertical: 14,
+  },
+  saveText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
   settingLabel: { color: colours.ink, flex: 1, fontWeight: '800' },
   settingPill: {
     backgroundColor: '#F1F5F9',
@@ -302,6 +478,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 14,
   },
+  textArea: { minHeight: 96, textAlignVertical: 'top' },
   logoutButton: {
     alignItems: 'center',
     backgroundColor: '#9F1239',

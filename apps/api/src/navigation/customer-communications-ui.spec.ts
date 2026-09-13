@@ -187,6 +187,7 @@ describe('customer communications mobile UI contracts', () => {
     expect(settings.indexOf('Communication settings')).toBeLessThan(
       settings.lastIndexOf('Log out'),
     );
-    expect(settings).toContain('<ScrollView contentContainerStyle');
+    expect(settings).toContain('<ScrollView');
+    expect(settings).toContain('contentContainerStyle={styles.container}');
   });
 });

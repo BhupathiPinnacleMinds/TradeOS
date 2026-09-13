@@ -24,6 +24,15 @@ describe('createInvoiceEmailProvider', () => {
       invoiceNumber: 'INV-2026-000003',
       invoiceUrl: 'https://staging.tradieos.com/invoice/token',
       message: 'Please review invoice INV-2026-000003.',
+      paymentInstructions: {
+        accountName: 'Pioneer Plumbing',
+        accountNumber: '123456789',
+        bankName: 'Demo Bank',
+        bsb: '123-456',
+        customInstructions: 'Use the invoice number as your reference.',
+        hasBankDetails: true,
+        reference: 'INV-2026-000003',
+      },
       pdfFileName: 'Invoice-INV-2026-000003.pdf',
       subject: 'Invoice INV-2026-000003 from Pioneer',
       to: 'sam@example.com',
@@ -55,6 +64,9 @@ describe('createInvoiceEmailProvider', () => {
       to: 'sam@example.com',
     });
     expect(body.text).toContain('https://staging.tradieos.com/invoice/token');
+    expect(body.text).toContain('Account name: Pioneer Plumbing');
+    expect(body.text).toContain('BSB: 123-456');
+    expect(body.text).toContain('Reference: INV-2026-000003');
   });
 
   it('keeps direct invoice email local when console is configured outside production', async () => {

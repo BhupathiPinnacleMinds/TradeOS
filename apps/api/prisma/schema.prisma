@@ -154,6 +154,12 @@ enum PaymentMethod {
   OTHER
 }
 
+enum InvoicePaymentDeclarationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
 enum MessageChannel {
   SMS
   EMAIL
@@ -282,55 +288,62 @@ enum IdempotencyStatus {
 }
 
 model Business {
-  id                       String                            @id @default(cuid())
-  name                     String
-  abn                      String?
-  tradeType                String?
-  gstRegistered            Boolean                           @default(false)
-  phone                    String?
-  email                    String?
-  address                  String?
-  suburb                   String?
-  state                    String?
-  postcode                 String?
-  timezone                 String                            @default("Australia/Melbourne")
-  createdAt                DateTime                          @default(now())
-  updatedAt                DateTime                          @updatedAt
-  users                    User[]
-  members                  BusinessMember[]
-  customers                Customer[]
-  customerSites            CustomerSite[]
-  jobs                     Job[]
-  jobSequence              JobSequence?
-  appointments             Appointment[]
-  appointmentWorkLogs      AppointmentWorkLog[]
-  appointmentSignatures    AppointmentSignature[]
-  appointmentSequence      AppointmentSequence?
-  quotes                   Quote[]
-  quoteSequence            QuoteSequence?
-  quoteRevisions           QuoteRevision[]
-  quotePdfDocuments        QuotePdfDocument[]
-  quotePublicTokens        QuotePublicAccessToken[]
-  invoices                 Invoice[]
-  invoicePayments          InvoicePayment[]
-  invoiceSequence          InvoiceSequence?
-  invoicePdfDocuments      InvoicePdfDocument[]
-  invoiceReceiptDocuments  InvoiceReceiptDocument[]
-  receiptSequence          ReceiptSequence?
-  invoicePublicTokens      InvoicePublicAccessToken[]
-  communicationSettings    BusinessCommunicationSettings?
-  customerCommunications   CustomerCommunication[]
-  communicationPreferences CustomerCommunicationPreference[]
-  idempotencyRecords       IdempotencyRecord[]
-  messages                 Message[]
-  notifications            Notification[]
-  aiConversations          AiConversation[]
-  aiMessages               AiMessage[]
-  aiActions                AiAction[]
-  documents                Document[]
-  mediaAssets              MediaAsset[]
-  integrations             Integration[]
-  auditLogs                AuditLog[]
+  id                           String                            @id @default(cuid())
+  name                         String
+  abn                          String?
+  tradeType                    String?
+  gstRegistered                Boolean                           @default(false)
+  phone                        String?
+  email                        String?
+  address                      String?
+  suburb                       String?
+  state                        String?
+  postcode                     String?
+  timezone                     String                            @default("Australia/Melbourne")
+  paymentAccountName           String?
+  paymentBankName              String?
+  paymentBsb                   String?
+  paymentAccountNumber         String?
+  paymentReferenceInstructions String?
+  paymentInstructions          String?
+  createdAt                    DateTime                          @default(now())
+  updatedAt                    DateTime                          @updatedAt
+  users                        User[]
+  members                      BusinessMember[]
+  customers                    Customer[]
+  customerSites                CustomerSite[]
+  jobs                         Job[]
+  jobSequence                  JobSequence?
+  appointments                 Appointment[]
+  appointmentWorkLogs          AppointmentWorkLog[]
+  appointmentSignatures        AppointmentSignature[]
+  appointmentSequence          AppointmentSequence?
+  quotes                       Quote[]
+  quoteSequence                QuoteSequence?
+  quoteRevisions               QuoteRevision[]
+  quotePdfDocuments            QuotePdfDocument[]
+  quotePublicTokens            QuotePublicAccessToken[]
+  invoices                     Invoice[]
+  invoicePayments              InvoicePayment[]
+  invoicePaymentDeclarations   InvoicePaymentDeclaration[]
+  invoiceSequence              InvoiceSequence?
+  invoicePdfDocuments          InvoicePdfDocument[]
+  invoiceReceiptDocuments      InvoiceReceiptDocument[]
+  receiptSequence              ReceiptSequence?
+  invoicePublicTokens          InvoicePublicAccessToken[]
+  communicationSettings        BusinessCommunicationSettings?
+  customerCommunications       CustomerCommunication[]
+  communicationPreferences     CustomerCommunicationPreference[]
+  idempotencyRecords           IdempotencyRecord[]
+  messages                     Message[]
+  notifications                Notification[]
+  aiConversations              AiConversation[]
+  aiMessages                   AiMessage[]
+  aiActions                    AiAction[]
+  documents                    Document[]
+  mediaAssets                  MediaAsset[]
+  integrations                 Integration[]
+  auditLogs                    AuditLog[]
 }
 
 model IdempotencyRecord {
@@ -462,44 +475,45 @@ model AuditLog {
 }
 
 model Customer {
-  id                      String                           @id @default(cuid())
-  businessId              String
-  firstName               String?
-  lastName                String?
-  displayName             String
-  companyName             String?
-  email                   String?
-  emailNormalised         String?
-  phone                   String?
-  phoneNormalised         String?
-  alternatePhone          String?
-  addressLine1            String?
-  addressLine2            String?
-  suburb                  String?
-  state                   String?
-  postcode                String?
-  contactPreference       ContactPreference                @default(ANY)
-  customerType            CustomerType                     @default(RESIDENTIAL)
-  notes                   String?
-  tags                    String[]                         @default([])
-  isArchived              Boolean                          @default(false)
-  archivedAt              DateTime?
-  createdBy               String?
-  updatedBy               String?
-  status                  CustomerStatus                   @default(ACTIVE)
-  createdAt               DateTime                         @default(now())
-  updatedAt               DateTime                         @updatedAt
-  business                Business                         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  creator                 User?                            @relation("CustomerCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  updater                 User?                            @relation("CustomerUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
-  sites                   CustomerSite[]
-  jobs                    Job[]
-  quotes                  Quote[]
-  invoices                Invoice[]
-  communicationPreference CustomerCommunicationPreference?
-  communications          CustomerCommunication[]
-  messages                Message[]
-  mediaAssets             MediaAsset[]
+  id                         String                           @id @default(cuid())
+  businessId                 String
+  firstName                  String?
+  lastName                   String?
+  displayName                String
+  companyName                String?
+  email                      String?
+  emailNormalised            String?
+  phone                      String?
+  phoneNormalised            String?
+  alternatePhone             String?
+  addressLine1               String?
+  addressLine2               String?
+  suburb                     String?
+  state                      String?
+  postcode                   String?
+  contactPreference          ContactPreference                @default(ANY)
+  customerType               CustomerType                     @default(RESIDENTIAL)
+  notes                      String?
+  tags                       String[]                         @default([])
+  isArchived                 Boolean                          @default(false)
+  archivedAt                 DateTime?
+  createdBy                  String?
+  updatedBy                  String?
+  status                     CustomerStatus                   @default(ACTIVE)
+  createdAt                  DateTime                         @default(now())
+  updatedAt                  DateTime                         @updatedAt
+  business                   Business                         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  creator                    User?                            @relation("CustomerCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater                    User?                            @relation("CustomerUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  sites                      CustomerSite[]
+  jobs                       Job[]
+  quotes                     Quote[]
+  invoices                   Invoice[]
+  invoicePaymentDeclarations InvoicePaymentDeclaration[]
+  communicationPreference    CustomerCommunicationPreference?
+  communications             CustomerCommunication[]
+  messages                   Message[]
+  mediaAssets                MediaAsset[]
 
   @@unique([id, businessId])
   @@index([businessId, isArchived])
@@ -899,55 +913,56 @@ model QuoteSequence {
 }
 
 model Invoice {
-  id                 String                     @id @default(cuid())
-  businessId         String
-  invoiceNumber      String
-  customerId         String
-  customerSiteId     String?
-  jobId              String?
-  sourceQuoteId      String?
-  status             InvoiceStatus              @default(DRAFT)
-  title              String
-  description        String?
-  issueDate          DateTime                   @default(now())
-  dueDate            DateTime
-  currency           String                     @default("AUD")
-  pricingMode        QuotePricingMode           @default(GST_EXCLUSIVE)
-  gstRateBasisPoints Int                        @default(1000)
-  subtotalCents      Int                        @default(0)
-  discountType       QuoteDiscountType          @default(NONE)
-  discountValue      Int                        @default(0)
-  discountCents      Int                        @default(0)
-  gstCents           Int                        @default(0)
-  totalCents         Int                        @default(0)
-  creditAppliedCents Int                        @default(0)
-  amountPaidCents    Int                        @default(0)
-  balanceDueCents    Int                        @default(0)
-  customerNotes      String?
-  internalNotes      String?
-  paymentTerms       String?
-  sentAt             DateTime?
-  viewedAt           DateTime?
-  paidAt             DateTime?
-  voidedAt           DateTime?
-  version            Int                        @default(1)
-  createdBy          String?
-  updatedBy          String?
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
-  business           Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer           Customer                   @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  customerSite       CustomerSite?              @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: Restrict)
-  job                Job?                       @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
-  sourceQuote        Quote?                     @relation("InvoiceSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
-  creator            User?                      @relation("InvoiceCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  updater            User?                      @relation("InvoiceUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
-  lineItems          InvoiceLineItem[]
-  payments           InvoicePayment[]
-  pdfDocuments       InvoicePdfDocument[]
-  receiptDocuments   InvoiceReceiptDocument[]
-  publicAccessTokens InvoicePublicAccessToken[]
-  communications     CustomerCommunication[]
+  id                  String                      @id @default(cuid())
+  businessId          String
+  invoiceNumber       String
+  customerId          String
+  customerSiteId      String?
+  jobId               String?
+  sourceQuoteId       String?
+  status              InvoiceStatus               @default(DRAFT)
+  title               String
+  description         String?
+  issueDate           DateTime                    @default(now())
+  dueDate             DateTime
+  currency            String                      @default("AUD")
+  pricingMode         QuotePricingMode            @default(GST_EXCLUSIVE)
+  gstRateBasisPoints  Int                         @default(1000)
+  subtotalCents       Int                         @default(0)
+  discountType        QuoteDiscountType           @default(NONE)
+  discountValue       Int                         @default(0)
+  discountCents       Int                         @default(0)
+  gstCents            Int                         @default(0)
+  totalCents          Int                         @default(0)
+  creditAppliedCents  Int                         @default(0)
+  amountPaidCents     Int                         @default(0)
+  balanceDueCents     Int                         @default(0)
+  customerNotes       String?
+  internalNotes       String?
+  paymentTerms        String?
+  sentAt              DateTime?
+  viewedAt            DateTime?
+  paidAt              DateTime?
+  voidedAt            DateTime?
+  version             Int                         @default(1)
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  business            Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer            Customer                    @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  customerSite        CustomerSite?               @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: Restrict)
+  job                 Job?                        @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Restrict)
+  sourceQuote         Quote?                      @relation("InvoiceSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
+  creator             User?                       @relation("InvoiceCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater             User?                       @relation("InvoiceUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  lineItems           InvoiceLineItem[]
+  payments            InvoicePayment[]
+  paymentDeclarations InvoicePaymentDeclaration[]
+  pdfDocuments        InvoicePdfDocument[]
+  receiptDocuments    InvoiceReceiptDocument[]
+  publicAccessTokens  InvoicePublicAccessToken[]
+  communications      CustomerCommunication[]
 
   @@unique([businessId, invoiceNumber])
   @@unique([id, businessId])
@@ -982,28 +997,57 @@ model InvoiceLineItem {
 }
 
 model InvoicePayment {
-  id               String                   @id @default(cuid())
-  businessId       String
-  invoiceId        String
-  amountCents      Int
-  method           PaymentMethod
-  reference        String?
-  receivedAt       DateTime
-  notes            String?
-  createdBy        String?
-  createdAt        DateTime                 @default(now())
-  reversedAt       DateTime?
-  reversalReason   String?
-  business         Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  invoice          Invoice                  @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Restrict)
-  creator          User?                    @relation("InvoicePaymentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  receiptDocuments InvoiceReceiptDocument[]
-  communications   CustomerCommunication[]
+  id                  String                      @id @default(cuid())
+  businessId          String
+  invoiceId           String
+  amountCents         Int
+  method              PaymentMethod
+  reference           String?
+  receivedAt          DateTime
+  notes               String?
+  createdBy           String?
+  createdAt           DateTime                    @default(now())
+  reversedAt          DateTime?
+  reversalReason      String?
+  business            Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice             Invoice                     @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Restrict)
+  creator             User?                       @relation("InvoicePaymentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  receiptDocuments    InvoiceReceiptDocument[]
+  communications      CustomerCommunication[]
+  paymentDeclarations InvoicePaymentDeclaration[]
 
   @@unique([id, businessId])
   @@index([businessId, invoiceId])
   @@index([businessId, receivedAt])
   @@map("Payment")
+}
+
+model InvoicePaymentDeclaration {
+  id              String                          @id @default(cuid())
+  businessId      String
+  invoiceId       String
+  customerId      String
+  amountCents     Int
+  method          PaymentMethod
+  reference       String?
+  note            String?
+  status          InvoicePaymentDeclarationStatus @default(PENDING)
+  submittedAt     DateTime                        @default(now())
+  confirmedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  paymentId       String?
+  createdAt       DateTime                        @default(now())
+  updatedAt       DateTime                        @updatedAt
+  business        Business                        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice         Invoice                         @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Cascade)
+  customer        Customer                        @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  payment         InvoicePayment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, invoiceId, status])
+  @@index([businessId, customerId])
+  @@index([businessId, status, submittedAt])
+  @@index([businessId, paymentId])
 }
 
 model InvoiceReceiptDocument {

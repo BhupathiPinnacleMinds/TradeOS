@@ -56,4 +56,37 @@ describe('Invoice form mobile UI contracts', () => {
     expect(invoiceForm).toContain('error={dateValidationError}');
     expect(invoiceForm).toContain('if (dateValidationError)');
   });
+
+  it('requires a customer before continuing from Scope to Items', () => {
+    const invoiceForm = mobileSource('screens/InvoiceFormScreen.tsx');
+
+    expect(invoiceForm).toContain('function goNext()');
+    expect(invoiceForm).toContain('function validateStep');
+    expect(invoiceForm).toContain('onPress={goNext}');
+    expect(invoiceForm).toContain('if (step === 0 && !selectedCustomerId)');
+    expect(invoiceForm).toContain(
+      "return { message: 'Select a customer.', step: 0 }",
+    );
+  });
+
+  it('keeps standalone and job-linked invoice scope valid once a customer is selected', () => {
+    const invoiceForm = mobileSource('screens/InvoiceFormScreen.tsx');
+
+    expect(invoiceForm).toContain('jobId: selectedJobId || null');
+    expect(invoiceForm).toContain('customerId: selectedCustomerId');
+    expect(invoiceForm).toContain('setSelectedCustomerId(job.customerId)');
+    expect(invoiceForm).not.toContain('if (step === 0 && !selectedJobId)');
+  });
+
+  it('preserves quote-derived invoice flow while enforcing the customer gate', () => {
+    const invoiceForm = mobileSource('screens/InvoiceFormScreen.tsx');
+
+    expect(invoiceForm).toContain('sourceQuoteId');
+    expect(invoiceForm).toContain(
+      'setSelectedSourceQuoteId(draft.sourceQuoteId',
+    );
+    expect(invoiceForm).toContain(
+      'sourceQuoteId: selectedSourceQuoteId || null',
+    );
+  });
 });
