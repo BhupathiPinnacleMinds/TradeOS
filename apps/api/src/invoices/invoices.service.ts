@@ -56,6 +56,7 @@ import type {
   SendInvoiceDto,
   UpdateInvoicePaymentDeclarationDto,
   UpsertInvoiceDto,
+  VoidInvoiceDto,
 } from './dto/invoices.dto';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -1156,7 +1157,7 @@ export class InvoicesService {
     };
   }
 
-  async void(currentUser: AuthenticatedUser, id: string) {
+  async void(currentUser: AuthenticatedUser, id: string, dto: VoidInvoiceDto) {
     const invoice = await this.getInvoiceForUser(currentUser, id);
     if (!INVOICE_VOID_ROLES.includes(currentUser.role)) {
       throw this.domainError(
@@ -1172,6 +1173,27 @@ export class InvoicesService {
         HttpStatus.CONFLICT,
       );
     }
+    const paymentCount = await this.prisma.invoicePayment.count({
+      where: {
+        businessId: currentUser.businessId,
+        invoiceId: invoice.id,
+      },
+    });
+    if (invoice.amountPaidCents > 0 || paymentCount > 0) {
+      throw this.domainError(
+        'INVOICE_PAYMENTS_EXIST',
+        'This invoice has recorded payments and cannot be voided until those payments are resolved.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    const reason = dto.reason.trim();
+    if (!reason) {
+      throw this.domainError(
+        'INVOICE_VOID_REASON_REQUIRED',
+        'Enter a reason before voiding this invoice.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.invoice.update({
         where: { id_businessId: { businessId: currentUser.businessId, id } },
@@ -1180,18 +1202,14 @@ export class InvoicesService {
           status: 'VOID',
           updatedBy: currentUser.id,
           voidedAt: new Date(),
+          voidedBy: currentUser.id,
+          voidReason: reason,
         },
         include: this.invoiceInclude(),
       });
-      await tx.invoicePublicAccessToken.updateMany({
-        where: {
-          businessId: currentUser.businessId,
-          invoiceId: invoice.id,
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
+      await this.writeAudit(tx, currentUser, 'INVOICE_VOIDED', updated, {
+        reason,
       });
-      await this.writeAudit(tx, currentUser, 'INVOICE_VOIDED', updated, {});
     });
     await this.communications.invoiceClosed(currentUser.businessId, id);
     return this.findOne(currentUser, id);
@@ -1918,13 +1936,6 @@ export class InvoicesService {
         HttpStatus.GONE,
       );
     }
-    if (token.invoice.status === 'VOID') {
-      throw this.domainError(
-        'INVOICE_VOID',
-        'This invoice is no longer payable.',
-        HttpStatus.GONE,
-      );
-    }
     return { invoice: token.invoice, token };
   }
 
@@ -2145,6 +2156,8 @@ export class InvoicesService {
       version: invoice.version,
       viewedAt: invoice.viewedAt?.toISOString() ?? null,
       voidedAt: invoice.voidedAt?.toISOString() ?? null,
+      voidedBy: invoice.voidedBy,
+      voidReason: invoice.voidReason,
     };
     return {
       ...plain,

@@ -21,6 +21,7 @@ import {
   SendInvoiceDto,
   UpdateInvoicePaymentDeclarationDto,
   UpsertInvoiceDto,
+  VoidInvoiceDto,
 } from './dto/invoices.dto';
 import { InvoicesService } from './invoices.service';
 
@@ -194,6 +195,7 @@ export class InvoicesController {
   void(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Param('id') id: string,
+    @Body() dto: VoidInvoiceDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.idempotency.runAuthenticated(
@@ -201,10 +203,10 @@ export class InvoicesController {
         businessId: currentUser.businessId,
         idempotencyKey,
         operation: 'invoice.void',
-        request: { id },
+        request: { dto, id },
         userId: currentUser.id,
       },
-      () => this.invoices.void(currentUser, id),
+      () => this.invoices.void(currentUser, id, dto),
     );
   }
 

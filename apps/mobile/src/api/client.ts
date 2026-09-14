@@ -295,6 +295,12 @@ export function friendlyInvoiceMutationError(error: unknown) {
     if (error.code === 'INVOICE_VOID') {
       return 'Payments cannot be recorded against a void invoice.';
     }
+    if (error.code === 'INVOICE_PAYMENTS_EXIST') {
+      return 'This invoice has recorded payments and cannot be voided until those payments are resolved.';
+    }
+    if (error.code === 'INVOICE_VOID_REASON_REQUIRED') {
+      return 'Enter a reason before voiding this invoice.';
+    }
     if (
       error.status === 400 ||
       error.status === 409 ||
@@ -1262,10 +1268,16 @@ export function rejectInvoicePaymentDeclarationRequest(
 export function voidInvoiceRequest(
   token: string,
   invoiceId: string,
+  input: { reason: string },
   idempotencyKey?: string,
 ) {
   return apiRequest<InvoiceDetailResponse>(`/invoices/${invoiceId}/void`, {
-    headers: idempotencyHeaders('invoice-void', idempotencyKey, invoiceId),
+    body: JSON.stringify(input),
+    headers: idempotencyHeaders(
+      'invoice-void',
+      idempotencyKey,
+      `${invoiceId}:${input.reason}`,
+    ),
     method: 'POST',
     token,
   });

@@ -398,6 +398,7 @@ model User {
   updatedQuotes                  Quote[]                  @relation("QuoteUpdater")
   createdInvoices                Invoice[]                @relation("InvoiceCreator")
   updatedInvoices                Invoice[]                @relation("InvoiceUpdater")
+  voidedInvoices                 Invoice[]                @relation("InvoiceVoider")
   createdInvoicePayments         InvoicePayment[]         @relation("InvoicePaymentCreator")
   createdInvoiceReceiptDocuments InvoiceReceiptDocument[] @relation("InvoiceReceiptDocumentCreator")
   createdCustomerCommunications  CustomerCommunication[]  @relation("CustomerCommunicationCreator")
@@ -944,6 +945,8 @@ model Invoice {
   viewedAt            DateTime?
   paidAt              DateTime?
   voidedAt            DateTime?
+  voidReason          String?
+  voidedBy            String?
   version             Int                         @default(1)
   createdBy           String?
   updatedBy           String?
@@ -956,6 +959,7 @@ model Invoice {
   sourceQuote         Quote?                      @relation("InvoiceSourceQuote", fields: [sourceQuoteId, businessId], references: [id, businessId], onDelete: Restrict)
   creator             User?                       @relation("InvoiceCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater             User?                       @relation("InvoiceUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  voider              User?                       @relation("InvoiceVoider", fields: [voidedBy], references: [id], onDelete: SetNull)
   lineItems           InvoiceLineItem[]
   payments            InvoicePayment[]
   paymentDeclarations InvoicePaymentDeclaration[]

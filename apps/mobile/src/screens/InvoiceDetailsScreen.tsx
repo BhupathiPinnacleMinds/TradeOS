@@ -18,7 +18,6 @@ import {
 import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -86,6 +85,9 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
   const [paymentAmountError, setPaymentAmountError] = useState<string | null>(
     null,
   );
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidReasonError, setVoidReasonError] = useState<string | null>(null);
   const paymentAmountInputRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
@@ -131,6 +133,21 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function saveVoid() {
+    if (!token || !invoice) return;
+    const reason = voidReason.trim();
+    if (!reason) {
+      setVoidReasonError('Enter a reason before voiding this invoice.');
+      return;
+    }
+    await mutate('void', async () => {
+      await voidInvoiceRequest(token, invoice.id, { reason });
+      setVoidOpen(false);
+      setVoidReason('');
+      setVoidReasonError(null);
+    });
   }
 
   if (isLoading) {
@@ -344,23 +361,7 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
           />
         ) : null}
         {availableActions.has('VOID') ? (
-          <Action
-            danger
-            label="Void"
-            onPress={() =>
-              Alert.alert('Void invoice?', invoice.invoiceNumber, [
-                { style: 'cancel', text: 'Cancel' },
-                {
-                  onPress: () =>
-                    void mutate('void', async () => {
-                      if (token) await voidInvoiceRequest(token, invoice.id);
-                    }),
-                  style: 'destructive',
-                  text: 'Void invoice',
-                },
-              ])
-            }
-          />
+          <Action danger label="Void" onPress={() => setVoidOpen(true)} />
         ) : null}
       </View>
 
@@ -663,6 +664,23 @@ export function InvoiceDetailsScreen({ navigation, route }: Props) {
         reference={paymentReference}
         visible={paymentOpen}
       />
+
+      <VoidInvoiceModal
+        busy={busyAction === 'void'}
+        error={voidReasonError}
+        invoice={invoice}
+        onCancel={() => {
+          setVoidOpen(false);
+          setVoidReasonError(null);
+        }}
+        onChangeReason={(value) => {
+          setVoidReason(value);
+          if (voidReasonError) setVoidReasonError(null);
+        }}
+        onConfirm={() => void saveVoid()}
+        reason={voidReason}
+        visible={voidOpen}
+      />
     </ScrollView>
   );
 }
@@ -881,6 +899,77 @@ function PaymentModal({
   );
 }
 
+function VoidInvoiceModal({
+  busy,
+  error,
+  invoice,
+  onCancel,
+  onChangeReason,
+  onConfirm,
+  reason,
+  visible,
+}: {
+  busy: boolean;
+  error: string | null;
+  invoice: Invoice;
+  onCancel(): void;
+  onChangeReason(value: string): void;
+  onConfirm(): void;
+  reason: string;
+  visible: boolean;
+}) {
+  return (
+    <Modal animationType="slide" onRequestClose={onCancel} visible={visible}>
+      <SafeAreaView style={styles.modalSafeArea}>
+        <KeyboardAvoidingView
+          behavior={keyboardAvoidingBehavior}
+          style={styles.modalKeyboard}
+        >
+          <ScrollView
+            contentContainerStyle={styles.modal}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.title}>Void invoice?</Text>
+            <View style={styles.paymentSummary}>
+              <Text style={styles.lineName}>{invoice.invoiceNumber}</Text>
+              <Text style={styles.meta}>
+                {invoice.customer.displayName} ·{' '}
+                {formatAudCents(invoice.totalCents)}
+              </Text>
+              <Text style={styles.meta}>
+                This invoice will be marked as void and no further payments can
+                be recorded. The invoice will remain in your records for history
+                and audit purposes.
+              </Text>
+              <Text style={styles.warningText}>
+                This action cannot be undone.
+              </Text>
+            </View>
+            <Field
+              error={error}
+              label="Reason for voiding"
+              multiline
+              onChangeText={onChangeReason}
+              placeholder="Created by mistake, duplicate invoice, work cancelled..."
+              value={reason}
+            />
+            <View style={styles.modalActions}>
+              <Action disabled={busy} label="Cancel" onPress={onCancel} />
+              <Action
+                busy={busy}
+                busyLabel="Voiding..."
+                danger
+                label="Void invoice"
+                onPress={onConfirm}
+              />
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function friendlyPaymentError(error: unknown, invoice: Invoice) {
   if (error instanceof ApiRequestError) {
     if (error.code === 'INVOICE_PAYMENT_EXCEEDS_BALANCE') {
@@ -903,6 +992,12 @@ function friendlyPaymentError(error: unknown, invoice: Invoice) {
     if (error.code === 'INVOICE_ACCESS_DENIED') {
       return 'You do not have permission to record payments.';
     }
+    if (error.code === 'INVOICE_PAYMENTS_EXIST') {
+      return 'This invoice has recorded payments and cannot be voided until those payments are resolved.';
+    }
+    if (error.code === 'INVOICE_VOID_REASON_REQUIRED') {
+      return 'Enter a reason before voiding this invoice.';
+    }
   }
   return error instanceof Error
     ? error.message
@@ -916,6 +1011,7 @@ function Field({
   label,
   multiline,
   onChangeText,
+  placeholder,
   value,
 }: {
   error?: string | null;
@@ -924,6 +1020,7 @@ function Field({
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
+  placeholder?: string;
   value: string;
 }) {
   return (
@@ -935,6 +1032,7 @@ function Field({
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
+        placeholder={placeholder}
         ref={inputRef}
         style={[
           styles.input,
@@ -1272,5 +1370,9 @@ const styles = StyleSheet.create({
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  warningText: {
+    color: '#be123c',
+    fontWeight: '900',
   },
 });

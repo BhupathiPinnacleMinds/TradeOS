@@ -293,6 +293,8 @@ export interface Invoice {
   viewedAt: string | null;
   paidAt: string | null;
   voidedAt: string | null;
+  voidedBy: string | null;
+  voidReason: string | null;
   version: number;
   createdBy: string | null;
   updatedBy: string | null;

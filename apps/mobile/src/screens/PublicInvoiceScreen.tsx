@@ -94,6 +94,7 @@ export function PublicInvoiceScreen({ route }: Props) {
 
   const { business, invoice } = data;
   const isTaxInvoice = invoice.gstCents > 0 && Boolean(business.abn);
+  const isVoid = invoice.status === 'VOID';
   const pdfDocument = data.documents?.[0] ?? null;
   const instructions = data.paymentInstructions;
   const pendingDeclarations =
@@ -101,9 +102,7 @@ export function PublicInvoiceScreen({ route }: Props) {
       (declaration) => declaration.status === 'PENDING',
     ) ?? [];
   const canDeclarePayment =
-    invoice.balanceDueCents > 0 &&
-    invoice.status !== 'PAID' &&
-    invoice.status !== 'VOID';
+    invoice.balanceDueCents > 0 && invoice.status !== 'PAID' && !isVoid;
 
   async function submitPaymentDeclaration() {
     if (!data || isSubmittingPayment) return;
@@ -150,6 +149,7 @@ export function PublicInvoiceScreen({ route }: Props) {
           {isTaxInvoice ? 'Tax Invoice' : 'Invoice'}
         </Text>
         <Text style={styles.invoiceNumber}>{invoice.invoiceNumber}</Text>
+        {isVoid ? <Text style={styles.voidBadge}>VOID</Text> : null}
         {business.abn ? (
           <Text style={styles.muted}>ABN {business.abn}</Text>
         ) : null}
@@ -179,14 +179,21 @@ export function PublicInvoiceScreen({ route }: Props) {
           </Text>
         ) : null}
         {pdfDocument ? (
-          <Pressable
-            accessibilityLabel={`View PDF for invoice ${invoice.invoiceNumber}`}
-            accessibilityRole="button"
-            onPress={() => void Linking.openURL(publicInvoicePdfUrl(token))}
-            style={styles.pdfButton}
-          >
-            <Text style={styles.pdfButtonText}>View PDF</Text>
-          </Pressable>
+          <>
+            {isVoid ? (
+              <Text style={styles.warningText}>
+                This invoice has been voided. No payment is required.
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityLabel={`View PDF for invoice ${invoice.invoiceNumber}`}
+              accessibilityRole="button"
+              onPress={() => void Linking.openURL(publicInvoicePdfUrl(token))}
+              style={styles.pdfButton}
+            >
+              <Text style={styles.pdfButtonText}>View PDF</Text>
+            </Pressable>
+          </>
         ) : null}
       </Card>
 
@@ -246,89 +253,103 @@ export function PublicInvoiceScreen({ route }: Props) {
         ) : null}
       </Card>
 
-      <Card title="I've paid">
-        {pendingDeclarations.length > 0 ? (
-          <Text style={styles.successText}>
-            Your payment update is awaiting confirmation.
+      {isVoid ? (
+        <Card title="VOID">
+          <Text style={styles.warningText}>
+            This invoice has been voided by {business.name}.
           </Text>
-        ) : null}
-        {canDeclarePayment ? (
-          <View style={styles.form}>
-            <TextInput
-              accessibilityLabel="Payment amount"
-              keyboardType="decimal-pad"
-              onChangeText={(value) => {
-                setPaymentAmount(value);
-                if (paymentError) setPaymentError(null);
-              }}
-              placeholder="Amount paid"
-              style={styles.input}
-              value={paymentAmount}
-            />
-            <View style={styles.methodRow}>
-              {INVOICE_PAYMENT_METHODS.map((method) => (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: paymentMethod === method }}
-                  key={method}
-                  onPress={() => setPaymentMethod(method)}
-                  style={[
-                    styles.methodChip,
-                    paymentMethod === method && styles.methodChipActive,
-                  ]}
-                >
-                  <Text
+          <Text style={styles.meta}>
+            No payment is required. This page remains available as a read-only
+            record of the original invoice.
+          </Text>
+          <Row label="Original invoice total" value={invoice.totalCents} />
+          <Row label="Balance due" value={invoice.balanceDueCents} strong />
+        </Card>
+      ) : (
+        <Card title="I've paid">
+          {pendingDeclarations.length > 0 ? (
+            <Text style={styles.successText}>
+              Your payment update is awaiting confirmation.
+            </Text>
+          ) : null}
+          {canDeclarePayment ? (
+            <View style={styles.form}>
+              <TextInput
+                accessibilityLabel="Payment amount"
+                keyboardType="decimal-pad"
+                onChangeText={(value) => {
+                  setPaymentAmount(value);
+                  if (paymentError) setPaymentError(null);
+                }}
+                placeholder="Amount paid"
+                style={styles.input}
+                value={paymentAmount}
+              />
+              <View style={styles.methodRow}>
+                {INVOICE_PAYMENT_METHODS.map((method) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: paymentMethod === method }}
+                    key={method}
+                    onPress={() => setPaymentMethod(method)}
                     style={[
-                      styles.methodChipText,
-                      paymentMethod === method && styles.methodChipTextActive,
+                      styles.methodChip,
+                      paymentMethod === method && styles.methodChipActive,
                     ]}
                   >
-                    {method.replaceAll('_', ' ')}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text
+                      style={[
+                        styles.methodChipText,
+                        paymentMethod === method && styles.methodChipTextActive,
+                      ]}
+                    >
+                      {method.replaceAll('_', ' ')}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput
+                accessibilityLabel="Payment reference"
+                onChangeText={setPaymentReference}
+                placeholder="Reference (optional)"
+                style={styles.input}
+                value={paymentReference}
+              />
+              <TextInput
+                accessibilityLabel="Payment note"
+                multiline
+                onChangeText={setPaymentNote}
+                placeholder="Note (optional)"
+                style={[styles.input, styles.textArea]}
+                value={paymentNote}
+              />
+              {paymentError ? (
+                <Text style={styles.errorText}>{paymentError}</Text>
+              ) : null}
+              {paymentSuccess ? (
+                <Text style={styles.successText}>{paymentSuccess}</Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmittingPayment}
+                onPress={() => void submitPaymentDeclaration()}
+                style={[
+                  styles.primaryButton,
+                  isSubmittingPayment && styles.disabledButton,
+                ]}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {isSubmittingPayment ? 'Submitting...' : "I've paid"}
+                </Text>
+              </Pressable>
             </View>
-            <TextInput
-              accessibilityLabel="Payment reference"
-              onChangeText={setPaymentReference}
-              placeholder="Reference (optional)"
-              style={styles.input}
-              value={paymentReference}
-            />
-            <TextInput
-              accessibilityLabel="Payment note"
-              multiline
-              onChangeText={setPaymentNote}
-              placeholder="Note (optional)"
-              style={[styles.input, styles.textArea]}
-              value={paymentNote}
-            />
-            {paymentError ? (
-              <Text style={styles.errorText}>{paymentError}</Text>
-            ) : null}
-            {paymentSuccess ? (
-              <Text style={styles.successText}>{paymentSuccess}</Text>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSubmittingPayment}
-              onPress={() => void submitPaymentDeclaration()}
-              style={[
-                styles.primaryButton,
-                isSubmittingPayment && styles.disabledButton,
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {isSubmittingPayment ? 'Submitting...' : "I've paid"}
-              </Text>
-            </Pressable>
-          </View>
-        ) : (
-          <Text style={styles.meta}>
-            This invoice is no longer accepting payment updates.
-          </Text>
-        )}
-      </Card>
+          ) : (
+            <Text style={styles.meta}>
+              This invoice is no longer accepting payment updates.
+            </Text>
+          )}
+        </Card>
+      )}
     </ScrollView>
   );
 }
@@ -552,5 +573,19 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: '900',
     marginTop: 16,
+  },
+  voidBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e5e7eb',
+    borderRadius: 999,
+    color: '#4b5563',
+    fontWeight: '900',
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  warningText: {
+    color: '#be123c',
+    fontWeight: '900',
   },
 });

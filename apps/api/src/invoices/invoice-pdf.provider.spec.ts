@@ -58,6 +58,8 @@ const invoice: Invoice = {
   version: 1,
   viewedAt: null,
   voidedAt: null,
+  voidedBy: null,
+  voidReason: null,
 };
 
 const payment: InvoicePayment = {

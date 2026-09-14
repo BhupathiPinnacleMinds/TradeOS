@@ -118,6 +118,13 @@ export class UpdateInvoicePaymentDeclarationDto {
   reason?: string;
 }
 
+export class VoidInvoiceDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
+}
+
 export class AccountsReceivableQueryDto {
   @IsOptional()
   @IsString()
