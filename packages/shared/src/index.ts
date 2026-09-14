@@ -2,6 +2,7 @@ export * from './ai';
 export * from './api';
 export * from './appointments';
 export * from './auth';
+export * from './business-hours';
 export * from './customers';
 export * from './communications';
 export * from './datetime';

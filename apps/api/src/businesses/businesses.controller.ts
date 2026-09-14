@@ -2,7 +2,10 @@ import { Body, Controller, Get, Patch } from '@nestjs/common';
 import type { AuthenticatedUser } from '@tradieos/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { BusinessesService } from './businesses.service';
-import { UpdateBusinessPaymentInstructionsDto } from './dto/businesses.dto';
+import {
+  UpdateBusinessOperatingHoursDto,
+  UpdateBusinessPaymentInstructionsDto,
+} from './dto/businesses.dto';
 
 @Controller('business')
 export class BusinessesController {
@@ -19,5 +22,18 @@ export class BusinessesController {
     @Body() dto: UpdateBusinessPaymentInstructionsDto,
   ) {
     return this.businesses.updatePaymentInstructions(currentUser, dto);
+  }
+
+  @Get('operating-hours')
+  operatingHours(@CurrentUser() currentUser: AuthenticatedUser) {
+    return this.businesses.operatingHours(currentUser);
+  }
+
+  @Patch('operating-hours')
+  updateOperatingHours(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() dto: UpdateBusinessOperatingHoursDto,
+  ) {
+    return this.businesses.updateOperatingHours(currentUser, dto);
   }
 }

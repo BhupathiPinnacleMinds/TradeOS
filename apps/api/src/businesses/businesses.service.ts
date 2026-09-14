@@ -1,15 +1,25 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
   AuthenticatedUser,
+  BusinessOperatingHoursResponse,
   BusinessPaymentInstructionsResponse,
   InvoicePaymentInstructions,
 } from '@tradieos/shared';
+import {
+  DEFAULT_BUSINESS_END_TIME,
+  DEFAULT_BUSINESS_START_TIME,
+  validateBusinessOperatingHours,
+} from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdateBusinessPaymentInstructionsDto } from './dto/businesses.dto';
+import {
+  UpdateBusinessOperatingHoursDto,
+  UpdateBusinessPaymentInstructionsDto,
+} from './dto/businesses.dto';
 
 const BUSINESS_SETTINGS_ROLES: readonly string[] = [
   'OWNER',
@@ -46,6 +56,42 @@ export class BusinessesService {
       select: businessSelect,
     });
     return { paymentInstructions: this.toPaymentInstructions(business) };
+  }
+
+  async operatingHours(
+    currentUser: AuthenticatedUser,
+  ): Promise<BusinessOperatingHoursResponse> {
+    this.assertSettingsRole(currentUser);
+    const business = await this.getBusiness(currentUser.businessId);
+    return { operatingHours: this.toOperatingHours(business) };
+  }
+
+  async updateOperatingHours(
+    currentUser: AuthenticatedUser,
+    dto: UpdateBusinessOperatingHoursDto,
+  ): Promise<BusinessOperatingHoursResponse> {
+    this.assertSettingsRole(currentUser);
+    const businessStartTime = dto.businessStartTime.trim();
+    const businessEndTime = dto.businessEndTime.trim();
+    const validationError = validateBusinessOperatingHours(
+      businessStartTime,
+      businessEndTime,
+    );
+
+    if (validationError) {
+      throw new BadRequestException(validationError);
+    }
+
+    const business = await this.prisma.business.update({
+      where: { id: currentUser.businessId },
+      data: {
+        businessEndTime,
+        businessStartTime,
+      },
+      select: businessSelect,
+    });
+
+    return { operatingHours: this.toOperatingHours(business) };
   }
 
   private assertSettingsRole(currentUser: AuthenticatedUser) {
@@ -85,9 +131,22 @@ export class BusinessesService {
       reference: 'Invoice number',
     };
   }
+
+  private toOperatingHours(
+    business: Awaited<ReturnType<BusinessesService['getBusiness']>>,
+  ) {
+    return {
+      businessEndTime:
+        business.businessEndTime?.trim() || DEFAULT_BUSINESS_END_TIME,
+      businessStartTime:
+        business.businessStartTime?.trim() || DEFAULT_BUSINESS_START_TIME,
+    };
+  }
 }
 
 const businessSelect = {
+  businessEndTime: true,
+  businessStartTime: true,
   paymentAccountName: true,
   paymentAccountNumber: true,
   paymentBankName: true,

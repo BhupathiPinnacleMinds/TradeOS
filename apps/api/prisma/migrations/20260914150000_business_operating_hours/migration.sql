@@ -1,0 +1,3 @@
+ALTER TABLE "Business"
+ADD COLUMN "businessStartTime" TEXT NOT NULL DEFAULT '08:00',
+ADD COLUMN "businessEndTime" TEXT NOT NULL DEFAULT '17:00';

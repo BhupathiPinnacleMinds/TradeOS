@@ -1,5 +1,8 @@
 import { IsOptional, IsString, MaxLength } from 'class-validator';
-import type { BusinessPaymentInstructionsPayload } from '@tradieos/shared';
+import type {
+  BusinessOperatingHoursPayload,
+  BusinessPaymentInstructionsPayload,
+} from '@tradieos/shared';
 
 export class UpdateBusinessPaymentInstructionsDto implements BusinessPaymentInstructionsPayload {
   @IsOptional()
@@ -26,4 +29,14 @@ export class UpdateBusinessPaymentInstructionsDto implements BusinessPaymentInst
   @IsString()
   @MaxLength(1000)
   customInstructions?: string | null;
+}
+
+export class UpdateBusinessOperatingHoursDto implements BusinessOperatingHoursPayload {
+  @IsString()
+  @MaxLength(5)
+  businessStartTime!: string;
+
+  @IsString()
+  @MaxLength(5)
+  businessEndTime!: string;
 }

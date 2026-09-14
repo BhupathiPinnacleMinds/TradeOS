@@ -13,6 +13,8 @@ import type {
   AppointmentTransitionAction,
   AppointmentWorkLogPayload,
   AppointmentStatus,
+  BusinessOperatingHoursPayload,
+  BusinessOperatingHoursResponse,
   BusinessPaymentInstructionsPayload,
   BusinessPaymentInstructionsResponse,
   BusinessRole,
@@ -423,6 +425,8 @@ export function registerRequest(input: {
   state?: string;
   postcode?: string;
   timezone?: string;
+  businessStartTime?: string;
+  businessEndTime?: string;
 }) {
   return apiRequest<AuthResponse>('/auth/register', {
     body: JSON.stringify(input),
@@ -706,6 +710,27 @@ export function updateBusinessPaymentInstructionsRequest(
 ) {
   return apiRequest<BusinessPaymentInstructionsResponse>(
     '/business/payment-instructions',
+    {
+      body: JSON.stringify(input),
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export function businessOperatingHoursRequest(token: string) {
+  return apiRequest<BusinessOperatingHoursResponse>(
+    '/business/operating-hours',
+    { token },
+  );
+}
+
+export function updateBusinessOperatingHoursRequest(
+  token: string,
+  input: BusinessOperatingHoursPayload,
+) {
+  return apiRequest<BusinessOperatingHoursResponse>(
+    '/business/operating-hours',
     {
       body: JSON.stringify(input),
       method: 'PATCH',

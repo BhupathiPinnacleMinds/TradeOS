@@ -300,6 +300,8 @@ model Business {
   state                        String?
   postcode                     String?
   timezone                     String                            @default("Australia/Melbourne")
+  businessStartTime            String                            @default("08:00")
+  businessEndTime              String                            @default("17:00")
   paymentAccountName           String?
   paymentBankName              String?
   paymentBsb                   String?

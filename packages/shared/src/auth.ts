@@ -34,6 +34,8 @@ export interface BusinessWorkspace {
   state: string | null;
   postcode: string | null;
   timezone: string;
+  businessStartTime: string;
+  businessEndTime: string;
 }
 
 export interface AuthUser extends AuthenticatedUser {

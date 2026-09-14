@@ -1,9 +1,12 @@
 import type {
+  BusinessOperatingHours,
   CustomerCommunicationSettings,
   InvoicePaymentInstructions,
 } from '@tradieos/shared';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useEffect, useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,11 +15,21 @@ import {
   View,
 } from 'react-native';
 import {
+  businessOperatingHoursRequest,
   businessPaymentInstructionsRequest,
   communicationSettingsRequest,
+  updateBusinessOperatingHoursRequest,
   updateBusinessPaymentInstructionsRequest,
   updateCommunicationSettingsRequest,
 } from '../api/client';
+import {
+  DEFAULT_BUSINESS_END_TIME,
+  DEFAULT_BUSINESS_START_TIME,
+  formatBusinessClockTime,
+  formatBusinessOperatingHours,
+  isOvernightBusinessHours,
+  validateBusinessOperatingHours,
+} from '@tradieos/shared';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { canViewBusinessSettings } from '../permissions/roleVisibility';
@@ -28,6 +41,18 @@ export function SettingsScreen() {
     useState<CustomerCommunicationSettings | null>(null);
   const [paymentInstructions, setPaymentInstructions] =
     useState<InvoicePaymentInstructions | null>(null);
+  const [operatingHours, setOperatingHours] =
+    useState<BusinessOperatingHours | null>(null);
+  const [operatingHoursForm, setOperatingHoursForm] =
+    useState<BusinessOperatingHours>({
+      businessEndTime:
+        user?.business.businessEndTime ?? DEFAULT_BUSINESS_END_TIME,
+      businessStartTime:
+        user?.business.businessStartTime ?? DEFAULT_BUSINESS_START_TIME,
+    });
+  const [operatingHoursPicker, setOperatingHoursPicker] = useState<
+    keyof BusinessOperatingHours | null
+  >(null);
   const [paymentForm, setPaymentForm] = useState({
     accountName: '',
     accountNumber: '',
@@ -37,6 +62,9 @@ export function SettingsScreen() {
   });
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [operatingHoursError, setOperatingHoursError] = useState<string | null>(
+    null,
+  );
   const canAccessSettings = canViewBusinessSettings(user?.role);
 
   useEffect(() => {
@@ -57,7 +85,58 @@ export function SettingsScreen() {
         });
       })
       .catch(() => setPaymentInstructions(null));
-  }, [canAccessSettings, token]);
+    businessOperatingHoursRequest(token)
+      .then((response) => {
+        setOperatingHours(response.operatingHours);
+        setOperatingHoursForm(response.operatingHours);
+      })
+      .catch(() => {
+        setOperatingHours(null);
+        setOperatingHoursForm({
+          businessEndTime:
+            user?.business.businessEndTime ?? DEFAULT_BUSINESS_END_TIME,
+          businessStartTime:
+            user?.business.businessStartTime ?? DEFAULT_BUSINESS_START_TIME,
+        });
+      });
+  }, [
+    canAccessSettings,
+    token,
+    user?.business.businessEndTime,
+    user?.business.businessStartTime,
+  ]);
+
+  async function saveOperatingHours() {
+    if (!token || settingsBusy) return;
+    setOperatingHoursError(null);
+    const validationError = validateBusinessOperatingHours(
+      operatingHoursForm.businessStartTime,
+      operatingHoursForm.businessEndTime,
+    );
+
+    if (validationError) {
+      setOperatingHoursError(validationError);
+      return;
+    }
+
+    setSettingsBusy(true);
+    try {
+      const response = await updateBusinessOperatingHoursRequest(
+        token,
+        operatingHoursForm,
+      );
+      setOperatingHours(response.operatingHours);
+      setOperatingHoursForm(response.operatingHours);
+    } catch (error) {
+      setOperatingHoursError(
+        error instanceof Error
+          ? error.message
+          : 'Could not save business hours.',
+      );
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
 
   async function savePaymentInstructions() {
     if (!token || settingsBusy) return;
@@ -194,6 +273,81 @@ export function SettingsScreen() {
                 {user?.firstName} {user?.lastName}
               </Text>
               <Text style={styles.meta}>{user?.email}</Text>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.label}>Business hours</Text>
+              <Text style={styles.meta}>
+                Default operating hours for this workspace. Scheduling, conflict
+                checks and technician assignment rules are unchanged.
+              </Text>
+              <View style={styles.hoursRow}>
+                <ClockTimeField
+                  label="Start time"
+                  onPress={() => setOperatingHoursPicker('businessStartTime')}
+                  value={operatingHoursForm.businessStartTime}
+                />
+                <ClockTimeField
+                  label="End time"
+                  onPress={() => setOperatingHoursPicker('businessEndTime')}
+                  value={operatingHoursForm.businessEndTime}
+                />
+              </View>
+              <Text style={styles.meta}>
+                {formatBusinessOperatingHours(operatingHoursForm)}
+                {isOvernightBusinessHours(
+                  operatingHoursForm.businessStartTime,
+                  operatingHoursForm.businessEndTime,
+                )
+                  ? ' · Ends the following day'
+                  : ''}
+              </Text>
+              {operatingHoursPicker ? (
+                <View style={styles.pickerContainer}>
+                  <DateTimePicker
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    mode="time"
+                    onChange={(_, selectedDate) => {
+                      if (Platform.OS !== 'ios') setOperatingHoursPicker(null);
+                      if (!selectedDate) return;
+                      setOperatingHoursForm((current) => ({
+                        ...current,
+                        [operatingHoursPicker]: clockTimeFromDate(selectedDate),
+                      }));
+                    }}
+                    value={dateFromClockTime(
+                      operatingHoursForm[operatingHoursPicker],
+                    )}
+                  />
+                  {Platform.OS === 'ios' ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setOperatingHoursPicker(null)}
+                      style={styles.doneButton}
+                    >
+                      <Text style={styles.doneText}>Done</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+              {operatingHoursError ? (
+                <Text style={styles.errorText}>{operatingHoursError}</Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={settingsBusy}
+                onPress={() => void saveOperatingHours()}
+                style={({ pressed }) => [
+                  styles.saveButton,
+                  pressed && styles.buttonPressed,
+                  settingsBusy && styles.buttonDisabled,
+                ]}
+              >
+                <Text style={styles.saveText}>Save business hours</Text>
+              </Pressable>
+              {operatingHours ? (
+                <Text style={styles.meta}>Business hours are configured.</Text>
+              ) : null}
             </View>
 
             <View style={styles.card}>
@@ -404,6 +558,45 @@ function SettingToggle({
   );
 }
 
+function ClockTimeField({
+  label,
+  onPress,
+  value,
+}: {
+  label: string;
+  onPress(): void;
+  value: string;
+}) {
+  return (
+    <View style={styles.hoursField}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <Pressable
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={styles.inputButton}
+      >
+        <Text style={styles.inputButtonText}>
+          {formatBusinessClockTime(value)}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function dateFromClockTime(value: string) {
+  const [hours = 0, minutes = 0] = value.split(':').map(Number);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function clockTimeFromDate(value: Date) {
+  return `${String(value.getHours()).padStart(2, '0')}:${String(
+    value.getMinutes(),
+  ).padStart(2, '0')}`;
+}
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colours.background },
   container: { padding: 24, paddingBottom: 44 },
@@ -437,6 +630,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  hoursField: { flex: 1 },
+  hoursRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  inputLabel: {
+    color: colours.ink,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 12,
+  },
+  inputButton: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  inputButtonText: { color: colours.ink, fontSize: 15, fontWeight: '800' },
+  pickerContainer: { marginTop: 8 },
+  doneButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  doneText: { color: colours.primary, fontWeight: '800' },
   saveButton: {
     alignItems: 'center',
     backgroundColor: colours.primary,

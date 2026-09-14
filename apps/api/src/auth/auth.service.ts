@@ -15,8 +15,11 @@ import {
 import { promisify } from 'util';
 import type { AuthenticatedUser, BusinessRole } from '@tradieos/shared';
 import {
+  DEFAULT_BUSINESS_END_TIME,
+  DEFAULT_BUSINESS_START_TIME,
   normaliseBusinessTimezone,
   timezoneForAustralianState,
+  validateBusinessOperatingHours,
 } from '@tradieos/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { StructuredLogger } from '../observability/structured-logger';
@@ -67,6 +70,18 @@ export class AuthService {
     }
 
     const passwordHash = await this.hashPassword(dto.password);
+    const businessStartTime =
+      dto.businessStartTime?.trim() || DEFAULT_BUSINESS_START_TIME;
+    const businessEndTime =
+      dto.businessEndTime?.trim() || DEFAULT_BUSINESS_END_TIME;
+    const businessHoursError = validateBusinessOperatingHours(
+      businessStartTime,
+      businessEndTime,
+    );
+
+    if (businessHoursError) {
+      throw new BadRequestException(businessHoursError);
+    }
 
     const user = await this.prisma.$transaction(async (tx) => {
       const business = await tx.business.create({
@@ -84,6 +99,8 @@ export class AuthService {
           timezone: normaliseBusinessTimezone(
             dto.timezone ?? timezoneForAustralianState(dto.state),
           ),
+          businessStartTime,
+          businessEndTime,
         },
       });
 
@@ -540,6 +557,8 @@ export class AuthService {
           state: true,
           postcode: true,
           timezone: true,
+          businessStartTime: true,
+          businessEndTime: true,
         },
       },
     } as const;
@@ -568,5 +587,7 @@ type UserAuthPayload = {
     state: string | null;
     postcode: string | null;
     timezone: string;
+    businessStartTime: string;
+    businessEndTime: string;
   };
 };

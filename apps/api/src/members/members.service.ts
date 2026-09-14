@@ -1188,6 +1188,8 @@ export class MembersService {
           state: true,
           postcode: true,
           timezone: true,
+          businessStartTime: true,
+          businessEndTime: true,
         },
       },
     } as const;
@@ -1234,5 +1236,7 @@ type UserAuthPayload = {
     state: string | null;
     postcode: string | null;
     timezone: string;
+    businessStartTime: string;
+    businessEndTime: string;
   };
 };

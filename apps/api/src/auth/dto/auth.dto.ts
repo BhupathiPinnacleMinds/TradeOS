@@ -67,6 +67,14 @@ export class RegisterDto extends LoginDto {
   @IsOptional()
   @IsString()
   timezone?: string;
+
+  @IsOptional()
+  @IsString()
+  businessStartTime?: string;
+
+  @IsOptional()
+  @IsString()
+  businessEndTime?: string;
 }
 
 export class ForgotPasswordDto {

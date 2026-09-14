@@ -135,6 +135,8 @@ function authUser(overrides: Record<string, unknown> = {}) {
       state: null,
       postcode: null,
       timezone: 'Australia/Melbourne',
+      businessStartTime: '08:00',
+      businessEndTime: '17:00',
     },
     ...overrides,
   };

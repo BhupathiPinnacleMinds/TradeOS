@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import type { ComponentProps } from 'react';
 import { useState } from 'react';
 import {
@@ -16,8 +17,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   AUSTRALIAN_TIMEZONES,
+  DEFAULT_BUSINESS_END_TIME,
+  DEFAULT_BUSINESS_START_TIME,
   DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessClockTime,
+  formatBusinessOperatingHours,
+  isOvernightBusinessHours,
   timezoneForAustralianState,
+  validateBusinessOperatingHours,
 } from '@tradieos/shared';
 import { useAuth } from '../auth/AuthContext';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
@@ -25,6 +32,7 @@ import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Register'>;
+type BusinessHoursField = 'businessStartTime' | 'businessEndTime';
 
 export function RegisterScreen({ navigation }: Props) {
   const { register } = useAuth();
@@ -44,8 +52,12 @@ export function RegisterScreen({ navigation }: Props) {
     state: 'VIC',
     postcode: '',
     timezone: DEFAULT_BUSINESS_TIMEZONE,
+    businessStartTime: DEFAULT_BUSINESS_START_TIME,
+    businessEndTime: DEFAULT_BUSINESS_END_TIME,
   });
   const [error, setError] = useState<string | null>(null);
+  const [businessHoursPicker, setBusinessHoursPicker] =
+    useState<BusinessHoursField | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   function update<K extends keyof typeof form>(
@@ -62,8 +74,18 @@ export function RegisterScreen({ navigation }: Props) {
   }
 
   async function submit() {
-    setIsSubmitting(true);
     setError(null);
+    const businessHoursError = validateBusinessOperatingHours(
+      form.businessStartTime,
+      form.businessEndTime,
+    );
+
+    if (businessHoursError) {
+      setError(businessHoursError);
+      return;
+    }
+
+    setIsSubmitting(true);
 
     try {
       await register(form);
@@ -215,6 +237,60 @@ export function RegisterScreen({ navigation }: Props) {
                 ))}
               </View>
             </ScrollView>
+            <View style={styles.businessHoursHeader}>
+              <Text style={styles.label}>Business hours</Text>
+              <Text style={styles.helperText}>
+                Default operating window used by planning tools. Appointment
+                scheduling rules are unchanged.
+              </Text>
+            </View>
+            <View style={styles.hoursRow}>
+              <ClockTimeField
+                label="Start time"
+                onPress={() => setBusinessHoursPicker('businessStartTime')}
+                value={form.businessStartTime}
+              />
+              <ClockTimeField
+                label="End time"
+                onPress={() => setBusinessHoursPicker('businessEndTime')}
+                value={form.businessEndTime}
+              />
+            </View>
+            <Text style={styles.helperText}>
+              {formatBusinessOperatingHours(form)}
+              {isOvernightBusinessHours(
+                form.businessStartTime,
+                form.businessEndTime,
+              )
+                ? ' · Ends the following day'
+                : ''}
+            </Text>
+            {businessHoursPicker ? (
+              <View style={styles.pickerContainer}>
+                <DateTimePicker
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  mode="time"
+                  onChange={(_, selectedDate) => {
+                    if (Platform.OS !== 'ios') setBusinessHoursPicker(null);
+                    if (!selectedDate) return;
+                    update(
+                      businessHoursPicker,
+                      clockTimeFromDate(selectedDate),
+                    );
+                  }}
+                  value={dateFromClockTime(form[businessHoursPicker])}
+                />
+                {Platform.OS === 'ios' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setBusinessHoursPicker(null)}
+                    style={styles.doneButton}
+                  >
+                    <Text style={styles.doneText}>Done</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -249,6 +325,32 @@ export function RegisterScreen({ navigation }: Props) {
   );
 }
 
+function ClockTimeField({
+  label,
+  onPress,
+  value,
+}: {
+  label: string;
+  onPress(): void;
+  value: string;
+}) {
+  return (
+    <View style={styles.hoursField}>
+      <Text style={styles.label}>{label}</Text>
+      <Pressable
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={styles.inputButton}
+      >
+        <Text style={styles.inputButtonText}>
+          {formatBusinessClockTime(value)}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function Field({
   label,
   ...props
@@ -265,6 +367,19 @@ function Field({
       />
     </View>
   );
+}
+
+function dateFromClockTime(value: string) {
+  const [hours = 0, minutes = 0] = value.split(':').map(Number);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function clockTimeFromDate(value: Date) {
+  return `${String(value.getHours()).padStart(2, '0')}:${String(
+    value.getMinutes(),
+  ).padStart(2, '0')}`;
 }
 
 const styles = StyleSheet.create({
@@ -309,6 +424,28 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', gap: 8, paddingVertical: 8 },
   chipText: { color: colours.muted, fontWeight: '800' },
   chipTextActive: { color: '#FFFFFF' },
+  businessHoursHeader: { marginTop: 8 },
+  helperText: { color: colours.muted, lineHeight: 20, marginTop: 8 },
+  hoursField: { flex: 1 },
+  hoursRow: { flexDirection: 'row', gap: 12 },
+  inputButton: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  inputButtonText: { color: colours.ink, fontSize: 16, fontWeight: '700' },
+  pickerContainer: { marginTop: 8 },
+  doneButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  doneText: { color: colours.primary, fontWeight: '800' },
   row: { flexDirection: 'row', gap: 12 },
   rowItem: { flex: 1 },
   switchRow: {

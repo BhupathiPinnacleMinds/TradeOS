@@ -399,6 +399,8 @@ function authUser(role: AuthUser['role'], id: string): AuthUser {
       suburb: 'Melbourne',
       timezone: 'Australia/Melbourne',
       tradeType: 'Electrical',
+      businessStartTime: '08:00',
+      businessEndTime: '17:00',
     },
     businessId: 'business-1',
     email: `${id}@example.test`,
