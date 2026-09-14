@@ -96,15 +96,27 @@ describe('Invoice form mobile UI contracts', () => {
     expect(invoiceForm).toContain(
       'const scrollRef = useRef<ScrollView | null>',
     );
-    expect(invoiceForm).toContain('function scrollTermsNotesIntoView()');
+    expect(invoiceForm).toContain(
+      "type InvoiceTermsNotesFieldName = 'customerNotes' | 'internalNotes'",
+    );
+    expect(invoiceForm).toContain(
+      'const notesOffsetYRef = useRef<Record<InvoiceTermsNotesFieldName, number>>',
+    );
+    expect(invoiceForm).toContain(
+      'function scrollTermsNotesIntoView(field: InvoiceTermsNotesFieldName)',
+    );
     expect(invoiceForm).toContain('ref={scrollRef}');
     expect(invoiceForm).toContain('keyboardShouldPersistTaps="handled"');
     expect(invoiceForm).toContain('label="Customer notes"');
     expect(invoiceForm).toContain('label="Internal notes"');
-    expect(invoiceForm).toContain('onFocus={scrollTermsNotesIntoView}');
     expect(invoiceForm).toContain(
-      'notesOffsetYRef.current = event.nativeEvent.layout.y',
+      "onFocus={() => scrollTermsNotesIntoView('customerNotes')}",
     );
+    expect(invoiceForm).toContain(
+      "onFocus={() => scrollTermsNotesIntoView('internalNotes')}",
+    );
+    expect(invoiceForm).toContain('notesOffsetYRef.current.customerNotes =');
+    expect(invoiceForm).toContain('notesOffsetYRef.current.internalNotes =');
     expect(invoiceForm).not.toContain('keyboardHeight');
   });
 });

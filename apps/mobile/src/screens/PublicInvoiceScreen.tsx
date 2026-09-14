@@ -94,6 +94,7 @@ export function PublicInvoiceScreen({ route }: Props) {
 
   const { business, invoice } = data;
   const isTaxInvoice = invoice.gstCents > 0 && Boolean(business.abn);
+  const isPaid = invoice.status === 'PAID';
   const isVoid = invoice.status === 'VOID';
   const pdfDocument = data.documents?.[0] ?? null;
   const instructions = data.paymentInstructions;
@@ -224,31 +225,41 @@ export function PublicInvoiceScreen({ route }: Props) {
         <Row label="Balance due" value={invoice.balanceDueCents} strong />
       </Card>
 
-      <Card title="Payment instructions">
-        {instructions?.hasBankDetails ? (
-          <View style={styles.paymentDetails}>
-            <Text style={styles.meta}>
-              Account name: {instructions.accountName}
-            </Text>
-            {instructions.bankName ? (
-              <Text style={styles.meta}>Bank: {instructions.bankName}</Text>
-            ) : null}
-            <Text style={styles.meta}>BSB: {instructions.bsb}</Text>
-            <Text style={styles.meta}>
-              Account number: {instructions.accountNumber}
-            </Text>
-            <Text style={styles.meta}>Reference: {instructions.reference}</Text>
-          </View>
-        ) : (
-          <Text style={styles.meta}>
-            {invoice.paymentTerms ||
-              'Please contact the business for payment details.'}
+      {isPaid ? (
+        <Card title="Payment status">
+          <Text style={styles.successText}>
+            Paid in full. No further payment is required.
           </Text>
-        )}
-        {instructions?.customInstructions ? (
-          <Text style={styles.meta}>{instructions.customInstructions}</Text>
-        ) : null}
-      </Card>
+        </Card>
+      ) : !isVoid ? (
+        <Card title="Payment instructions">
+          {instructions?.hasBankDetails ? (
+            <View style={styles.paymentDetails}>
+              <Text style={styles.meta}>
+                Account name: {instructions.accountName}
+              </Text>
+              {instructions.bankName ? (
+                <Text style={styles.meta}>Bank: {instructions.bankName}</Text>
+              ) : null}
+              <Text style={styles.meta}>BSB: {instructions.bsb}</Text>
+              <Text style={styles.meta}>
+                Account number: {instructions.accountNumber}
+              </Text>
+              <Text style={styles.meta}>
+                Reference: {instructions.reference}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.meta}>
+              {invoice.paymentTerms ||
+                'Please contact the business for payment details.'}
+            </Text>
+          )}
+          {instructions?.customInstructions ? (
+            <Text style={styles.meta}>{instructions.customInstructions}</Text>
+          ) : null}
+        </Card>
+      ) : null}
 
       {invoice.customerNotes ? (
         <Card title="Customer notes">

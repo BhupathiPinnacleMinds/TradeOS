@@ -158,6 +158,67 @@ describe('DeterministicInvoicePdfProvider invoices', () => {
     const text = result.buffer.toString('utf8');
 
     expect(text).toContain(`Reference: ${invoice.invoiceNumber}`);
+    expect(text).toContain('Payment instructions');
+    expect(text).toContain('Account name: Pioneer Plumbing');
+    expect(text).not.toContain('Paid in full. No further payment is required.');
+  });
+
+  it('replaces payment instructions with a paid-in-full message for paid invoices', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice: {
+        ...invoice,
+        amountPaidCents: invoice.totalCents,
+        balanceDueCents: 0,
+        displayStatus: 'PAID',
+        status: 'PAID',
+      },
+      paymentInstructions: {
+        accountName: 'Pioneer Plumbing',
+        accountNumber: '123456789',
+        bankName: 'Demo Bank',
+        bsb: '123-456',
+        customInstructions: 'Please pay by bank transfer within 7 days.',
+        hasBankDetails: true,
+        reference: invoice.invoiceNumber,
+      },
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).toContain('Payment status');
+    expect(text).toContain('Paid in full. No further payment is required.');
+    expect(text).not.toContain('Account name: Pioneer Plumbing');
+    expect(text).not.toContain('Please pay by bank transfer within 7 days.');
+  });
+
+  it('keeps void invoices read-only without payable bank instructions', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice: {
+        ...invoice,
+        balanceDueCents: 0,
+        displayStatus: 'VOID',
+        status: 'VOID',
+      },
+      paymentInstructions: {
+        accountName: 'Pioneer Plumbing',
+        accountNumber: '123456789',
+        bankName: 'Demo Bank',
+        bsb: '123-456',
+        customInstructions: 'Please pay by bank transfer within 7 days.',
+        hasBankDetails: true,
+        reference: invoice.invoiceNumber,
+      },
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).toContain('Payment status');
+    expect(text).toContain(
+      'This invoice has been voided. No payment is required.',
+    );
+    expect(text).not.toContain('Account name: Pioneer Plumbing');
   });
 });
 

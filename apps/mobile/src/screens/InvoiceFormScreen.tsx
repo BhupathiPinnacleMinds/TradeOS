@@ -54,6 +54,7 @@ import { colours } from '../theme';
 type Props = NativeStackScreenProps<RootStackParamList, 'InvoiceForm'>;
 type InvoiceDateFieldName = 'dueDate' | 'issueDate';
 type InvoiceDatePickerState = { field: InvoiceDateFieldName } | null;
+type InvoiceTermsNotesFieldName = 'customerNotes' | 'internalNotes';
 type FormLineItem = Omit<
   InvoiceLineItemPayload,
   'quantity' | 'unitPriceCents'
@@ -122,7 +123,10 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [datePicker, setDatePicker] = useState<InvoiceDatePickerState>(null);
   const scrollRef = useRef<ScrollView | null>(null);
-  const notesOffsetYRef = useRef(0);
+  const notesOffsetYRef = useRef<Record<InvoiceTermsNotesFieldName, number>>({
+    customerNotes: 0,
+    internalNotes: 0,
+  });
   const notesFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -392,7 +396,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
     setStep((current) => Math.min(3, current + 1));
   }
 
-  function scrollTermsNotesIntoView() {
+  function scrollTermsNotesIntoView(field: InvoiceTermsNotesFieldName) {
     if (notesFocusTimerRef.current) {
       clearTimeout(notesFocusTimerRef.current);
     }
@@ -401,7 +405,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
       notesFocusTimerRef.current = null;
       scrollRef.current?.scrollTo({
         animated: true,
-        y: Math.max(notesOffsetYRef.current - 24, 0),
+        y: Math.max(notesOffsetYRef.current[field] - 24, 0),
       });
     }, 120);
   }
@@ -734,9 +738,10 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
               label="Customer notes"
               multiline
               onChangeText={setCustomerNotes}
-              onFocus={scrollTermsNotesIntoView}
+              onFocus={() => scrollTermsNotesIntoView('customerNotes')}
               onLayout={(event) => {
-                notesOffsetYRef.current = event.nativeEvent.layout.y;
+                notesOffsetYRef.current.customerNotes =
+                  event.nativeEvent.layout.y;
               }}
               value={customerNotes}
             />
@@ -744,7 +749,11 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
               label="Internal notes"
               multiline
               onChangeText={setInternalNotes}
-              onFocus={scrollTermsNotesIntoView}
+              onFocus={() => scrollTermsNotesIntoView('internalNotes')}
+              onLayout={(event) => {
+                notesOffsetYRef.current.internalNotes =
+                  event.nativeEvent.layout.y;
+              }}
               value={internalNotes}
             />
           </Card>

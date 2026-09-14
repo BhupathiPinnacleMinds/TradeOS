@@ -150,6 +150,27 @@ describe('invoice customer payment experience contracts', () => {
     expect(paymentInstructions).not.toContain('invoice.internalNotes');
   });
 
+  it('shows paid public invoices as paid in full instead of payable bank instructions', () => {
+    const publicScreen = source(
+      'apps/mobile/src/screens/PublicInvoiceScreen.tsx',
+    );
+    const paidSection = section(
+      publicScreen,
+      '{isPaid ? (',
+      '{invoice.customerNotes ? (',
+    );
+
+    expect(publicScreen).toContain("const isPaid = invoice.status === 'PAID'");
+    expect(paidSection).toContain('<Card title="Payment status">');
+    expect(paidSection).toContain(
+      'Paid in full. No further payment is required.',
+    );
+    expect(paidSection).toContain('!isVoid ? (');
+    expect(paidSection).toContain('<Card title="Payment instructions">');
+    expect(paidSection).toContain('Reference: {instructions.reference}');
+    expect(paidSection).toContain('instructions.customInstructions');
+  });
+
   it('keeps new invoice default payment terms concise without placeholder bank details', () => {
     const service = source('apps/api/src/invoices/invoices.service.ts');
     const form = source('apps/mobile/src/screens/InvoiceFormScreen.tsx');

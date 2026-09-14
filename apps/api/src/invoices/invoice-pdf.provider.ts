@@ -151,18 +151,28 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       business.gstRegistered && invoice.gstCents > 0
         ? 'Tax Invoice'
         : 'Invoice';
-    const paymentInstructionLines = input.paymentInstructions?.hasBankDetails
-      ? [
-          `Account name: ${input.paymentInstructions.accountName}`,
-          input.paymentInstructions.bankName
-            ? `Bank: ${input.paymentInstructions.bankName}`
-            : null,
-          `BSB: ${input.paymentInstructions.bsb}`,
-          `Account number: ${input.paymentInstructions.accountNumber}`,
-          `Reference: ${input.paymentInstructions.reference}`,
-          input.paymentInstructions.customInstructions,
-        ]
-      : [invoice.paymentTerms || 'Payment instructions to be confirmed.'];
+    const isPaid =
+      invoice.status === 'PAID' || invoice.displayStatus === 'PAID';
+    const isVoid =
+      invoice.status === 'VOID' || invoice.displayStatus === 'VOID';
+    const paymentSectionTitle =
+      isPaid || isVoid ? 'Payment status' : 'Payment instructions';
+    const paymentInstructionLines = isPaid
+      ? ['Paid in full. No further payment is required.']
+      : isVoid
+        ? ['This invoice has been voided. No payment is required.']
+        : input.paymentInstructions?.hasBankDetails
+          ? [
+              `Account name: ${input.paymentInstructions.accountName}`,
+              input.paymentInstructions.bankName
+                ? `Bank: ${input.paymentInstructions.bankName}`
+                : null,
+              `BSB: ${input.paymentInstructions.bsb}`,
+              `Account number: ${input.paymentInstructions.accountNumber}`,
+              `Reference: ${input.paymentInstructions.reference}`,
+              input.paymentInstructions.customInstructions,
+            ]
+          : [invoice.paymentTerms || 'Payment instructions to be confirmed.'];
 
     return [
       business.name,
@@ -207,7 +217,7 @@ export class DeterministicInvoicePdfProvider implements InvoicePdfProvider {
       `Amount paid: ${formatAudCents(invoice.amountPaidCents)}`,
       `Balance due: ${formatAudCents(invoice.balanceDueCents)}`,
       '',
-      'Payment instructions',
+      paymentSectionTitle,
       ...paymentInstructionLines,
       '',
       'Customer notes',
