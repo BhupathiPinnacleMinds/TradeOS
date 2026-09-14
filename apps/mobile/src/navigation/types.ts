@@ -42,6 +42,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Customers: undefined;
   Team: undefined;
+  MyLeave: undefined;
   TeamMemberProfile: { memberId: string };
   CustomerDetails: { customerId: string };
   CustomerForm: { customerId?: string };

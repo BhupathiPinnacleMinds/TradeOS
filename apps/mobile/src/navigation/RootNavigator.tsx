@@ -26,6 +26,7 @@ import { MediaEvidenceScreen } from '../screens/MediaEvidenceScreen';
 import { MediaViewerScreen } from '../screens/MediaViewerScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { MyDayScreen } from '../screens/MyDayScreen';
+import { MyLeaveScreen } from '../screens/MyLeaveScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { QuoteDetailsScreen } from '../screens/QuoteDetailsScreen';
 import { QuoteFormScreen } from '../screens/QuoteFormScreen';
@@ -356,6 +357,13 @@ export function RootNavigator() {
           ) : null}
           {canAccessStackRoute(user?.role, 'Team') ? (
             <Stack.Screen name="Team" component={TeamScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'MyLeave') ? (
+            <Stack.Screen
+              name="MyLeave"
+              component={MyLeaveScreen}
+              options={{ title: 'My availability' }}
+            />
           ) : null}
           {canAccessStackRoute(user?.role, 'TeamMemberProfile') ? (
             <Stack.Screen

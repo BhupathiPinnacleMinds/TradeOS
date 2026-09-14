@@ -1,4 +1,9 @@
-import type { BusinessRole, MemberStatus, TeamMember } from '@tradieos/shared';
+import type {
+  BusinessRole,
+  MemberLeave,
+  MemberStatus,
+  TeamMember,
+} from '@tradieos/shared';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,12 +28,19 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import {
+  formatMemberLeaveDateRange,
+  formatMemberLeaveType,
+  getBusinessDateParts,
+  isMemberOnLeave,
+} from '@tradieos/shared';
+import {
   ApiRequestError,
   cancelInvitationRequest,
   deleteMemberRequest,
   inviteMemberRequest,
   membersRequest,
   resendInvitationRequest,
+  teamLeaveRequest,
   updateMemberRoleRequest,
   updateMemberStatusRequest,
 } from '../api/client';
@@ -119,10 +131,50 @@ function formatDate(date: string | null) {
   }).format(new Date(date));
 }
 
+function businessDateOnly(timezone?: string | null) {
+  const parts = getBusinessDateParts(new Date(), timezone ?? undefined);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(
+    parts.day,
+  ).padStart(2, '0')}`;
+}
+
 function initials(member: TeamMember) {
   const first = member.firstName?.charAt(0) ?? member.name.charAt(0);
   const last = member.lastName?.charAt(0) ?? '';
   return `${first}${last}`.toUpperCase();
+}
+
+function LeaveGroup({
+  records,
+  title,
+}: {
+  records: MemberLeave[];
+  title: string;
+}) {
+  return (
+    <View style={styles.leaveGroup}>
+      <Text style={styles.leaveGroupTitle}>{title}</Text>
+      {records.length === 0 ? (
+        <Text style={styles.leaveEmpty}>No entries.</Text>
+      ) : (
+        records.map((leave) => (
+          <View key={leave.id} style={styles.leaveRow}>
+            <View style={styles.leaveRowMain}>
+              <Text style={styles.leaveMember}>
+                {leave.memberName ?? 'Team member'}
+              </Text>
+              <Text style={styles.leaveDetail}>
+                {formatMemberLeaveType(leave.type)}
+              </Text>
+            </View>
+            <Text style={styles.leaveDate}>
+              {formatMemberLeaveDateRange(leave.startDate, leave.endDate)}
+            </Text>
+          </View>
+        ))
+      )}
+    </View>
+  );
 }
 
 function errorCopy(error: unknown) {
@@ -182,6 +234,7 @@ export function TeamScreen() {
   const menuButtonRefs = useRef<Record<string, View | null>>({});
   const hasLoadedMembersRef = useRef(false);
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [teamLeave, setTeamLeave] = useState<MemberLeave[]>([]);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<BusinessRole | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<MemberStatus | 'ALL'>('ALL');
@@ -211,6 +264,11 @@ export function TeamScreen() {
 
   const canManageTeamMembers = canManageTeam(user?.role);
   const isDevelopment = process.env.NODE_ENV !== 'production';
+  const today = businessDateOnly(user?.business.timezone);
+  const leaveToday = teamLeave.filter((leave) => isMemberOnLeave(leave, today));
+  const upcomingLeave = teamLeave.filter(
+    (leave) => leave.startDate > today && !isMemberOnLeave(leave, today),
+  );
 
   async function refreshMembers() {
     if (!token) throw new Error('You are not logged in');
@@ -231,6 +289,12 @@ export function TeamScreen() {
       }
       return null;
     });
+    if (user?.role === 'OWNER') {
+      const leave = await teamLeaveRequest(token);
+      setTeamLeave(leave.records);
+    } else {
+      setTeamLeave([]);
+    }
     return nextMembers;
   }
 
@@ -796,6 +860,18 @@ export function TeamScreen() {
                 </Text>
               </Pressable>
             </View>
+          </View>
+        ) : null}
+
+        {user?.role === 'OWNER' ? (
+          <View style={styles.leavePanel}>
+            <Text style={styles.leavePanelTitle}>Team availability</Text>
+            <Text style={styles.leavePanelMeta}>
+              Current and upcoming leave only. Shifts and assignment validation
+              are not enabled yet.
+            </Text>
+            <LeaveGroup title="On leave today" records={leaveToday} />
+            <LeaveGroup title="Upcoming leave" records={upcomingLeave} />
           </View>
         ) : null}
 
@@ -1606,6 +1682,35 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   smallLinkButtonText: { color: colours.primary, fontWeight: '800' },
+  leavePanel: {
+    backgroundColor: '#F8FAFC',
+    borderColor: colours.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+  },
+  leavePanelTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
+  leavePanelMeta: { color: colours.muted, lineHeight: 20, marginTop: 5 },
+  leaveGroup: { marginTop: 14 },
+  leaveGroupTitle: { color: colours.primary, fontSize: 13, fontWeight: '900' },
+  leaveEmpty: { color: colours.muted, marginTop: 8 },
+  leaveRow: {
+    backgroundColor: colours.card,
+    borderColor: colours.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 12,
+  },
+  leaveRowMain: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  leaveMember: { color: colours.ink, fontWeight: '900' },
+  leaveDetail: { color: colours.muted, fontWeight: '800' },
+  leaveDate: { color: colours.primary, fontWeight: '800', marginTop: 5 },
   stateCard: {
     alignItems: 'center',
     backgroundColor: colours.card,

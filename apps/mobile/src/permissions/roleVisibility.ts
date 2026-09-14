@@ -10,6 +10,7 @@ export type MoreDestinationRoute =
   | 'Customers'
   | 'Jobs'
   | 'MyDay'
+  | 'MyLeave'
   | 'Quotes'
   | 'Invoices'
   | 'Notifications'
@@ -90,6 +91,7 @@ const bottomTabs: Record<BusinessRole, MainTabRoute[]> = {
 
 const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ACCOUNTANT: [
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
     { label: 'Accounts Receivable', route: 'AccountsReceivable' },
@@ -97,6 +99,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ],
   ADMIN: [
     { label: 'My Day', route: 'MyDay' },
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
@@ -107,6 +110,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ],
   OFFICE_MANAGER: [
     { label: 'My Day', route: 'MyDay' },
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
@@ -116,6 +120,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ],
   OWNER: [
     { label: 'My Day', route: 'MyDay' },
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
@@ -125,6 +130,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Settings', route: 'Settings' },
   ],
   READ_ONLY: [
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Jobs', route: 'Jobs' },
     { label: 'Quotes', route: 'Quotes' },
@@ -133,12 +139,14 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Notifications', route: 'Notifications' },
   ],
   SALES: [
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   SCHEDULER: [
     { label: 'My Day', route: 'MyDay' },
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
@@ -146,12 +154,14 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
   ],
   STAFF: [
     { label: 'My Day', route: 'MyDay' },
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Customers', route: 'Customers' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Invoices', route: 'Invoices' },
     { label: 'Notifications', route: 'Notifications' },
   ],
   TECHNICIAN: [
+    { label: 'My availability', route: 'MyLeave' },
     { label: 'Quotes', route: 'Quotes' },
     { label: 'Notifications', route: 'Notifications' },
   ],
@@ -220,6 +230,17 @@ const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
   JobForm: roles.jobCreate,
   Jobs: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER', 'READ_ONLY'],
   MyDay: ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER', 'TECHNICIAN'],
+  MyLeave: [
+    'OWNER',
+    'ADMIN',
+    'OFFICE_MANAGER',
+    'SCHEDULER',
+    'TECHNICIAN',
+    'ACCOUNTANT',
+    'SALES',
+    'READ_ONLY',
+    'STAFF',
+  ],
   Notifications: [
     'OWNER',
     'ADMIN',

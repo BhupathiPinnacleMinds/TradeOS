@@ -26,6 +26,19 @@ enum MemberStatus {
   SUSPENDED
 }
 
+enum MemberLeaveType {
+  ANNUAL_LEAVE
+  SICK_LEAVE
+  PERSONAL_LEAVE
+  UNAVAILABLE
+  OTHER
+}
+
+enum MemberLeaveStatus {
+  ACTIVE
+  CANCELLED
+}
+
 enum CustomerStatus {
   ACTIVE
   ARCHIVED
@@ -320,6 +333,7 @@ model Business {
   appointmentWorkLogs          AppointmentWorkLog[]
   appointmentSignatures        AppointmentSignature[]
   appointmentSequence          AppointmentSequence?
+  memberLeaves                 MemberLeave[]
   quotes                       Quote[]
   quoteSequence                QuoteSequence?
   quoteRevisions               QuoteRevision[]
@@ -431,34 +445,54 @@ model PasswordResetToken {
 }
 
 model BusinessMember {
-  id                        String       @id @default(cuid())
+  id                        String        @id @default(cuid())
   businessId                String
   userId                    String?
   role                      Role
-  status                    MemberStatus @default(INVITED)
+  status                    MemberStatus  @default(INVITED)
   invitedEmail              String
   invitedFirstName          String?
   invitedLastName           String?
-  inviteTokenHash           String?      @unique
+  inviteTokenHash           String?       @unique
   inviteExpiresAt           DateTime?
   inviteAcceptedAt          DateTime?
   inviteCancelledAt         DateTime?
-  inviteEmailDeliveryStatus String?      @default("PENDING")
+  inviteEmailDeliveryStatus String?       @default("PENDING")
   inviteEmailDeliveryError  String?
   invitedBy                 String?
   invitedAt                 DateTime?
   joinedAt                  DateTime?
   lastLoginAt               DateTime?
-  createdAt                 DateTime     @default(now())
-  updatedAt                 DateTime     @updatedAt
-  business                  Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user                      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  inviter                   User?        @relation("MemberInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+  business                  Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user                      User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  inviter                   User?         @relation("MemberInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
+  leave                     MemberLeave[]
 
   @@unique([businessId, userId])
   @@unique([businessId, invitedEmail])
   @@index([businessId, role])
   @@index([businessId, status])
+}
+
+model MemberLeave {
+  id          String            @id @default(cuid())
+  businessId  String
+  memberId    String
+  type        MemberLeaveType
+  startDate   String
+  endDate     String
+  note        String?
+  status      MemberLeaveStatus @default(ACTIVE)
+  cancelledAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  member      BusinessMember    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, memberId, status, startDate])
+  @@index([businessId, status, startDate])
 }
 
 model AuditLog {

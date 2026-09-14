@@ -53,6 +53,9 @@ import type {
   MediaListResponse,
   MediaUploadTargetRequest,
   MediaUploadTargetResponse,
+  MemberLeaveListResponse,
+  MemberLeavePayload,
+  MemberLeaveResponse,
   MyDayResponse,
   MarkAllNotificationsReadResponse,
   MarkNotificationReadResponse,
@@ -534,6 +537,41 @@ export function cancelInvitationRequest(token: string, memberId: string) {
     method: 'POST',
     token,
   });
+}
+
+export function myLeaveRequest(token: string) {
+  return apiRequest<MemberLeaveListResponse>('/me/leave', { token });
+}
+
+export function createMyLeaveRequest(token: string, input: MemberLeavePayload) {
+  return apiRequest<MemberLeaveResponse>('/me/leave', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateMyLeaveRequest(
+  token: string,
+  leaveId: string,
+  input: MemberLeavePayload,
+) {
+  return apiRequest<MemberLeaveResponse>(`/me/leave/${leaveId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function cancelMyLeaveRequest(token: string, leaveId: string) {
+  return apiRequest<MemberLeaveResponse>(`/me/leave/${leaveId}/cancel`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function teamLeaveRequest(token: string) {
+  return apiRequest<MemberLeaveListResponse>('/team/leave', { token });
 }
 
 export function notificationsRequest(

@@ -10,6 +10,7 @@ export * from './jobs';
 export * from './invoices';
 export * from './media';
 export * from './media-menu';
+export * from './member-leave';
 export * from './menu-position';
 export * from './members';
 export * from './mobile-config';
