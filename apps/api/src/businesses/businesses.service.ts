@@ -42,7 +42,6 @@ export class BusinessesService {
         paymentBankName: this.clean(dto.bankName),
         paymentBsb: this.clean(dto.bsb),
         paymentInstructions: this.clean(dto.customInstructions),
-        paymentReferenceInstructions: this.clean(dto.referenceInstructions),
       },
       select: businessSelect,
     });
@@ -83,8 +82,7 @@ export class BusinessesService {
       bsb,
       customInstructions: business.paymentInstructions?.trim() || null,
       hasBankDetails: Boolean(accountName && bsb && accountNumber),
-      reference:
-        business.paymentReferenceInstructions?.trim() || 'Invoice number',
+      reference: 'Invoice number',
     };
   }
 }
@@ -95,5 +93,4 @@ const businessSelect = {
   paymentBankName: true,
   paymentBsb: true,
   paymentInstructions: true,
-  paymentReferenceInstructions: true,
 } as const;

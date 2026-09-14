@@ -241,7 +241,6 @@ export interface BusinessPaymentInstructionsPayload {
   bankName?: string | null;
   bsb?: string | null;
   accountNumber?: string | null;
-  referenceInstructions?: string | null;
   customInstructions?: string | null;
 }
 

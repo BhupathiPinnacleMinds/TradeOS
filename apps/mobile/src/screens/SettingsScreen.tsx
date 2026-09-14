@@ -34,7 +34,6 @@ export function SettingsScreen() {
     bankName: '',
     bsb: '',
     customInstructions: '',
-    referenceInstructions: '',
   });
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -55,7 +54,6 @@ export function SettingsScreen() {
           bsb: response.paymentInstructions.bsb ?? '',
           customInstructions:
             response.paymentInstructions.customInstructions ?? '',
-          referenceInstructions: response.paymentInstructions.reference ?? '',
         });
       })
       .catch(() => setPaymentInstructions(null));
@@ -71,7 +69,6 @@ export function SettingsScreen() {
         bankName: paymentForm.bankName,
         bsb: paymentForm.bsb,
         customInstructions: paymentForm.customInstructions,
-        referenceInstructions: paymentForm.referenceInstructions,
       });
       setPaymentInstructions(response.paymentInstructions);
       setPaymentForm({
@@ -81,7 +78,6 @@ export function SettingsScreen() {
         bsb: response.paymentInstructions.bsb ?? '',
         customInstructions:
           response.paymentInstructions.customInstructions ?? '',
-        referenceInstructions: response.paymentInstructions.reference ?? '',
       });
     } finally {
       setSettingsBusy(false);
@@ -243,18 +239,6 @@ export function SettingsScreen() {
                 placeholder="Account number"
                 style={styles.input}
                 value={paymentForm.accountNumber}
-              />
-              <TextInput
-                accessibilityLabel="Payment reference instructions"
-                onChangeText={(referenceInstructions) =>
-                  setPaymentForm((current) => ({
-                    ...current,
-                    referenceInstructions,
-                  }))
-                }
-                placeholder="Reference instructions"
-                style={styles.input}
-                value={paymentForm.referenceInstructions}
               />
               <TextInput
                 accessibilityLabel="Payment instructions"

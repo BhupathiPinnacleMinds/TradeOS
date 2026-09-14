@@ -24,11 +24,6 @@ export class UpdateBusinessPaymentInstructionsDto implements BusinessPaymentInst
 
   @IsOptional()
   @IsString()
-  @MaxLength(160)
-  referenceInstructions?: string | null;
-
-  @IsOptional()
-  @IsString()
   @MaxLength(1000)
   customInstructions?: string | null;
 }

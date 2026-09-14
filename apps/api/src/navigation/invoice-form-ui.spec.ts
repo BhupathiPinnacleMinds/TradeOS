@@ -89,4 +89,22 @@ describe('Invoice form mobile UI contracts', () => {
       'sourceQuoteId: selectedSourceQuoteId || null',
     );
   });
+
+  it('keeps Terms notes keyboard-safe with focused-field scrolling', () => {
+    const invoiceForm = mobileSource('screens/InvoiceFormScreen.tsx');
+
+    expect(invoiceForm).toContain(
+      'const scrollRef = useRef<ScrollView | null>',
+    );
+    expect(invoiceForm).toContain('function scrollTermsNotesIntoView()');
+    expect(invoiceForm).toContain('ref={scrollRef}');
+    expect(invoiceForm).toContain('keyboardShouldPersistTaps="handled"');
+    expect(invoiceForm).toContain('label="Customer notes"');
+    expect(invoiceForm).toContain('label="Internal notes"');
+    expect(invoiceForm).toContain('onFocus={scrollTermsNotesIntoView}');
+    expect(invoiceForm).toContain(
+      'notesOffsetYRef.current = event.nativeEvent.layout.y',
+    );
+    expect(invoiceForm).not.toContain('keyboardHeight');
+  });
 });

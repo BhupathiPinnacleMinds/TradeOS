@@ -139,6 +139,26 @@ describe('DeterministicInvoicePdfProvider invoices', () => {
 
     expect(text).not.toContain('Internal margin and scheduling notes.');
   });
+
+  it('uses the invoice number as the PDF payment reference', () => {
+    const provider = new DeterministicInvoicePdfProvider();
+    const result = provider.generateInvoicePdf({
+      business,
+      invoice,
+      paymentInstructions: {
+        accountName: 'Pioneer Plumbing',
+        accountNumber: '123456789',
+        bankName: 'Demo Bank',
+        bsb: '123-456',
+        customInstructions: null,
+        hasBankDetails: true,
+        reference: invoice.invoiceNumber,
+      },
+    });
+    const text = result.buffer.toString('utf8');
+
+    expect(text).toContain(`Reference: ${invoice.invoiceNumber}`);
+  });
 });
 
 describe('DeterministicInvoicePdfProvider receipts', () => {

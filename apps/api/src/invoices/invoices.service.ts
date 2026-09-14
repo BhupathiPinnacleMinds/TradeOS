@@ -60,6 +60,7 @@ import type {
 } from './dto/invoices.dto';
 
 const DEFAULT_PAGE_SIZE = 20;
+const DEFAULT_INVOICE_PAYMENT_TERMS = 'Payment due within 7 days.';
 const OUTSTANDING_STATUSES: InvoiceStatus[] = [
   'SENT',
   'VIEWED',
@@ -392,8 +393,7 @@ export class InvoicesService {
               unit: item.unit,
               unitPriceCents: item.unitPriceCents,
             })),
-          paymentTerms:
-            'Payment due within 7 days. Bank transfer details to be confirmed.',
+          paymentTerms: DEFAULT_INVOICE_PAYMENT_TERMS,
           pricingMode: sourceQuote.pricingMode,
           sourceQuoteId: sourceQuote.id,
           title: job
@@ -734,7 +734,7 @@ export class InvoicesService {
   ) {
     const invoice = await this.getInvoiceForUser(currentUser, id);
     this.assertPaymentCanBeRecorded(currentUser, invoice, dto.amountCents);
-    const paymentId = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const result = await this.applyInvoicePayment(tx, currentUser, invoice, {
         amountCents: dto.amountCents,
         method: dto.method,
@@ -742,13 +742,14 @@ export class InvoicesService {
         receivedAt: new Date(dto.receivedAt),
         reference: dto.reference?.trim() || null,
       });
-      return result.paymentId;
+      return result;
     });
+    await this.refreshCurrentInvoicePdf(currentUser, result.invoice.id);
     await this.communications.paymentRecorded({
       businessId: currentUser.businessId,
       createdBy: currentUser.id,
       invoiceId: id,
-      paymentId,
+      paymentId: result.paymentId,
     });
     await this.notifyPaymentRecorded(currentUser, invoice, dto.amountCents);
     return this.findOne(currentUser, id);
@@ -853,7 +854,7 @@ export class InvoicesService {
       invoice,
       declaration.amountCents,
     );
-    const paymentId = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const pending = await tx.invoicePaymentDeclaration.findFirst({
         where: {
           businessId: currentUser.businessId,
@@ -894,13 +895,14 @@ export class InvoicesService {
           paymentId: result.paymentId,
         },
       );
-      return result.paymentId;
+      return result;
     });
+    await this.refreshCurrentInvoicePdf(currentUser, result.invoice.id);
     await this.communications.paymentRecorded({
       businessId: currentUser.businessId,
       createdBy: currentUser.id,
       invoiceId: id,
-      paymentId,
+      paymentId: result.paymentId,
     });
     await this.notifyPaymentRecorded(
       currentUser,
@@ -1079,6 +1081,7 @@ export class InvoicesService {
         paidAt: status === 'PAID' ? new Date() : null,
         status,
         updatedBy: currentUser.id,
+        version: { increment: 1 },
       },
       include: this.invoiceInclude(),
     });
@@ -1528,8 +1531,7 @@ export class InvoicesService {
           unitPriceCents: 12000,
         },
       ],
-      paymentTerms:
-        'Payment due within 7 days. Bank transfer details to be confirmed.',
+      paymentTerms: DEFAULT_INVOICE_PAYMENT_TERMS,
       pricingMode: 'GST_EXCLUSIVE' as const,
       sourceQuoteId: null,
       title: input.title ?? 'New invoice',
@@ -1717,6 +1719,17 @@ export class InvoicesService {
         version: invoice.version,
       },
     });
+  }
+
+  private async refreshCurrentInvoicePdf(
+    currentUser: AuthenticatedUser,
+    invoiceId: string,
+  ) {
+    const invoice = await this.getInvoiceForUser(currentUser, invoiceId);
+    const business = await this.getBusiness(currentUser.businessId);
+    await this.prisma.$transaction((tx) =>
+      this.generateAndStorePdf(tx, currentUser, invoice, business),
+    );
   }
 
   private resolveInvoiceServiceAddress(invoice: InvoiceRecord) {
@@ -1954,7 +1967,6 @@ export class InvoicesService {
         paymentBankName: true,
         paymentBsb: true,
         paymentInstructions: true,
-        paymentReferenceInstructions: true,
         phone: true,
         postcode: true,
         state: true,
@@ -2040,7 +2052,6 @@ export class InvoicesService {
           paymentBankName: true,
           paymentBsb: true,
           paymentInstructions: true,
-          paymentReferenceInstructions: true,
           phone: true,
           postcode: true,
           state: true,
@@ -2319,8 +2330,7 @@ export class InvoicesService {
     invoice: InvoiceRecord,
   ): InvoicePaymentInstructions {
     const business = invoice.business;
-    const reference =
-      business?.paymentReferenceInstructions?.trim() || invoice.invoiceNumber;
+    const reference = invoice.invoiceNumber;
     const accountName = business?.paymentAccountName?.trim() || null;
     const bankName = business?.paymentBankName?.trim() || null;
     const bsb = business?.paymentBsb?.trim() || null;

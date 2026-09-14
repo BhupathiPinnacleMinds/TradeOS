@@ -248,10 +248,13 @@ export function PublicInvoiceScreen({ route }: Props) {
         {instructions?.customInstructions ? (
           <Text style={styles.meta}>{instructions.customInstructions}</Text>
         ) : null}
-        {invoice.customerNotes ? (
-          <Text style={styles.meta}>{invoice.customerNotes}</Text>
-        ) : null}
       </Card>
+
+      {invoice.customerNotes ? (
+        <Card title="Customer notes">
+          <Text style={styles.meta}>{invoice.customerNotes}</Text>
+        </Card>
+      ) : null}
 
       {isVoid ? (
         <Card title="VOID">

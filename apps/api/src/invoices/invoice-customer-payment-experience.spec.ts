@@ -103,11 +103,98 @@ describe('invoice customer payment experience contracts', () => {
     expect(controller).toContain("@Get('payment-instructions')");
     expect(controller).toContain("@Patch('payment-instructions')");
     expect(service).toContain('paymentAccountName');
-    expect(service).toContain('paymentReferenceInstructions');
     expect(settings).toContain('Invoice payment details');
     expect(settings).toContain('businessPaymentInstructionsRequest');
     expect(settings).toContain('updateBusinessPaymentInstructionsRequest');
+    expect(settings).not.toContain('Payment reference instructions');
+    expect(settings).not.toContain('referenceInstructions');
     expect(client).toContain("'/business/payment-instructions'");
+  });
+
+  it('uses each invoice number as the customer payment reference instead of a global business setting', () => {
+    const service = source('apps/api/src/invoices/invoices.service.ts');
+    const businessesService = source(
+      'apps/api/src/businesses/businesses.service.ts',
+    );
+    const dto = source('apps/api/src/businesses/dto/businesses.dto.ts');
+    const shared = source('packages/shared/src/invoices.ts');
+    const paymentInstructions = section(
+      service,
+      'private toPaymentInstructions',
+      'private sumBalances',
+    );
+
+    expect(paymentInstructions).toContain(
+      'const reference = invoice.invoiceNumber;',
+    );
+    expect(paymentInstructions).not.toContain('paymentReferenceInstructions');
+    expect(businessesService).not.toContain(
+      'paymentReferenceInstructions: this.clean',
+    );
+    expect(dto).not.toContain('referenceInstructions');
+    expect(shared).not.toContain('referenceInstructions');
+  });
+
+  it('renders customer notes separately from public payment instructions', () => {
+    const publicScreen = source(
+      'apps/mobile/src/screens/PublicInvoiceScreen.tsx',
+    );
+    const paymentInstructions = section(
+      publicScreen,
+      '<Card title="Payment instructions">',
+      '{invoice.customerNotes ? (',
+    );
+
+    expect(publicScreen).toContain('<Card title="Customer notes">');
+    expect(paymentInstructions).not.toContain('{invoice.customerNotes}');
+    expect(paymentInstructions).not.toContain('invoice.internalNotes');
+  });
+
+  it('keeps new invoice default payment terms concise without placeholder bank details', () => {
+    const service = source('apps/api/src/invoices/invoices.service.ts');
+    const form = source('apps/mobile/src/screens/InvoiceFormScreen.tsx');
+
+    expect(service).toContain(
+      "const DEFAULT_INVOICE_PAYMENT_TERMS = 'Payment due within 7 days.';",
+    );
+    expect(form).toContain(
+      "const DEFAULT_INVOICE_PAYMENT_TERMS = 'Payment due within 7 days.';",
+    );
+    expect(service).not.toContain('Bank transfer details to be confirmed');
+    expect(form).not.toContain('Bank transfer details to be confirmed');
+  });
+
+  it('refreshes the current invoice PDF revision after confirmed payments only', () => {
+    const service = source('apps/api/src/invoices/invoices.service.ts');
+    const recordPayment = section(
+      service,
+      'async recordPayment',
+      'async publicDeclarePayment',
+    );
+    const publicDeclarePayment = section(
+      service,
+      'async publicDeclarePayment',
+      'async confirmPaymentDeclaration',
+    );
+    const confirmPaymentDeclaration = section(
+      service,
+      'async confirmPaymentDeclaration',
+      'async rejectPaymentDeclaration',
+    );
+    const applyInvoicePayment = section(
+      service,
+      'private async applyInvoicePayment',
+      'async paymentReceipt',
+    );
+
+    expect(applyInvoicePayment).toContain('version: { increment: 1 }');
+    expect(recordPayment).toContain(
+      'await this.refreshCurrentInvoicePdf(currentUser, result.invoice.id);',
+    );
+    expect(confirmPaymentDeclaration).toContain(
+      'await this.refreshCurrentInvoicePdf(currentUser, result.invoice.id);',
+    );
+    expect(publicDeclarePayment).not.toContain('refreshCurrentInvoicePdf');
   });
 
   it('requires explicit void reason, stores void metadata and does not revoke valid public tokens', () => {

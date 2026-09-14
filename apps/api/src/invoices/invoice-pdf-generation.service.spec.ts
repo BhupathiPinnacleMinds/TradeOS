@@ -6,6 +6,22 @@ jest.mock('../prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
 }));
 
+type InvoiceUpdateArgs = {
+  data: {
+    status?: string;
+    version?: { increment: number };
+  };
+  include?: unknown;
+  where?: unknown;
+};
+
+type InvoicePdfDocumentCreateArgs = {
+  data: {
+    invoiceId?: string;
+    version?: number;
+  };
+};
+
 const owner: AuthenticatedUser = {
   businessId: 'business-1',
   email: 'owner@demo-tradieos.com',
@@ -217,6 +233,81 @@ describe('InvoicesService PDF generation', () => {
     );
   });
 
+  it('creates a fresh current PDF revision after recording a confirmed payment', async () => {
+    const tx = createTransactionMock(null, {
+      amountPaidCents: 5000,
+      balanceDueCents: 8200,
+      status: 'PARTIALLY_PAID',
+      version: 2,
+    });
+    const prisma = createPrismaMock(tx);
+    prisma.invoice.findFirst
+      .mockResolvedValueOnce(
+        invoiceRecord({
+          sentAt: new Date('2026-09-11T01:00:00.000Z'),
+          status: 'SENT',
+        }),
+      )
+      .mockResolvedValueOnce(
+        invoiceRecord({
+          amountPaidCents: 5000,
+          balanceDueCents: 8200,
+          sentAt: new Date('2026-09-11T01:00:00.000Z'),
+          status: 'PARTIALLY_PAID',
+          version: 2,
+        }),
+      )
+      .mockResolvedValueOnce(
+        invoiceRecord({
+          amountPaidCents: 5000,
+          balanceDueCents: 8200,
+          sentAt: new Date('2026-09-11T01:00:00.000Z'),
+          status: 'PARTIALLY_PAID',
+          version: 2,
+        }),
+      );
+    const storage = createStorageMock();
+    const { generateInvoicePdf, provider: pdfProvider } =
+      createPdfProviderMock();
+    const service = new InvoicesService(
+      prisma as never,
+      {} as never,
+      storage as never,
+      { paymentRecorded: jest.fn().mockResolvedValue(undefined) } as never,
+      { createForRoles: jest.fn().mockResolvedValue(undefined) } as never,
+    );
+    (service as unknown as { pdfProvider: InvoicePdfProvider }).pdfProvider =
+      pdfProvider;
+
+    await service.recordPayment(owner, 'invoice-1', {
+      amountCents: 5000,
+      method: 'BANK_TRANSFER',
+      receivedAt: '2026-09-12T01:00:00.000Z',
+      reference: 'INV-2026-000003',
+    });
+
+    expect(tx.invoice.update.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        status: 'PARTIALLY_PAID',
+        version: { increment: 1 },
+      },
+    });
+    expect(generateInvoicePdf.mock.calls[0]?.[0]).toMatchObject({
+      invoice: {
+        amountPaidCents: 5000,
+        balanceDueCents: 8200,
+        displayStatus: 'PARTIALLY_PAID',
+        version: 2,
+      },
+    });
+    expect(tx.invoicePdfDocument.create.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        invoiceId: 'invoice-1',
+        version: 2,
+      },
+    });
+  });
+
   it('updates the current draft PDF document instead of creating duplicate draft rows', async () => {
     const existingDocument = invoicePdfDocument({
       objectKey: 'invoices/old-draft.pdf',
@@ -310,21 +401,30 @@ function createPrismaMock(
 
 function createTransactionMock(
   existingDocument: Record<string, unknown> | null = null,
+  updateOverrides: Record<string, unknown> = {},
 ) {
   return {
     auditLog: {
       create: jest.fn(),
     },
     invoice: {
-      update: jest.fn().mockResolvedValue(
-        invoiceRecord({
-          sentAt: new Date('2026-09-11T01:00:00.000Z'),
-          status: 'SENT',
-        }),
-      ),
+      update: jest
+        .fn<Promise<Record<string, unknown>>, [InvoiceUpdateArgs]>()
+        .mockResolvedValue(
+          invoiceRecord({
+            sentAt: new Date('2026-09-11T01:00:00.000Z'),
+            status: 'SENT',
+            ...updateOverrides,
+          }),
+        ),
+    },
+    invoicePayment: {
+      create: jest.fn().mockResolvedValue({ id: 'payment-1' }),
     },
     invoicePdfDocument: {
-      create: jest.fn().mockResolvedValue(invoicePdfDocument()),
+      create: jest
+        .fn<Promise<Record<string, unknown>>, [InvoicePdfDocumentCreateArgs]>()
+        .mockResolvedValue(invoicePdfDocument()),
       findFirst: jest.fn().mockResolvedValue(existingDocument),
       update: jest.fn().mockResolvedValue(invoicePdfDocument()),
     },
@@ -373,12 +473,17 @@ function createStorageMock() {
 }
 
 function createPdfProviderMock() {
-  const generateInvoicePdf = jest.fn().mockReturnValue({
-    buffer: Buffer.from('%PDF-1.4'),
-    checksum: 'generated-checksum',
-    fileName: 'Invoice-INV-2026-000003.pdf',
-    mimeType: 'application/pdf',
-  });
+  const generateInvoicePdf = jest
+    .fn<
+      ReturnType<InvoicePdfProvider['generateInvoicePdf']>,
+      [Parameters<InvoicePdfProvider['generateInvoicePdf']>[0]]
+    >()
+    .mockReturnValue({
+      buffer: Buffer.from('%PDF-1.4'),
+      checksum: 'generated-checksum',
+      fileName: 'Invoice-INV-2026-000003.pdf',
+      mimeType: 'application/pdf',
+    });
   const provider: InvoicePdfProvider = {
     generateInvoicePdf,
     generateReceiptPdf: jest.fn(),

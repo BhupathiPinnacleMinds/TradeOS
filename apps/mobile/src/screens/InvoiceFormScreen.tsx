@@ -20,7 +20,7 @@ import {
   zonedTimeToUtc,
 } from '@tradieos/shared';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
@@ -35,6 +35,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { ViewProps } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   createInvoiceRequest,
   customersRequest,
@@ -62,12 +64,14 @@ type FormLineItem = Omit<
 
 const units = ['hour', 'item', 'metre', 'square metre', 'fixed'];
 const DEFAULT_PAYMENT_TERMS_DAYS = 7;
+const DEFAULT_INVOICE_PAYMENT_TERMS = 'Payment due within 7 days.';
 
 export function InvoiceFormScreen({ navigation, route }: Props) {
   const { customerId, customerSiteId, invoiceId, jobId, sourceQuoteId } =
     route.params ?? {};
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const insets = useSafeAreaInsets();
   const businessTimezone = normaliseBusinessTimezone(user?.business.timezone);
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const [step, setStep] = useState(0);
@@ -98,7 +102,7 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   const [discountValue, setDiscountValue] = useState('0');
   const [creditApplied, setCreditApplied] = useState('0');
   const [paymentTerms, setPaymentTerms] = useState(
-    'Payment due within 7 days. Bank transfer details to be confirmed.',
+    DEFAULT_INVOICE_PAYMENT_TERMS,
   );
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
@@ -117,6 +121,17 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
   const [isLoading, setIsLoading] = useState(Boolean(invoiceId));
   const [isSaving, setIsSaving] = useState(false);
   const [datePicker, setDatePicker] = useState<InvoiceDatePickerState>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const notesOffsetYRef = useRef(0);
+  const notesFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (notesFocusTimerRef.current) {
+        clearTimeout(notesFocusTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -377,6 +392,20 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
     setStep((current) => Math.min(3, current + 1));
   }
 
+  function scrollTermsNotesIntoView() {
+    if (notesFocusTimerRef.current) {
+      clearTimeout(notesFocusTimerRef.current);
+    }
+
+    notesFocusTimerRef.current = setTimeout(() => {
+      notesFocusTimerRef.current = null;
+      scrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(notesOffsetYRef.current - 24, 0),
+      });
+    }, 120);
+  }
+
   function handleDatePickerChange(
     event: DateTimePickerEvent,
     selectedDate?: Date,
@@ -413,9 +442,14 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
       style={styles.page}
     >
       <ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: Math.max(insets.bottom + 96, 120) },
+        ]}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
+        ref={scrollRef}
+        style={styles.scroll}
       >
         <View style={styles.header}>
           <Text style={styles.eyebrow}>INVOICE DRAFT</Text>
@@ -700,12 +734,17 @@ export function InvoiceFormScreen({ navigation, route }: Props) {
               label="Customer notes"
               multiline
               onChangeText={setCustomerNotes}
+              onFocus={scrollTermsNotesIntoView}
+              onLayout={(event) => {
+                notesOffsetYRef.current = event.nativeEvent.layout.y;
+              }}
               value={customerNotes}
             />
             <Field
               label="Internal notes"
               multiline
               onChangeText={setInternalNotes}
+              onFocus={scrollTermsNotesIntoView}
               value={internalNotes}
             />
           </Card>
@@ -977,21 +1016,26 @@ function Field({
   label,
   multiline,
   onChangeText,
+  onFocus,
+  onLayout,
   value,
 }: {
   keyboardType?: 'default' | 'decimal-pad';
   label: string;
   multiline?: boolean;
   onChangeText(value: string): void;
+  onFocus?: () => void;
+  onLayout?: ViewProps['onLayout'];
   value: string;
 }) {
   return (
-    <View style={styles.field}>
+    <View onLayout={onLayout} style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
+        onFocus={onFocus}
         style={[styles.input, multiline && styles.textArea]}
         value={value}
       />
@@ -1176,6 +1220,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  scroll: { flex: 1 },
   secondaryButton: {
     alignItems: 'center',
     borderColor: colours.border,
