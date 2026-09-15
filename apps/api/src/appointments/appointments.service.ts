@@ -835,6 +835,7 @@ export class AppointmentsService {
     });
     const canOverride =
       dto.allowConflictOverride &&
+      availability.canOverride &&
       ['OWNER', 'ADMIN'].includes(currentUser.role);
     if (availability.hasConflict && !canOverride) {
       throw this.domainError(
@@ -1606,7 +1607,13 @@ export class AppointmentsService {
       scheduledStart: data.scheduledStart,
     });
     if (!availability.hasConflict) return;
-    if (currentUser.role === 'OWNER' && dto.allowConflictOverride) return;
+    if (
+      currentUser.role === 'OWNER' &&
+      dto.allowConflictOverride &&
+      availability.canOverride
+    ) {
+      return;
+    }
 
     throw this.domainError(
       'APPOINTMENT_CONFLICT',
@@ -1625,91 +1632,18 @@ export class AppointmentsService {
       excludeAppointmentId?: string;
     },
   ): Promise<AppointmentAvailabilityResponse> {
-    const business = await this.prisma.business.findUnique({
-      where: { id: currentUser.businessId },
-      select: { timezone: true },
-    });
-    const timezone = business?.timezone;
-
-    if (
-      !this.isInsideWorkingHours(
-        input.scheduledStart,
-        input.scheduledEnd,
-        timezone,
-      )
-    ) {
-      return {
-        canOverride: currentUser.role === 'OWNER',
-        conflicts: [],
-        hasConflict: true,
-        reason: 'Appointment is outside business working hours.',
-      };
-    }
-
-    if (!input.assignedUserId) {
-      return {
-        canOverride: true,
-        conflicts: [],
-        hasConflict: false,
-        reason: 'No technician assigned yet.',
-      };
-    }
-
-    const where: Prisma.AppointmentWhereInput = {
-      businessId: currentUser.businessId,
-      assignedUserId: input.assignedUserId,
-      scheduledEnd: { gt: input.scheduledStart },
-      scheduledStart: { lt: input.scheduledEnd },
-      status: { notIn: [...CLOSED_STATUSES] },
-    };
-    if (input.excludeAppointmentId) {
-      where.id = { not: input.excludeAppointmentId };
-    }
-
-    const conflicts = await this.prisma.appointment.findMany({
-      where,
-      include: {
-        assignedUser: {
-          select: { firstName: true, lastName: true },
-        },
-        job: { select: { title: true } },
-      },
-    });
-
-    return {
-      canOverride: currentUser.role === 'OWNER',
-      conflicts: conflicts.map((conflict) => ({
-        appointmentNumber: conflict.appointmentNumber,
-        id: conflict.id,
-        jobTitle: conflict.job.title,
-        scheduledEnd: conflict.scheduledEnd.toISOString(),
-        scheduledStart: conflict.scheduledStart.toISOString(),
-        technicianName: conflict.assignedUser
-          ? `${conflict.assignedUser.firstName} ${conflict.assignedUser.lastName}`
-          : null,
-      })),
-      hasConflict: conflicts.length > 0,
-      reason:
-        conflicts.length > 0
-          ? 'Technician already has an overlapping appointment.'
-          : 'Technician is available for this appointment.',
-    };
-  }
-
-  private isInsideWorkingHours(start: Date, end: Date, timezone?: string) {
-    const startParts = getBusinessDateParts(start, timezone);
-    const endParts = getBusinessDateParts(end, timezone);
-    const startMinutes = startParts.hour * 60 + startParts.minute;
-    const endMinutes = endParts.hour * 60 + endParts.minute;
-
-    return (
-      start < end &&
-      startMinutes >= 7 * 60 &&
-      endMinutes <= 18 * 60 &&
-      startParts.year === endParts.year &&
-      startParts.month === endParts.month &&
-      startParts.day === endParts.day
+    const availability = await this.scheduling.checkTechnicianAvailability(
+      currentUser.businessId,
+      input,
     );
+    return {
+      canOverride:
+        availability.canOverride &&
+        ['OWNER', 'ADMIN'].includes(currentUser.role),
+      conflicts: availability.conflicts,
+      hasConflict: availability.hasConflict,
+      reason: availability.reason,
+    };
   }
 
   private assertDateRange(start: string, end: string) {

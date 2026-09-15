@@ -58,6 +58,8 @@ type MockPrisma = {
   businessMember: { findFirst: jest.Mock; findMany: jest.Mock };
   customerSite: { create: jest.Mock; findFirst: jest.Mock };
   job: { findFirst: jest.Mock; update: jest.Mock };
+  memberLeave: { findMany: jest.Mock };
+  memberShift: { findMany: jest.Mock };
   user: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -154,6 +156,38 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function memberShift(
+  overrides: Partial<{
+    endTime: string;
+    shiftDate: string;
+    startTime: string;
+    status: 'ACTIVE' | 'CANCELLED';
+  }> = {},
+) {
+  return {
+    endTime: '17:00',
+    shiftDate: '2026-07-15',
+    startTime: '08:00',
+    status: 'ACTIVE' as const,
+    ...overrides,
+  };
+}
+
+function memberLeave(
+  overrides: Partial<{
+    endDate: string;
+    startDate: string;
+    status: 'ACTIVE' | 'CANCELLED';
+  }> = {},
+) {
+  return {
+    endDate: '2026-07-15',
+    startDate: '2026-07-15',
+    status: 'ACTIVE' as const,
+    ...overrides,
+  };
+}
+
 function createService() {
   const prisma: MockPrisma = {
     appointment: {
@@ -220,6 +254,8 @@ function createService() {
       }),
       update: jest.fn(),
     },
+    memberLeave: { findMany: jest.fn().mockResolvedValue([]) },
+    memberShift: { findMany: jest.fn().mockResolvedValue([]) },
     user: { findFirst: jest.fn().mockResolvedValue({ id: 'tech-1' }) },
     $transaction: jest.fn(
       (input: Array<Promise<unknown>> | ((tx: MockPrisma) => unknown)) => {
@@ -273,6 +309,12 @@ describe('AppointmentsService', () => {
     expect(error).toBeInstanceOf(HttpException);
     const response = (error as HttpException).getResponse() as { code: string };
     expect(response.code).toBe(code);
+  }
+
+  function firstMockArg<T>(mock: { mock: { calls: Array<[T]> } }): T {
+    const call = mock.mock.calls[0];
+    if (!call) throw new Error('Expected mock to have been called.');
+    return call[0];
   }
 
   it('lists appointments scoped to the current business', async () => {
@@ -743,6 +785,7 @@ describe('AppointmentsService', () => {
     ]);
     prisma.appointment.findMany
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         appointment({
           assignedUserId: 'tech-1',
@@ -804,6 +847,231 @@ describe('AppointmentsService', () => {
     expect(availability.hasConflict).toBe(true);
     expect(availability.canOverride).toBe(true);
     expect(availability.conflicts[0].appointmentNumber).toBe('APT-2026-000001');
+  });
+
+  it('allows an appointment inside an active technician shift', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '17:00',
+        shiftDate: '2026-07-15',
+        startTime: '08:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(availability).toMatchObject({
+      hasConflict: false,
+      reason: 'Technician is available for this appointment.',
+    });
+  });
+
+  it('marks a technician unavailable when an appointment starts before their shift', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '17:00',
+        shiftDate: '2026-07-15',
+        startTime: '08:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-07-14T22:45:00.000Z',
+      scheduledStart: '2026-07-14T21:30:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.canOverride).toBe(true);
+    expect(availability.reason).toContain('outside their scheduled shift');
+  });
+
+  it('marks a technician unavailable when an appointment extends after their shift', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '17:00',
+        shiftDate: '2026-07-15',
+        startTime: '08:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-07-15T07:30:00.000Z',
+      scheduledStart: '2026-07-15T06:30:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.reason).toContain('outside their scheduled shift');
+  });
+
+  it('hard-blocks appointment assignment during active technician leave', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberLeave.findMany.mockResolvedValueOnce([
+      memberLeave({ endDate: '2026-07-15', startDate: '2026-07-15' }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.canOverride).toBe(false);
+    expect(availability.reason).toContain('on leave on 15 July 2026');
+  });
+
+  it('allows overnight appointments inside an overnight shift and business window', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '05:00',
+        shiftDate: '2026-09-19',
+        startTime: '20:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T15:00:00.000Z',
+      scheduledStart: '2026-09-19T12:00:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(false);
+  });
+
+  it("matches early-morning appointments to the previous day's overnight shift", async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '05:00',
+        shiftDate: '2026-09-19',
+        startTime: '20:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T16:00:00.000Z',
+      scheduledStart: '2026-09-19T15:00:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(false);
+  });
+
+  it('hard-blocks an overnight appointment that touches next-day leave', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberLeave.findMany.mockResolvedValueOnce([
+      memberLeave({ endDate: '2026-09-20', startDate: '2026-09-20' }),
+    ]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '05:00',
+        shiftDate: '2026-09-19',
+        startTime: '20:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T15:00:00.000Z',
+      scheduledStart: '2026-09-19T13:30:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.canOverride).toBe(false);
+    expect(availability.reason).toContain('on leave on 20 Sept 2026');
+  });
+
+  it('preserves existing scheduling behaviour when no relevant active shifts exist', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([]);
+
+    await expect(
+      service.availability(owner, {
+        assignedUserId: 'tech-1',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      }),
+    ).resolves.toMatchObject({
+      hasConflict: false,
+      reason: 'Technician is available for this appointment.',
+    });
+  });
+
+  it('ignores cancelled shifts when deciding whether shift scheduling is active', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(availability.hasConflict).toBe(false);
+    const shiftQuery = firstMockArg<{
+      where: { status: string };
+    }>(prisma.memberShift.findMany);
+    expect(shiftQuery.where.status).toBe('ACTIVE');
+  });
+
+  it('scopes leave and shift checks to the current business and assigned member', async () => {
+    const { service, prisma } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    const leaveQuery = firstMockArg<{
+      where: { businessId: string; memberId: string };
+    }>(prisma.memberLeave.findMany);
+    const shiftQuery = firstMockArg<{
+      where: { businessId: string; memberId: string };
+    }>(prisma.memberShift.findMany);
+    expect(leaveQuery.where).toMatchObject({
+      businessId: 'business-1',
+      memberId: 'member-1',
+    });
+    expect(shiftQuery.where).toMatchObject({
+      businessId: 'business-1',
+      memberId: 'member-1',
+    });
   });
 
   it('checks working hours in the business timezone rather than server timezone', async () => {
@@ -914,6 +1182,26 @@ describe('AppointmentsService', () => {
     });
 
     expect(prisma.appointment.update).toHaveBeenCalled();
+  });
+
+  it('does not allow reassignment override when the target technician is on leave', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst.mockResolvedValue({
+      id: 'member-1',
+      user: { firstName: 'Mia', lastName: 'Technician' },
+    });
+    prisma.memberLeave.findMany.mockResolvedValueOnce([
+      memberLeave({ endDate: '2026-07-15', startDate: '2026-07-15' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    await service
+      .reassign(owner, 'appointment-1', {
+        allowConflictOverride: true,
+        assignedUserId: 'tech-1',
+      })
+      .catch((error) => expectDomainError(error, 'APPOINTMENT_CONFLICT'));
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
   });
 
   it('writes an audit entry when an appointment is reassigned', async () => {

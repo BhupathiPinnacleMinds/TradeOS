@@ -117,6 +117,12 @@ describe('Health endpoint (e2e)', () => {
           count: jest.fn().mockResolvedValue(0),
           findMany: jest.fn().mockResolvedValue([]),
         },
+        memberLeave: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        memberShift: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
         customer: {
           findFirst: jest.fn().mockResolvedValue({
             companyName: null,

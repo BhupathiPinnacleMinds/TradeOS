@@ -259,7 +259,7 @@ export function TeamShiftsScreen() {
         <Text style={styles.title}>Team shifts</Text>
         <Text style={styles.subtitle}>
           Manage one-off shifts for active team members. Appointment assignment
-          validation is not enabled yet.
+          checks use shifts and leave.
         </Text>
 
         <View style={styles.dateCard}>
