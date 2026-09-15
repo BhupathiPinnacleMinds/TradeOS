@@ -17,13 +17,15 @@ describe('customer communications mobile UI contracts', () => {
     expect(client).toContain(
       'already has another appointment during this time',
     );
+    expect(client).toContain('Appointment not created.');
+    expect(client).toContain('appointmentPersistenceSentence');
     expect(client).toContain('friendlyAppointmentMutationError');
     expect(client).toContain(
       'This appointment can no longer perform that action.',
     );
     expect(appointmentForm).toContain('friendlyAppointmentCreateError');
     expect(appointmentForm).toContain(
-      'message: friendlyAppointmentCreateError(error)',
+      'message: friendlyAppointmentCreateError(error, {',
     );
   });
 

@@ -1643,6 +1643,7 @@ export class AppointmentsService {
       conflicts: availability.conflicts,
       hasConflict: availability.hasConflict,
       reason: availability.reason,
+      reasons: availability.reasons,
     };
   }
 

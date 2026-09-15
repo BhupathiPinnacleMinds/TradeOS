@@ -169,6 +169,33 @@ describe('Job form mobile UI contracts', () => {
     expect(appointmentForm).not.toContain('assignedToUserId: assignedUserId');
   });
 
+  it('shows context-aware scheduling failure feedback after partial appointment setup', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+    const apiClient = mobileSource('api/client.ts');
+
+    expect(appointmentForm).toContain('let createdCustomer = false');
+    expect(appointmentForm).toContain('let createdJob = false');
+    expect(appointmentForm).toContain('createdCustomer = true');
+    expect(appointmentForm).toContain('createdJob = true');
+    expect(appointmentForm).toContain(
+      'message: friendlyAppointmentCreateError(error, {',
+    );
+    expect(appointmentForm).toContain('createdCustomer,');
+    expect(appointmentForm).toContain('createdJob,');
+    expect(appointmentForm).toContain('usedExistingJob: !useQuickJob');
+
+    expect(apiClient).toContain('Appointment not created.');
+    expect(apiClient).toContain(
+      'Customer and job details were saved, but the job remains unassigned.',
+    );
+    expect(apiClient).toContain('The job was saved and remains unassigned.');
+    expect(apiClient).toContain('The existing job was not changed.');
+    expect(apiClient).toContain("reason?.code === 'ON_LEAVE'");
+    expect(apiClient).toContain("reason?.code === 'OUTSIDE_SHIFT'");
+    expect(apiClient).toContain("reason?.code === 'OUTSIDE_BUSINESS_HOURS'");
+    expect(apiClient).toContain("reason?.code === 'APPOINTMENT_CONFLICT'");
+  });
+
   it('renders job-linked appointment forms as locked customer and job summaries', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 

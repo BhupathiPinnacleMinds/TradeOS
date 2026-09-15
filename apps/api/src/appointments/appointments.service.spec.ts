@@ -951,9 +951,19 @@ describe('AppointmentsService', () => {
       .catch((error) => {
         expectDomainError(error, 'APPOINTMENT_CONFLICT');
         const response = (error as HttpException).getResponse() as {
+          details: {
+            availability: {
+              reasons: Array<{ code: string; canOverride: boolean }>;
+            };
+          };
           message: string;
         };
         expect(response.message).toContain('on leave on 15 July 2026');
+        expect(response.details.availability.reasons).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ canOverride: false, code: 'ON_LEAVE' }),
+          ]),
+        );
       });
 
     expect(prisma.appointment.create).not.toHaveBeenCalled();
@@ -981,9 +991,22 @@ describe('AppointmentsService', () => {
       .catch((error) => {
         expectDomainError(error, 'APPOINTMENT_CONFLICT');
         const response = (error as HttpException).getResponse() as {
+          details: {
+            availability: {
+              reasons: Array<{ code: string; canOverride: boolean }>;
+            };
+          };
           message: string;
         };
         expect(response.message).toContain('outside their scheduled shift');
+        expect(response.details.availability.reasons).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              canOverride: true,
+              code: 'OUTSIDE_SHIFT',
+            }),
+          ]),
+        );
       });
 
     expect(prisma.appointment.create).not.toHaveBeenCalled();

@@ -212,7 +212,11 @@ describe('appointment route contract', () => {
     );
 
     expect(source).toContain('friendlyAppointmentCreateError');
-    expect(source).toContain('message: friendlyAppointmentCreateError(error)');
+    expect(source).toContain(
+      'message: friendlyAppointmentCreateError(error, {',
+    );
+    expect(source).toContain('createdCustomer,');
+    expect(source).toContain('createdJob,');
     expect(source).not.toContain('Internal server error');
   });
 });

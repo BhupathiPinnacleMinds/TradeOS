@@ -685,11 +685,25 @@ export interface AppointmentConflict {
   scheduledEnd: string;
 }
 
+export type AppointmentAvailabilityReasonCode =
+  | 'APPOINTMENT_CONFLICT'
+  | 'NO_TECHNICIAN'
+  | 'ON_LEAVE'
+  | 'OUTSIDE_BUSINESS_HOURS'
+  | 'OUTSIDE_SHIFT';
+
+export interface AppointmentAvailabilityReason {
+  code: AppointmentAvailabilityReasonCode;
+  message: string;
+  canOverride: boolean;
+}
+
 export interface AppointmentAvailabilityResponse {
   hasConflict: boolean;
   canOverride: boolean;
   conflicts: AppointmentConflict[];
   reason: string;
+  reasons?: AppointmentAvailabilityReason[];
 }
 
 export interface AppointmentReassignmentPayload {

@@ -872,6 +872,8 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     }
 
     setIsSaving(true);
+    let createdCustomer = false;
+    let createdJob = false;
     try {
       let finalCustomerId = selectedCustomerId;
       if (useQuickCustomer) {
@@ -893,6 +895,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           customerPayload,
         );
         finalCustomerId = customerResponse.customer.id;
+        createdCustomer = true;
       }
 
       let finalJobId = selectedJobId;
@@ -916,6 +919,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         };
         const jobResponse = await createJobRequest(token, jobPayload);
         finalJobId = jobResponse.job.id;
+        createdJob = true;
       }
 
       const payload: AppointmentPayload = {
@@ -952,7 +956,15 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       });
     } catch (error) {
       showToast({
-        message: friendlyAppointmentCreateError(error),
+        message: friendlyAppointmentCreateError(error, {
+          createdCustomer,
+          createdJob,
+          scheduledEnd: addMinutes(startAt, durationMinutes),
+          scheduledStart: startAt,
+          technicianName: selectedTechnician?.name,
+          timezone: businessTimezone,
+          usedExistingJob: !useQuickJob,
+        }),
         tone: 'error',
       });
     } finally {

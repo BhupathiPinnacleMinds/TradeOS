@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   AppointmentDetailResponse,
   AppointmentAvailabilityRequest,
+  AppointmentAvailabilityReason,
   AppointmentAvailabilityResponse,
   AppointmentListResponse,
   AppointmentPayload,
@@ -76,7 +77,13 @@ import type {
   ToriSnapshot,
   ToriProviderStatus,
 } from '@tradieos/shared';
-import { buildAppointmentTransitionPath } from '@tradieos/shared';
+import {
+  buildAppointmentTransitionPath,
+  DEFAULT_BUSINESS_TIMEZONE,
+  formatBusinessLongDate,
+  formatBusinessTimeRange,
+  normaliseBusinessTimezone,
+} from '@tradieos/shared';
 import { apiUrl } from '../config/mobileConfig';
 
 export function buildApiUrl(path: string, baseUrl = apiUrl) {
@@ -186,6 +193,118 @@ export class ApiRequestError extends Error {
   }
 }
 
+export type AppointmentCreateFailureContext = {
+  createdCustomer: boolean;
+  createdJob: boolean;
+  scheduledEnd: Date | string;
+  scheduledStart: Date | string;
+  technicianName?: string | null;
+  usedExistingJob: boolean;
+  timezone?: string | null;
+};
+
+function appointmentAvailabilityFromError(
+  error: ApiRequestError,
+): AppointmentAvailabilityResponse | undefined {
+  const availability = error.details.availability;
+  if (!availability || typeof availability !== 'object') return undefined;
+  return availability as AppointmentAvailabilityResponse;
+}
+
+function primaryAvailabilityReason(
+  availability?: AppointmentAvailabilityResponse,
+) {
+  return availability?.reasons?.find(
+    (reason) => reason.code !== 'NO_TECHNICIAN',
+  );
+}
+
+function appointmentPersistenceSentence(
+  context?: AppointmentCreateFailureContext,
+) {
+  if (!context) return '';
+  if (context.usedExistingJob) return ' The existing job was not changed.';
+  if (context.createdCustomer && context.createdJob) {
+    return ' Customer and job details were saved, but the job remains unassigned.';
+  }
+  if (context.createdJob) {
+    return ' The job was saved and remains unassigned.';
+  }
+  if (context.createdCustomer) {
+    return ' Customer details were saved.';
+  }
+  return '';
+}
+
+function requestedAppointmentWindow(context?: AppointmentCreateFailureContext) {
+  if (!context) return '';
+  const timezone = normaliseBusinessTimezone(
+    context.timezone ?? DEFAULT_BUSINESS_TIMEZONE,
+  );
+  return `${formatBusinessTimeRange(
+    context.scheduledStart,
+    context.scheduledEnd,
+    timezone,
+  )} on ${formatBusinessLongDate(context.scheduledStart, timezone)}`;
+}
+
+function schedulingFailureNextStep(reason?: AppointmentAvailabilityReason) {
+  if (reason?.code === 'ON_LEAVE') {
+    return ' Choose another technician or appointment date.';
+  }
+  if (reason?.code === 'OUTSIDE_SHIFT') {
+    return ' Choose a technician whose shift covers this time or change the appointment time.';
+  }
+  if (reason?.code === 'OUTSIDE_BUSINESS_HOURS') {
+    return ' Choose a time within business hours.';
+  }
+  if (reason?.code === 'APPOINTMENT_CONFLICT') {
+    return ' Choose another technician/time or continue with the existing owner/admin override flow.';
+  }
+  return ' Choose another technician or appointment time.';
+}
+
+function schedulingFailureReasonMessage(
+  error: ApiRequestError,
+  reason?: AppointmentAvailabilityReason,
+  context?: AppointmentCreateFailureContext,
+) {
+  if (reason?.code === 'OUTSIDE_SHIFT') {
+    const technician = context?.technicianName || 'The selected technician';
+    const requestedWindow = requestedAppointmentWindow(context);
+    if (requestedWindow) {
+      return `${technician} is not scheduled to work from ${requestedWindow}.`;
+    }
+  }
+  if (reason?.code === 'OUTSIDE_BUSINESS_HOURS') {
+    return 'The selected appointment time is outside the business operating hours.';
+  }
+  if (reason?.code === 'APPOINTMENT_CONFLICT') {
+    const availability = appointmentAvailabilityFromError(error);
+    const technicianName = availability?.conflicts?.[0]?.technicianName;
+    if (technicianName) {
+      return `${technicianName} already has another appointment during this time.`;
+    }
+  }
+  return reason?.message ?? error.message;
+}
+
+function contextualAppointmentCreateSchedulingError(
+  error: ApiRequestError,
+  context?: AppointmentCreateFailureContext,
+) {
+  const availability = appointmentAvailabilityFromError(error);
+  const reason = primaryAvailabilityReason(availability);
+  return [
+    'Appointment not created.',
+    schedulingFailureReasonMessage(error, reason, context),
+    appointmentPersistenceSentence(context).trim(),
+    schedulingFailureNextStep(reason).trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export function friendlyAppointmentMutationError(error: unknown) {
   if (error instanceof ApiRequestError) {
     if (error.code === 'NETWORK_ERROR') {
@@ -196,6 +315,16 @@ export function friendlyAppointmentMutationError(error: unknown) {
     }
     if (error.code === 'APPOINTMENT_NOT_FOUND') {
       return 'Appointment could not be found.';
+    }
+    if (error.code === 'APPOINTMENT_CONFLICT') {
+      const availability = appointmentAvailabilityFromError(error);
+      const reason = primaryAvailabilityReason(availability);
+      return [
+        schedulingFailureReasonMessage(error, reason),
+        schedulingFailureNextStep(reason).trim(),
+      ]
+        .filter(Boolean)
+        .join(' ');
     }
     if (error.code === 'FOLLOW_UP_NOTES_REQUIRED') {
       return 'Please describe the follow-up required.';
@@ -235,20 +364,13 @@ export function friendlyAppointmentMutationError(error: unknown) {
     : "We couldn't update this appointment.";
 }
 
-export function friendlyAppointmentCreateError(error: unknown) {
+export function friendlyAppointmentCreateError(
+  error: unknown,
+  context?: AppointmentCreateFailureContext,
+) {
   if (error instanceof ApiRequestError) {
     if (error.code === 'APPOINTMENT_CONFLICT') {
-      const availability = error.details.availability as
-        | {
-            conflicts?: Array<{ technicianName?: string | null }>;
-            reason?: string;
-          }
-        | undefined;
-      const technicianName = availability?.conflicts?.[0]?.technicianName;
-      if (technicianName) {
-        return `${technicianName} already has another appointment during this time.`;
-      }
-      return availability?.reason ?? error.message;
+      return contextualAppointmentCreateSchedulingError(error, context);
     }
     if (error.code === 'JOB_NOT_FOUND') {
       return 'Select a valid job before saving this appointment.';
