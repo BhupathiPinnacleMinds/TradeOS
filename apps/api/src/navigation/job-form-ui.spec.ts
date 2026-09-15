@@ -156,6 +156,19 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('keeps quick-created appointment jobs unassigned until appointment creation succeeds', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain('const jobPayload: JobPayload = {');
+    expect(appointmentForm).toMatch(
+      /const jobPayload: JobPayload = \{[\s\S]*assignedToUserId: null,[\s\S]*\};\s*const jobResponse = await createJobRequest/,
+    );
+    expect(appointmentForm).toMatch(
+      /const payload: AppointmentPayload = \{[\s\S]*assignedUserId,[\s\S]*jobId: finalJobId,[\s\S]*\};\s*const response = await createAppointmentRequest/,
+    );
+    expect(appointmentForm).not.toContain('assignedToUserId: assignedUserId');
+  });
+
   it('renders job-linked appointment forms as locked customer and job summaries', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 

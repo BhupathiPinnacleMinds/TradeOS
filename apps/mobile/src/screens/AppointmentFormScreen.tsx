@@ -902,7 +902,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             resolvedLocation.accessInstructions.trim() || undefined,
           addressLine1: resolvedLocation.addressLine1,
           addressLine2: resolvedLocation.addressLine2 || undefined,
-          assignedToUserId: assignedUserId,
+          assignedToUserId: null,
           customerId: finalCustomerId,
           estimatedDurationMinutes: durationMinutes,
           postcode: resolvedLocation.postcode,

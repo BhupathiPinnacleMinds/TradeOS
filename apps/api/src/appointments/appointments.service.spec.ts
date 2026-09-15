@@ -933,6 +933,62 @@ describe('AppointmentsService', () => {
     expect(availability.reason).toContain('on leave on 15 July 2026');
   });
 
+  it('does not create an appointment when technician leave blocks scheduling', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberLeave.findMany.mockResolvedValueOnce([
+      memberLeave({ endDate: '2026-07-15', startDate: '2026-07-15' }),
+    ]);
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        assignedUserId: 'tech-1',
+        jobId: 'job-1',
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      })
+      .catch((error) => {
+        expectDomainError(error, 'APPOINTMENT_CONFLICT');
+        const response = (error as HttpException).getResponse() as {
+          message: string;
+        };
+        expect(response.message).toContain('on leave on 15 July 2026');
+      });
+
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it('does not create an appointment when technician shift validation blocks scheduling', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '17:00',
+        shiftDate: '2026-07-15',
+        startTime: '08:00',
+      }),
+    ]);
+
+    await service
+      .create(owner, {
+        appointmentType: 'INSPECTION',
+        assignedUserId: 'tech-1',
+        jobId: 'job-1',
+        scheduledEnd: '2026-07-14T22:45:00.000Z',
+        scheduledStart: '2026-07-14T21:30:00.000Z',
+      })
+      .catch((error) => {
+        expectDomainError(error, 'APPOINTMENT_CONFLICT');
+        const response = (error as HttpException).getResponse() as {
+          message: string;
+        };
+        expect(response.message).toContain('outside their scheduled shift');
+      });
+
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
   it('allows overnight appointments inside an overnight shift and business window', async () => {
     const { service, prisma } = createService();
     prisma.business.findUnique.mockResolvedValue({
