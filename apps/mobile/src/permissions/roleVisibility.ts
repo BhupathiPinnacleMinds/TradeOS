@@ -15,6 +15,7 @@ export type MoreDestinationRoute =
   | 'Invoices'
   | 'Notifications'
   | 'Team'
+  | 'TeamShifts'
   | 'Settings';
 
 export interface MoreDestination {
@@ -106,6 +107,7 @@ const moreDestinations: Record<BusinessRole, MoreDestination[]> = {
     { label: 'Accounts Receivable', route: 'AccountsReceivable' },
     { label: 'Notifications', route: 'Notifications' },
     { label: 'Team', route: 'Team' },
+    { label: 'Team shifts', route: 'TeamShifts' },
     { label: 'Settings', route: 'Settings' },
   ],
   OFFICE_MANAGER: [
@@ -256,6 +258,7 @@ const routeRoles: Record<ProtectedStackRoute, BusinessRole[]> = {
   Quotes: roles.quoteView,
   Settings: roles.businessSettings,
   Team: roles.teamManage,
+  TeamShifts: ['OWNER'],
   TeamMemberProfile: roles.teamManage,
 };
 

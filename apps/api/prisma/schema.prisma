@@ -39,6 +39,11 @@ enum MemberLeaveStatus {
   CANCELLED
 }
 
+enum MemberShiftStatus {
+  ACTIVE
+  CANCELLED
+}
+
 enum CustomerStatus {
   ACTIVE
   ARCHIVED
@@ -334,6 +339,7 @@ model Business {
   appointmentSignatures        AppointmentSignature[]
   appointmentSequence          AppointmentSequence?
   memberLeaves                 MemberLeave[]
+  memberShifts                 MemberShift[]
   quotes                       Quote[]
   quoteSequence                QuoteSequence?
   quoteRevisions               QuoteRevision[]
@@ -469,6 +475,8 @@ model BusinessMember {
   user                      User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
   inviter                   User?         @relation("MemberInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
   leave                     MemberLeave[]
+  shifts                    MemberShift[] @relation("MemberShiftMember")
+  createdShifts             MemberShift[] @relation("MemberShiftCreator")
 
   @@unique([businessId, userId])
   @@unique([businessId, invitedEmail])
@@ -493,6 +501,27 @@ model MemberLeave {
 
   @@index([businessId, memberId, status, startDate])
   @@index([businessId, status, startDate])
+}
+
+model MemberShift {
+  id                String            @id @default(cuid())
+  businessId        String
+  memberId          String
+  shiftDate         String
+  startTime         String
+  endTime           String
+  status            MemberShiftStatus @default(ACTIVE)
+  note              String?
+  createdByMemberId String?
+  cancelledAt       DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  member            BusinessMember    @relation("MemberShiftMember", fields: [memberId], references: [id], onDelete: Cascade)
+  createdByMember   BusinessMember?   @relation("MemberShiftCreator", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, memberId, shiftDate, status])
+  @@index([businessId, shiftDate, status])
 }
 
 model AuditLog {

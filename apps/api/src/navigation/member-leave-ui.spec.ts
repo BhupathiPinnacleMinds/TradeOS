@@ -37,13 +37,14 @@ describe('member leave mobile UI contracts', () => {
     expect(myLeave).not.toContain('Appointment');
   });
 
-  it('shows owner team leave without adding shift or assignment validation UI', () => {
+  it('shows owner team leave with a lightweight shift-management entry only', () => {
     const team = mobileSource('screens/TeamScreen.tsx');
 
     expect(team).toContain('Team availability');
     expect(team).toContain('On leave today');
     expect(team).toContain('Upcoming leave');
     expect(team).toContain('teamLeaveRequest');
+    expect(team).toContain('Manage shifts');
     expect(team).toContain('Shifts and assignment validation');
     expect(team).not.toContain('shift template');
   });

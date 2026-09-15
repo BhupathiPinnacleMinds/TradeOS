@@ -16,6 +16,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { MembersModule } from './members/members.module';
 import { MediaModule } from './media/media.module';
 import { MemberLeaveModule } from './member-leave/member-leave.module';
+import { MemberShiftsModule } from './member-shifts/member-shifts.module';
 import { MessagesModule } from './messages/messages.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ObservabilityModule } from './observability/observability.module';
@@ -41,6 +42,7 @@ import { validateEnvironment } from './config/app-config';
     BusinessesModule,
     MembersModule,
     MemberLeaveModule,
+    MemberShiftsModule,
     MediaModule,
     CustomerCommunicationsModule,
     CustomersModule,

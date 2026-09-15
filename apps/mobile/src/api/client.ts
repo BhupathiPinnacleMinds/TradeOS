@@ -56,6 +56,10 @@ import type {
   MemberLeaveListResponse,
   MemberLeavePayload,
   MemberLeaveResponse,
+  MemberShiftListResponse,
+  MemberShiftPayload,
+  MemberShiftQuery,
+  MemberShiftResponse,
   MyDayResponse,
   MarkAllNotificationsReadResponse,
   MarkNotificationReadResponse,
@@ -572,6 +576,46 @@ export function cancelMyLeaveRequest(token: string, leaveId: string) {
 
 export function teamLeaveRequest(token: string) {
   return apiRequest<MemberLeaveListResponse>('/team/leave', { token });
+}
+
+export function teamShiftsRequest(
+  token: string,
+  params: MemberShiftQuery = {},
+) {
+  return apiRequest<MemberShiftListResponse>(
+    `/team/shifts${queryString({ ...params })}`,
+    { token },
+  );
+}
+
+export function createTeamShiftRequest(
+  token: string,
+  input: MemberShiftPayload,
+) {
+  return apiRequest<MemberShiftResponse>('/team/shifts', {
+    body: JSON.stringify(input),
+    method: 'POST',
+    token,
+  });
+}
+
+export function updateTeamShiftRequest(
+  token: string,
+  shiftId: string,
+  input: MemberShiftPayload,
+) {
+  return apiRequest<MemberShiftResponse>(`/team/shifts/${shiftId}`, {
+    body: JSON.stringify(input),
+    method: 'PATCH',
+    token,
+  });
+}
+
+export function cancelTeamShiftRequest(token: string, shiftId: string) {
+  return apiRequest<MemberShiftResponse>(`/team/shifts/${shiftId}/cancel`, {
+    method: 'POST',
+    token,
+  });
 }
 
 export function notificationsRequest(

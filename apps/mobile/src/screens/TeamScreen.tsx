@@ -870,6 +870,13 @@ export function TeamScreen() {
               Current and upcoming leave only. Shifts and assignment validation
               are not enabled yet.
             </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate('TeamShifts')}
+              style={styles.manageShiftsButton}
+            >
+              <Text style={styles.manageShiftsText}>Manage shifts</Text>
+            </Pressable>
             <LeaveGroup title="On leave today" records={leaveToday} />
             <LeaveGroup title="Upcoming leave" records={upcomingLeave} />
           </View>
@@ -1691,6 +1698,16 @@ const styles = StyleSheet.create({
   },
   leavePanelTitle: { color: colours.ink, fontSize: 18, fontWeight: '900' },
   leavePanelMeta: { color: colours.muted, lineHeight: 20, marginTop: 5 },
+  manageShiftsButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colours.primary,
+    borderRadius: 999,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  manageShiftsText: { color: '#FFFFFF', fontWeight: '900' },
   leaveGroup: { marginTop: 14 },
   leaveGroupTitle: { color: colours.primary, fontSize: 13, fontWeight: '900' },
   leaveEmpty: { color: colours.muted, marginTop: 8 },

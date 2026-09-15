@@ -37,6 +37,7 @@ import { RegisterScreen } from '../screens/RegisterScreen';
 import { ResetPasswordScreen } from '../screens/ResetPasswordScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TeamScreen } from '../screens/TeamScreen';
+import { TeamShiftsScreen } from '../screens/TeamShiftsScreen';
 import { TeamMemberProfileScreen } from '../screens/TeamMemberProfileScreen';
 import { ToriChatScreen } from '../screens/ToriChatScreen';
 import { colours } from '../theme';
@@ -357,6 +358,13 @@ export function RootNavigator() {
           ) : null}
           {canAccessStackRoute(user?.role, 'Team') ? (
             <Stack.Screen name="Team" component={TeamScreen} />
+          ) : null}
+          {canAccessStackRoute(user?.role, 'TeamShifts') ? (
+            <Stack.Screen
+              name="TeamShifts"
+              component={TeamShiftsScreen}
+              options={{ title: 'Team shifts' }}
+            />
           ) : null}
           {canAccessStackRoute(user?.role, 'MyLeave') ? (
             <Stack.Screen

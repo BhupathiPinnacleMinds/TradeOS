@@ -94,10 +94,14 @@ export function isTimeWithinBusinessHours({
   return target >= start || target < end;
 }
 
-function businessClockMinutes(value: string): number {
+export function businessClockTimeToMinutes(value: string): number {
   const match = BUSINESS_CLOCK_TIME_PATTERN.exec(value.trim());
   if (!match) {
     throw new Error('Business clock time must use HH:mm format.');
   }
   return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function businessClockMinutes(value: string): number {
+  return businessClockTimeToMinutes(value);
 }
