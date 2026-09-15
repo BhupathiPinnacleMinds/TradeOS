@@ -48,7 +48,7 @@ import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { useToast } from '../components/ToastProvider';
 import { colours } from '../theme';
 
-type PickerField = 'date' | 'endTime' | 'startTime';
+type PickerField = 'endTime' | 'shiftDate' | 'startTime';
 
 export function TeamShiftsScreen() {
   const { token, user } = useAuth();
@@ -497,7 +497,7 @@ function ShiftModal({
               ) : null}
               <PickerFieldButton
                 label="Date"
-                onPress={() => setPickerField('date')}
+                onPress={() => setPickerField('shiftDate')}
                 value={formatDateOnlyForDisplay(form.shiftDate)}
               />
               <View style={styles.timeRow}>
@@ -519,20 +519,20 @@ function ShiftModal({
                 <View style={styles.pickerContainer}>
                   <DateTimePicker
                     display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    mode={pickerField === 'date' ? 'date' : 'time'}
+                    mode={pickerField === 'shiftDate' ? 'date' : 'time'}
                     onChange={(_, value) => {
                       if (Platform.OS !== 'ios') setPickerField(null);
                       if (!value) return;
                       setForm((current) => ({
                         ...current,
                         [pickerField]:
-                          pickerField === 'date'
+                          pickerField === 'shiftDate'
                             ? dateOnlyFromDate(value)
                             : timeOnlyFromDate(value),
                       }));
                     }}
                     value={
-                      pickerField === 'date'
+                      pickerField === 'shiftDate'
                         ? dateFromDateOnly(form.shiftDate)
                         : dateFromTimeOnly(form[pickerField])
                     }
