@@ -69,6 +69,8 @@ export function TeamShiftsScreen() {
     emptyShiftForm(selectedDate),
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const todayDate = businessDateOnly(user?.business.timezone);
+  const selectedDateIsPast = selectedDate < todayDate;
 
   const activeMembers = useMemo(
     () => members.filter((member) => member.status === 'ACTIVE'),
@@ -127,6 +129,14 @@ export function TeamShiftsScreen() {
   }
 
   function openCreate(memberId?: string) {
+    if (selectedDateIsPast) {
+      showToast({
+        message: 'Shifts cannot be created for past dates.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     setEditingShift(null);
     setForm(emptyShiftForm(selectedDate, memberId ?? activeMembers[0]?.id));
     setFormError(null);
@@ -180,6 +190,10 @@ export function TeamShiftsScreen() {
     if (!form.memberId) return 'Choose a team member.';
     const validationError = validateMemberShiftPayload(form);
     if (validationError) return validationError;
+    if (form.shiftDate < todayDate) {
+      return 'Shifts cannot be created for past dates.';
+    }
+
     const memberLeave = leaveByMember.get(form.memberId) ?? [];
     if (shiftOverlapsMemberLeave(form, memberLeave)) {
       return 'This team member is on leave for the selected shift date.';
@@ -284,10 +298,18 @@ export function TeamShiftsScreen() {
           </View>
         </View>
 
+        {selectedDateIsPast ? (
+          <Text style={styles.warningText}>
+            Historical shifts are read-only for scheduling. Choose today or a
+            future date to add a new shift.
+          </Text>
+        ) : null}
+
         <Pressable
           accessibilityRole="button"
+          disabled={selectedDateIsPast}
           onPress={() => openCreate()}
-          style={styles.primaryButton}
+          style={[styles.primaryButton, selectedDateIsPast && styles.disabled]}
         >
           <Text style={styles.primaryText}>+ Add shift</Text>
         </Pressable>
@@ -318,11 +340,14 @@ export function TeamShiftsScreen() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  disabled={(memberLeave?.length ?? 0) > 0}
+                  disabled={
+                    selectedDateIsPast || (memberLeave?.length ?? 0) > 0
+                  }
                   onPress={() => openCreate(member.id)}
                   style={[
                     styles.smallPrimary,
-                    (memberLeave?.length ?? 0) > 0 && styles.disabled,
+                    (selectedDateIsPast || (memberLeave?.length ?? 0) > 0) &&
+                      styles.disabled,
                   ]}
                 >
                   <Text style={styles.smallPrimaryText}>Add</Text>
@@ -389,6 +414,7 @@ export function TeamShiftsScreen() {
         formError={formError}
         isSaving={isSaving}
         leaveByMember={leaveByMember}
+        minimumShiftDate={todayDate}
         onClose={() => setFormVisible(false)}
         onSave={() => void saveShift()}
         pickerField={pickerField}
@@ -407,6 +433,7 @@ function ShiftModal({
   formError,
   isSaving,
   leaveByMember,
+  minimumShiftDate,
   onClose,
   onSave,
   pickerField,
@@ -420,6 +447,7 @@ function ShiftModal({
   formError: string | null;
   isSaving: boolean;
   leaveByMember: Map<string, MemberLeave[]>;
+  minimumShiftDate: string;
   onClose(): void;
   onSave(): void;
   pickerField: PickerField | null;
@@ -519,6 +547,11 @@ function ShiftModal({
                 <View style={styles.pickerContainer}>
                   <DateTimePicker
                     display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    minimumDate={
+                      pickerField === 'shiftDate'
+                        ? dateFromDateOnly(minimumShiftDate)
+                        : undefined
+                    }
                     mode={pickerField === 'shiftDate' ? 'date' : 'time'}
                     onChange={(_, value) => {
                       if (Platform.OS !== 'ios') setPickerField(null);

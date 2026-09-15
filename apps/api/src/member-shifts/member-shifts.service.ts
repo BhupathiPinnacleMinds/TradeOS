@@ -266,6 +266,14 @@ export class MemberShiftsService {
     }
 
     const business = await this.businessHours(businessId);
+    if (payload.shiftDate < this.businessDateOnly(business.timezone)) {
+      throw this.domainError(
+        HttpStatus.BAD_REQUEST,
+        'SHIFT_IN_PAST',
+        'Shifts cannot be created for past dates.',
+      );
+    }
+
     if (
       !isShiftWithinBusinessHours({
         businessEndTime: business.businessEndTime,
@@ -360,14 +368,17 @@ export class MemberShiftsService {
     return business;
   }
 
+  private businessDateOnly(timezone: string | null | undefined) {
+    const normalisedTimezone = normaliseBusinessTimezone(timezone);
+    const parts = getBusinessDateParts(new Date(), normalisedTimezone);
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(
+      parts.day,
+    ).padStart(2, '0')}`;
+  }
+
   private async normaliseQuery(businessId: string, query: MemberShiftQuery) {
     const business = await this.businessHours(businessId);
-    const timezone = normaliseBusinessTimezone(business.timezone);
-    const todayParts = getBusinessDateParts(new Date(), timezone);
-    const today = `${todayParts.year}-${String(todayParts.month).padStart(
-      2,
-      '0',
-    )}-${String(todayParts.day).padStart(2, '0')}`;
+    const today = this.businessDateOnly(business.timezone);
     const fromDate = (query.fromDate ?? query.date ?? today).trim();
     const toDate = (query.toDate ?? query.date ?? fromDate).trim();
 

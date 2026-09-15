@@ -70,6 +70,25 @@ describe('member shifts mobile UI contracts', () => {
     expect(myLeave).not.toContain('toISOString().slice(0, 10)');
   });
 
+  it('keeps historical shift viewing while blocking past-date creation controls', () => {
+    const teamShifts = mobileSource('screens/TeamShiftsScreen.tsx');
+
+    expect(teamShifts).toContain('selectedDateIsPast');
+    expect(teamShifts).toContain('disabled={selectedDateIsPast}');
+    expect(teamShifts).toContain(
+      'Historical shifts are read-only for scheduling.',
+    );
+    expect(teamShifts).toContain(
+      "return 'Shifts cannot be created for past dates.';",
+    );
+    expect(teamShifts).toContain('minimumShiftDate={todayDate}');
+    expect(teamShifts).toContain('minimumDate={');
+    expect(teamShifts).toContain("pickerField === 'shiftDate'");
+    expect(teamShifts).toContain(
+      'setSelectedDate(addDaysToDateOnly(selectedDate, -1))',
+    );
+  });
+
   it('registers owner shift API routes', () => {
     const controller = apiSource('member-shifts/member-shifts.controller.ts');
     const appModule = apiSource('app.module.ts');

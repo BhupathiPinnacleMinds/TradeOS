@@ -15,6 +15,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MemberShiftsService } from './member-shifts.service';
 
 describe('MemberShiftsService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('creates a normal owner-managed shift inside business hours', async () => {
     const { notifications, prisma, service } = createService();
     mockOwnerAndTarget(prisma);
@@ -52,6 +56,96 @@ describe('MemberShiftsService', () => {
         userId: 'tech-user',
       }),
     );
+  });
+
+  it('rejects creating a shift before today in the business timezone', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T14:30:00.000Z'));
+    const { prisma, service } = createService();
+    mockOwnerAndTarget(prisma);
+    prisma.business.findUnique.mockResolvedValue(
+      businessHours({ timezone: 'Australia/Melbourne' }),
+    );
+
+    await expect(
+      service.createTeamShift(
+        user({ role: 'OWNER' }),
+        shiftPayload({ shiftDate: '2026-09-14' }),
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'SHIFT_IN_PAST',
+        message: 'Shifts cannot be created for past dates.',
+      },
+    });
+    expect(prisma.memberShift.create).not.toHaveBeenCalled();
+  });
+
+  it('allows creating a shift for today in the business timezone', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T14:30:00.000Z'));
+    const { prisma, service } = createService();
+    mockOwnerAndTarget(prisma);
+    prisma.business.findUnique.mockResolvedValue(
+      businessHours({ timezone: 'Australia/Melbourne' }),
+    );
+    prisma.memberLeave.findMany.mockResolvedValue([]);
+    prisma.memberShift.findMany.mockResolvedValue([]);
+    prisma.memberShift.create.mockResolvedValue(
+      shiftRecord({ shiftDate: '2026-09-15' }),
+    );
+
+    const response = await service.createTeamShift(
+      user({ role: 'OWNER' }),
+      shiftPayload({ shiftDate: '2026-09-15' }),
+    );
+
+    expect(response.shift.shiftDate).toBe('2026-09-15');
+    const createInput = firstMockArg<{ data: { shiftDate: string } }>(
+      prisma.memberShift.create,
+    );
+    expect(createInput.data.shiftDate).toBe('2026-09-15');
+  });
+
+  it('allows creating a shift for tomorrow in the business timezone', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T14:30:00.000Z'));
+    const { prisma, service } = createService();
+    mockOwnerAndTarget(prisma);
+    prisma.business.findUnique.mockResolvedValue(
+      businessHours({ timezone: 'Australia/Melbourne' }),
+    );
+    prisma.memberLeave.findMany.mockResolvedValue([]);
+    prisma.memberShift.findMany.mockResolvedValue([]);
+    prisma.memberShift.create.mockResolvedValue(
+      shiftRecord({ shiftDate: '2026-09-16' }),
+    );
+
+    const response = await service.createTeamShift(
+      user({ role: 'OWNER' }),
+      shiftPayload({ shiftDate: '2026-09-16' }),
+    );
+
+    expect(response.shift.shiftDate).toBe('2026-09-16');
+    expect(prisma.memberShift.create).toHaveBeenCalled();
+  });
+
+  it('does not shift business-today validation to the previous UTC date', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T14:05:00.000Z'));
+    const { prisma, service } = createService();
+    mockOwnerAndTarget(prisma);
+    prisma.business.findUnique.mockResolvedValue(
+      businessHours({ timezone: 'Australia/Melbourne' }),
+    );
+
+    await expect(
+      service.createTeamShift(
+        user({ role: 'OWNER' }),
+        shiftPayload({ shiftDate: '2026-09-14' }),
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'SHIFT_IN_PAST',
+      },
+    });
+    expect(prisma.memberShift.create).not.toHaveBeenCalled();
   });
 
   it('creates an overnight shift inside an overnight business window', async () => {
@@ -288,6 +382,34 @@ describe('MemberShiftsService', () => {
         where: { id: 'shift-1' },
       }),
     );
+  });
+
+  it('rejects moving an existing shift into a past date', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T14:30:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst
+      .mockResolvedValueOnce(member({ id: 'owner-member', role: 'OWNER' }))
+      .mockResolvedValueOnce(member());
+    prisma.memberShift.findFirst.mockResolvedValue(
+      shiftRecord({ shiftDate: '2026-09-16' }),
+    );
+    prisma.business.findUnique.mockResolvedValue(
+      businessHours({ timezone: 'Australia/Melbourne' }),
+    );
+
+    await expect(
+      service.updateTeamShift(
+        user({ role: 'OWNER' }),
+        'shift-1',
+        shiftPayload({ shiftDate: '2026-09-14' }),
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'SHIFT_IN_PAST',
+        message: 'Shifts cannot be created for past dates.',
+      },
+    });
+    expect(prisma.memberShift.update).not.toHaveBeenCalled();
   });
 
   it('cancels a shift without deleting it', async () => {
