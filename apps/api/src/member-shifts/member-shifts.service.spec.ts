@@ -1,3 +1,5 @@
+/// <reference types="jest" />
+
 import { HttpException } from '@nestjs/common';
 import type {
   AuthenticatedUser,
@@ -15,6 +17,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MemberShiftsService } from './member-shifts.service';
 
 describe('MemberShiftsService', () => {
+  beforeEach(() => {
+    // The fixture shifts are on 16 September in the business timezone.
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-15T00:00:00.000Z'));
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
