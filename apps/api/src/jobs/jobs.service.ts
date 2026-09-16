@@ -118,6 +118,14 @@ type JobTechnicianAppointmentSummary = {
   } | null;
   assignedUserId: string | null;
   jobId: string;
+  scheduledEnd: Date;
+  scheduledStart: Date;
+};
+
+type JobListDisplay = {
+  scheduledEnd: Date | null;
+  scheduledStart: Date;
+  technicianDisplayLabel: string;
 };
 
 @Injectable()
@@ -151,14 +159,14 @@ export class JobsService {
       this.prisma.job.count({ where }),
     ]);
 
-    const technicianLabels = await this.jobTechnicianDisplayLabels(
+    const jobListDisplays = await this.jobListDisplays(
       currentUser.businessId,
       records,
     );
 
     return {
       records: records.map((job) =>
-        this.toJob(job, technicianLabels.get(job.id)),
+        this.toJob(job, jobListDisplays.get(job.id)),
       ),
       total,
       page,
@@ -918,12 +926,17 @@ export class JobsService {
     return job;
   }
 
-  private async jobTechnicianDisplayLabels(
+  private async jobListDisplays(
     businessId: string,
-    jobs: Array<Pick<JobWithRelations, 'assignedTo' | 'id' | 'status'>>,
+    jobs: Array<
+      Pick<
+        JobWithRelations,
+        'assignedTo' | 'id' | 'scheduledEnd' | 'scheduledStart' | 'status'
+      >
+    >,
   ) {
-    const labels = new Map<string, string>();
-    if (jobs.length === 0) return labels;
+    const displays = new Map<string, JobListDisplay>();
+    if (jobs.length === 0) return displays;
 
     const completedJobIds = jobs
       .filter((job) => job.status === 'COMPLETED')
@@ -951,6 +964,8 @@ export class JobsService {
               },
               assignedUserId: true,
               jobId: true,
+              scheduledEnd: true,
+              scheduledStart: true,
             },
             orderBy: { completedAt: 'desc' },
           })
@@ -968,6 +983,7 @@ export class JobsService {
               },
               assignedUserId: true,
               jobId: true,
+              scheduledEnd: true,
               scheduledStart: true,
             },
             orderBy: { scheduledStart: 'asc' },
@@ -989,38 +1005,67 @@ export class JobsService {
         );
       }
 
+      const job = jobs.find((record) => record.id === jobId);
+      if (!job) continue;
       if (technicians.size === 0) {
-        labels.set(jobId, 'No technician recorded');
+        displays.set(jobId, {
+          scheduledEnd: job.scheduledEnd,
+          scheduledStart: job.scheduledStart,
+          technicianDisplayLabel: 'No technician recorded',
+        });
       } else if (technicians.size === 1) {
-        labels.set(jobId, `Completed by ${[...technicians.values()][0]}`);
+        displays.set(jobId, {
+          scheduledEnd: job.scheduledEnd,
+          scheduledStart: job.scheduledStart,
+          technicianDisplayLabel: `Completed by ${[...technicians.values()][0]}`,
+        });
       } else {
-        labels.set(jobId, 'Completed by multiple technicians');
+        displays.set(jobId, {
+          scheduledEnd: job.scheduledEnd,
+          scheduledStart: job.scheduledStart,
+          technicianDisplayLabel: 'Completed by multiple technicians',
+        });
       }
     }
 
     for (const job of jobs) {
-      if (labels.has(job.id)) continue;
-      const nextAppointment = actionableAppointments.find(
-        (appointment) => appointment.jobId === job.id,
+      if (displays.has(job.id)) continue;
+      const nextAppointment = this.nextJobListAppointment(
+        actionableAppointments.filter(
+          (appointment) => appointment.jobId === job.id,
+        ),
       );
       if (nextAppointment) {
-        labels.set(
-          job.id,
-          nextAppointment.assignedUser
+        displays.set(job.id, {
+          scheduledEnd: nextAppointment.scheduledEnd,
+          scheduledStart: nextAppointment.scheduledStart,
+          technicianDisplayLabel: nextAppointment.assignedUser
             ? `${nextAppointment.assignedUser.firstName} ${nextAppointment.assignedUser.lastName}`
             : 'Unassigned',
-        );
+        });
         continue;
       }
-      labels.set(
-        job.id,
-        job.assignedTo
+      displays.set(job.id, {
+        scheduledEnd: job.scheduledEnd,
+        scheduledStart: job.scheduledStart,
+        technicianDisplayLabel: job.assignedTo
           ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
           : 'Unassigned',
-      );
+      });
     }
 
-    return labels;
+    return displays;
+  }
+
+  private nextJobListAppointment(
+    appointments: JobTechnicianAppointmentSummary[],
+  ) {
+    const now = new Date();
+    return (
+      appointments.find((appointment) => appointment.scheduledStart >= now) ??
+      appointments[0] ??
+      null
+    );
   }
 
   private async assertCustomer(businessId: string, customerId: string) {
@@ -1197,7 +1242,7 @@ export class JobsService {
     } satisfies Prisma.AppointmentInclude;
   }
 
-  private toJob(job: JobWithRelations, technicianDisplayLabel?: string): Job {
+  private toJob(job: JobWithRelations, listDisplay?: JobListDisplay): Job {
     return {
       id: job.id,
       businessId: job.businessId,
@@ -1209,8 +1254,13 @@ export class JobsService {
       tradeType: job.tradeType,
       status: job.status,
       priority: job.priority,
-      scheduledStart: job.scheduledStart.toISOString(),
-      scheduledEnd: job.scheduledEnd?.toISOString() ?? null,
+      scheduledStart: (
+        listDisplay?.scheduledStart ?? job.scheduledStart
+      ).toISOString(),
+      scheduledEnd:
+        listDisplay?.scheduledEnd?.toISOString() ??
+        job.scheduledEnd?.toISOString() ??
+        null,
       estimatedDurationMinutes: job.estimatedDurationMinutes,
       actualStart: job.actualStart?.toISOString() ?? null,
       actualEnd: job.actualEnd?.toISOString() ?? null,
@@ -1237,7 +1287,7 @@ export class JobsService {
       customer: job.customer,
       assignedTo: job.assignedTo,
       technicianDisplayLabel:
-        technicianDisplayLabel ??
+        listDisplay?.technicianDisplayLabel ??
         (job.assignedTo
           ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
           : 'Unassigned'),

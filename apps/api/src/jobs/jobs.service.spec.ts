@@ -299,6 +299,7 @@ describe('JobsService', () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     consoleInfoSpy.mockRestore();
     consoleWarnSpy.mockRestore();
     jest.clearAllMocks();
@@ -454,6 +455,147 @@ describe('JobsService', () => {
     const result = await service.findAll(owner, {});
 
     expect(result.records[0]?.technicianDisplayLabel).toBe('Ram G');
+  });
+
+  it('uses the active appointment schedule on the Jobs list instead of the stale job schedule', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({
+        assignedTo: null,
+        assignedToUserId: null,
+        scheduledEnd: new Date('2026-09-17T02:00:00.000Z'),
+        scheduledStart: new Date('2026-09-17T01:00:00.000Z'),
+      }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        assignedUser: {
+          email: 'ram@example.com',
+          firstName: 'Ram',
+          id: 'tech-1',
+          lastName: 'G',
+        },
+        assignedUserId: 'tech-1',
+        completedAt: null,
+        scheduledEnd: new Date('2026-09-19T17:00:00.000Z'),
+        scheduledStart: new Date('2026-09-19T16:00:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.scheduledStart).toBe('2026-09-19T16:00:00.000Z');
+    expect(result.records[0]?.scheduledEnd).toBe('2026-09-19T17:00:00.000Z');
+    expect(result.records[0]?.technicianDisplayLabel).toBe('Ram G');
+  });
+
+  it('reflects a rescheduled appointment date on the Jobs list', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({
+        scheduledEnd: new Date('2026-09-17T02:00:00.000Z'),
+        scheduledStart: new Date('2026-09-17T01:00:00.000Z'),
+      }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        completedAt: null,
+        scheduledEnd: new Date('2026-09-19T05:00:00.000Z'),
+        scheduledStart: new Date('2026-09-19T04:00:00.000Z'),
+        status: 'SCHEDULED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.scheduledStart).toBe('2026-09-19T04:00:00.000Z');
+    expect(result.records[0]?.scheduledStart).not.toBe(
+      '2026-09-17T01:00:00.000Z',
+    );
+  });
+
+  it('uses the nearest upcoming active appointment when a job has several appointments', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-16T00:00:00.000Z'));
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        completedAt: null,
+        id: 'stale-active-appointment',
+        scheduledEnd: new Date('2026-09-15T03:00:00.000Z'),
+        scheduledStart: new Date('2026-09-15T02:00:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+      appointment({
+        completedAt: null,
+        id: 'nearest-upcoming-appointment',
+        scheduledEnd: new Date('2026-09-19T05:00:00.000Z'),
+        scheduledStart: new Date('2026-09-19T04:00:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+      appointment({
+        completedAt: null,
+        id: 'later-upcoming-appointment',
+        scheduledEnd: new Date('2026-09-20T17:00:00.000Z'),
+        scheduledStart: new Date('2026-09-20T16:00:00.000Z'),
+        status: 'SCHEDULED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.scheduledStart).toBe('2026-09-19T04:00:00.000Z');
+  });
+
+  it('queries only active appointment statuses for Jobs list schedule display', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        completedAt: null,
+        scheduledEnd: new Date('2026-09-19T05:00:00.000Z'),
+        scheduledStart: new Date('2026-09-19T04:00:00.000Z'),
+        status: 'SCHEDULED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    const appointmentFindManyCalls = prisma.appointment.findMany.mock
+      .calls as Array<[{ where: { status: { in: string[] } } }]>;
+    const activeStatuses =
+      appointmentFindManyCalls[0]?.[0].where.status.in ?? [];
+    expect(activeStatuses).toContain('SCHEDULED');
+    expect(activeStatuses).toContain('CONFIRMED');
+    expect(activeStatuses).not.toContain('CANCELLED');
+    expect(result.records[0]?.scheduledStart).toBe('2026-09-19T04:00:00.000Z');
+  });
+
+  it('uses future active appointments instead of historical completed appointments for active jobs', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        completedAt: null,
+        scheduledEnd: new Date('2026-09-19T05:00:00.000Z'),
+        scheduledStart: new Date('2026-09-19T04:00:00.000Z'),
+        status: 'CONFIRMED',
+      }),
+    ]);
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.scheduledStart).toBe('2026-09-19T04:00:00.000Z');
+    expect(result.records[0]?.scheduledStart).not.toBe(
+      '2026-07-14T09:00:00.000Z',
+    );
+  });
+
+  it('falls back to the job schedule when no active appointments exist', async () => {
+    const { service } = createService();
+
+    const result = await service.findAll(owner, {});
+
+    expect(result.records[0]?.scheduledStart).toBe('2026-07-14T09:00:00.000Z');
+    expect(result.records[0]?.scheduledEnd).toBe('2026-07-14T11:00:00.000Z');
   });
 
   it('shows unassigned for active jobs with an unassigned upcoming appointment', async () => {
