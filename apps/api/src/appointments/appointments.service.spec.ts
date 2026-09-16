@@ -807,6 +807,34 @@ describe('AppointmentsService', () => {
     );
   });
 
+  it('does not reject recommendations because of an unrelated previous-day normal shift', async () => {
+    const { prisma, service } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '15:00',
+        shiftDate: '2026-09-19',
+        startTime: '09:00',
+      }),
+    ]);
+    prisma.appointment.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const recommendation = await service.recommend(owner, {
+      jobId: 'job-1',
+      scheduledEnd: '2026-09-19T17:00:00.000Z',
+      scheduledStart: '2026-09-19T16:00:00.000Z',
+    });
+
+    expect(recommendation.recommendedTechnicianId).toBe('tech-1');
+    expect(recommendation.reason).toContain('is available');
+  });
+
   it('can recommend an owner as the field assignee', async () => {
     const { prisma, service } = createService();
     prisma.businessMember.findMany.mockResolvedValueOnce([
@@ -1148,6 +1176,139 @@ describe('AppointmentsService', () => {
     });
 
     expect(availability.hasConflict).toBe(false);
+  });
+
+  it('allows appointments inside a same-day technician shift', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '18:00',
+      businessStartTime: '07:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '15:00',
+        shiftDate: '2026-09-20',
+        startTime: '09:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-20T01:00:00.000Z',
+      scheduledStart: '2026-09-20T00:00:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(false);
+  });
+
+  it('marks same-day appointments outside the technician shift as outside shift', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '18:00',
+      businessStartTime: '07:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '15:00',
+        shiftDate: '2026-09-20',
+        startTime: '09:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-20T07:00:00.000Z',
+      scheduledStart: '2026-09-20T06:00:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.reason).toContain('outside their scheduled shift');
+  });
+
+  it('ignores a previous-day normal shift for an early-morning next-day appointment', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '15:00',
+        shiftDate: '2026-09-19',
+        startTime: '09:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T17:00:00.000Z',
+      scheduledStart: '2026-09-19T16:00:00.000Z',
+    });
+
+    expect(availability).toMatchObject({
+      hasConflict: false,
+      reason: 'Technician is available for this appointment.',
+    });
+  });
+
+  it('ignores previous-day overnight shifts that end before the appointment starts', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '01:00',
+        shiftDate: '2026-09-19',
+        startTime: '20:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T17:00:00.000Z',
+      scheduledStart: '2026-09-19T16:00:00.000Z',
+    });
+
+    expect(availability).toMatchObject({
+      hasConflict: false,
+      reason: 'Technician is available for this appointment.',
+    });
+  });
+
+  it('marks appointments crossing beyond an overnight shift end as outside shift', async () => {
+    const { service, prisma } = createService();
+    prisma.business.findUnique.mockResolvedValue({
+      businessEndTime: '06:00',
+      businessStartTime: '20:00',
+      timezone: 'Australia/Melbourne',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+    prisma.memberShift.findMany.mockResolvedValueOnce([
+      memberShift({
+        endTime: '03:00',
+        shiftDate: '2026-09-19',
+        startTime: '20:00',
+      }),
+    ]);
+
+    const availability = await service.availability(owner, {
+      assignedUserId: 'tech-1',
+      scheduledEnd: '2026-09-19T17:30:00.000Z',
+      scheduledStart: '2026-09-19T16:30:00.000Z',
+    });
+
+    expect(availability.hasConflict).toBe(true);
+    expect(availability.reason).toContain('outside their scheduled shift');
   });
 
   it('hard-blocks an overnight appointment that touches next-day leave', async () => {

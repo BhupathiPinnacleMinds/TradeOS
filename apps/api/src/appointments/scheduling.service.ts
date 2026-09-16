@@ -172,19 +172,25 @@ export class SchedulingService {
         });
       }
 
+      const relevantShifts = this.relevantShiftsForAppointment(
+        input.scheduledStart,
+        input.scheduledEnd,
+        timezone,
+        shifts,
+      );
       if (
-        shifts.length > 0 &&
+        relevantShifts.length > 0 &&
         !this.appointmentFitsInsideShift(
           input.scheduledStart,
           input.scheduledEnd,
           timezone,
-          shifts,
+          relevantShifts,
         )
       ) {
         reasons.push({
           canOverride: true,
           code: 'OUTSIDE_SHIFT',
-          message: `${technicianName} is outside their scheduled shift (${shifts
+          message: `${technicianName} is outside their scheduled shift (${relevantShifts
             .map((shift) => formatMemberShiftTimeRange(shift))
             .join(', ')}).`,
         });
@@ -434,6 +440,41 @@ export class SchedulingService {
         interval,
       ),
     );
+  }
+
+  private relevantShiftsForAppointment(
+    start: Date,
+    end: Date,
+    timezone: string,
+    shifts: Array<{
+      endTime: string;
+      shiftDate: string;
+      startTime: string;
+    }>,
+  ) {
+    const appointmentDates = this.businessDatesTouched(start, end, timezone);
+    const appointmentDateSet = new Set(appointmentDates);
+    const appointmentInterval = this.localAppointmentInterval(
+      start,
+      end,
+      timezone,
+    );
+
+    return shifts.filter((shift) => {
+      if (appointmentDateSet.has(shift.shiftDate)) return true;
+
+      const shiftInterval = createShiftInterval({
+        endTime: shift.endTime,
+        shiftDate: shift.shiftDate,
+        startTime: shift.startTime,
+      });
+      const isOvernight = shift.endTime <= shift.startTime;
+      return (
+        isOvernight &&
+        shiftInterval.start < appointmentInterval.end &&
+        shiftInterval.end > appointmentInterval.start
+      );
+    });
   }
 
   private windowContainsInterval(
