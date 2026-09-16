@@ -33,6 +33,7 @@ import {
   roleCanConfirmToriAction,
   roleCanUseTori,
   zonedTimeToUtc,
+  type AppointmentAvailabilityResponse,
   type AppointmentPayload,
   type AustralianState,
   type AuthenticatedUser,
@@ -3025,7 +3026,7 @@ export class AiService {
         });
         if (!availability.hasConflict) {
           options.push({
-            reason: `${this.userLabel(technician)} has no overlapping appointment in the requested window.`,
+            reason: `${this.userLabel(technician)} is available under the current business hours, shift, leave and appointment-conflict rules.`,
             scheduledEnd,
             scheduledStart,
             technicianId: technician.id,
@@ -3819,18 +3820,15 @@ export class AiService {
           scheduledStart: targetTime.toISOString(),
         })
       : null;
-    if (availability?.hasConflict && availability.canOverride) {
-      appointmentPayload.allowConflictOverride = true;
+    if (availability?.hasConflict) {
+      return {
+        content: this.toriAvailabilityBlockerMessage(
+          "I can't prepare that reschedule",
+          availability,
+        ),
+        context,
+      };
     }
-    const hasBlockingConflict = Boolean(
-      availability?.hasConflict && !availability.canOverride,
-    );
-    const warnings =
-      availability?.hasConflict && hasBlockingConflict
-        ? [availability.reason]
-        : availability?.hasConflict
-          ? [`Conflict warning: ${availability.reason}`]
-          : [];
     const draft = this.actionDraft({
       description: `Move ${appointment.job.customer.displayName}'s appointment to ${formatBusinessDateTime(targetTime, business.timezone)}.`,
       entityId: appointment.id,
@@ -3852,8 +3850,8 @@ export class AiService {
         },
       ],
       title: 'Reschedule appointment',
-      validationState: hasBlockingConflict ? 'CONFLICT' : 'READY',
-      warnings,
+      validationState: 'READY',
+      warnings: [],
     });
     return {
       actionDraft: draft,
@@ -4362,6 +4360,23 @@ export class AiService {
     );
     const duration = this.parseDurationMinutes(text) ?? 60;
     const end = new Date(targetTime.getTime() + duration * 60_000);
+    if (technician) {
+      const availability = await this.appointments.availability(currentUser, {
+        assignedUserId: technician.id,
+        scheduledEnd: end.toISOString(),
+        scheduledStart: targetTime.toISOString(),
+      });
+      if (availability.hasConflict) {
+        return {
+          content: this.toriAvailabilityBlockerMessage(
+            `I can't prepare that appointment with ${this.userLabel(
+              technician,
+            )}`,
+            availability,
+          ),
+        };
+      }
+    }
     const location = this.appointmentLocationFromJob(job);
     if (!location) {
       return {
@@ -5865,7 +5880,7 @@ export class AiService {
         );
         return {
           ...technician,
-          availabilityReason: availability.reason,
+          availabilityReason: this.availabilityReasonText(availability),
           conflicts: availability.conflicts,
           isAvailable: !availability.hasConflict,
           scheduledMinutes,
@@ -7078,6 +7093,29 @@ export class AiService {
       user.email ||
       'Unassigned'
     );
+  }
+
+  private availabilityReasonText(
+    availability: Pick<AppointmentAvailabilityResponse, 'reason' | 'reasons'>,
+  ) {
+    const reasons = availability.reasons?.length
+      ? availability.reasons.map((reason) => reason.message)
+      : [availability.reason];
+    return reasons.filter(Boolean).join(' ');
+  }
+
+  private toriAvailabilityBlockerMessage(
+    prefix: string,
+    availability: Pick<
+      AppointmentAvailabilityResponse,
+      'canOverride' | 'reason' | 'reasons'
+    >,
+  ) {
+    const reason = this.availabilityReasonText(availability);
+    const overrideGuidance = availability.canOverride
+      ? 'This may be overrideable by an owner/admin from the appointment form, but Tori will not override availability warnings automatically.'
+      : 'Please choose another technician or time.';
+    return `${prefix}: ${reason} ${overrideGuidance}`;
   }
 
   private suggestedPrompts(role: BusinessRole) {

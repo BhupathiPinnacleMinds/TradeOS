@@ -443,17 +443,18 @@ model.
 
 ## Scheduling architecture
 
-Tori may use appointment APIs in future to answer scheduling questions such as:
+Tori uses the existing appointment and scheduling services to answer scheduling
+questions such as:
 
 - Show today’s appointments.
 - Move John’s appointment.
 - Who is available tomorrow?
 - Schedule this job.
 
-The current implementation uses tenant-scoped appointment, availability and
-calendar APIs plus Tori Action Drafts. Tori must still present drafts or
-recommendations and wait for explicit user confirmation before creating, moving,
-cancelling, notifying or messaging anyone about an appointment.
+The implementation uses tenant-scoped appointment, availability and calendar
+APIs plus Tori Action Drafts. Tori must still present drafts or recommendations
+and wait for explicit user confirmation before creating, moving, cancelling,
+notifying or messaging anyone about an appointment.
 
 ### Smart technician assignment Phase 1
 
@@ -464,18 +465,30 @@ Owners, admins and office staff can manage scheduling, but they are not treated
 as field technicians by the recommender.
 
 Recommendations are deterministic and explainable: Tori reuses the appointment
-availability engine for the target appointment window, excludes conflicting
+availability engine for the target appointment window, excludes unavailable
 technicians from draft creation, ranks available technicians by lower
 business-day scheduled workload, then uses name/id ordering as a stable tie
-breaker. Named reassignment requests that conflict or mention an ineligible
-member return an explanation instead of an unsafe draft. Confirmation still
-routes through the appointment reassignment service, which re-checks tenant
-scope, role permissions, appointment freshness, assignee eligibility and
-availability.
+breaker. Named appointment/reassignment requests that hit availability blockers
+return an explanation instead of an unsafe draft. Confirmation still routes
+through the appointment creation, update or reassignment service, which
+re-checks tenant scope, role permissions, appointment freshness, assignee
+eligibility and availability.
 
-Phase 1 uses standard business working hours and appointment overlaps. Per-
-technician working hours, skills, service areas, GPS distance and route
-optimisation remain future scheduling inputs.
+Availability reasons are sourced from the shared scheduling engine and may
+include:
+
+- `ON_LEAVE` — hard block; choose another technician or time.
+- `OUTSIDE_SHIFT` — availability warning; Tori does not override it
+  automatically.
+- `OUTSIDE_BUSINESS_HOURS` — availability warning; Tori does not override it
+  automatically.
+- `APPOINTMENT_CONFLICT` — overlapping appointment warning; Tori does not
+  override it automatically.
+
+Tori also understands overnight shifts and the existing no-shift legacy rule:
+when no active shifts exist for a technician, shift validation does not block
+that technician by itself. Per-technician skills, service areas, GPS distance
+and route optimisation remain future scheduling inputs.
 
 ## Future AI architecture
 

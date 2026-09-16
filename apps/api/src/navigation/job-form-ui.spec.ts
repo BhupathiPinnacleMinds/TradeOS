@@ -169,19 +169,57 @@ describe('Job form mobile UI contracts', () => {
     expect(appointmentForm).not.toContain('assignedToUserId: assignedUserId');
   });
 
+  it('reuses quick-created appointment customer and job ids after a scheduling failure retry', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain('type RetainedQuickCreateEntities');
+    expect(appointmentForm).toContain('retainedQuickCreateRef');
+    expect(appointmentForm).toContain('quickCustomerFingerprint');
+    expect(appointmentForm).toContain('quickJobFingerprint');
+    expect(appointmentForm).toContain(
+      'retainedCustomer?.fingerprint === customerFingerprint',
+    );
+    expect(appointmentForm).toContain('finalCustomerId = retainedCustomer.id');
+    expect(appointmentForm).toContain(
+      'retainedQuickCreateRef.current.customer = {',
+    );
+    expect(appointmentForm).toContain(
+      'retainedJob?.customerId === finalCustomerId',
+    );
+    expect(appointmentForm).toContain('finalJobId = retainedJob.id');
+    expect(appointmentForm).toContain('retainedQuickCreateRef.current.job = {');
+    expect(appointmentForm).toMatch(
+      /const response = await createAppointmentRequest\(token, payload\);/,
+    );
+  });
+
+  it('guards New Appointment save against rapid duplicate taps before state updates', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain(
+      'if (!token || isSavingRef.current) return;',
+    );
+    expect(appointmentForm).toContain('isSavingRef.current = true;');
+    expect(appointmentForm).toMatch(
+      /finally \{[\s\S]*isSavingRef\.current = false;[\s\S]*setIsSaving\(false\);[\s\S]*\}/,
+    );
+  });
+
   it('shows context-aware scheduling failure feedback after partial appointment setup', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
     const apiClient = mobileSource('api/client.ts');
 
-    expect(appointmentForm).toContain('let createdCustomer = false');
-    expect(appointmentForm).toContain('let createdJob = false');
-    expect(appointmentForm).toContain('createdCustomer = true');
-    expect(appointmentForm).toContain('createdJob = true');
+    expect(appointmentForm).toContain('let createdCustomerForMessage = false');
+    expect(appointmentForm).toContain('let createdJobForMessage = false');
+    expect(appointmentForm).toContain('createdCustomerForMessage = true');
+    expect(appointmentForm).toContain('createdJobForMessage = true');
     expect(appointmentForm).toContain(
       'message: friendlyAppointmentCreateError(error, {',
     );
-    expect(appointmentForm).toContain('createdCustomer,');
-    expect(appointmentForm).toContain('createdJob,');
+    expect(appointmentForm).toContain(
+      'createdCustomer: createdCustomerForMessage',
+    );
+    expect(appointmentForm).toContain('createdJob: createdJobForMessage');
     expect(appointmentForm).toContain('usedExistingJob: !useQuickJob');
 
     expect(apiClient).toContain('Appointment not created.');

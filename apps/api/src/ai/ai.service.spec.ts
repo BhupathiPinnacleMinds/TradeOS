@@ -280,6 +280,92 @@ describe('AiService', () => {
     expect(appointments.update).not.toHaveBeenCalled();
   });
 
+  it('does not prepare a reschedule draft when authoritative availability reports an overrideable conflict', async () => {
+    const { appointments, service: ai } = service();
+    appointments.availability.mockResolvedValueOnce({
+      canOverride: true,
+      conflicts: [{ appointmentNumber: 'APT-2026-000010' }],
+      hasConflict: true,
+      reason: 'Technician already has an overlapping appointment.',
+      reasons: [
+        {
+          canOverride: true,
+          code: 'APPOINTMENT_CONFLICT',
+          message: 'Technician already has an overlapping appointment.',
+        },
+      ],
+    });
+
+    const response = await ai.chat(owner, {
+      context: { appointmentId: 'appointment-1' },
+      message: "Move Mia's appointment tomorrow to 4pm",
+    });
+
+    expect(response.message.actionDraft).toBeUndefined();
+    expect(response.message.content).toContain(
+      "I can't prepare that reschedule",
+    );
+    expect(response.message.content).toContain(
+      'Tori will not override availability warnings automatically',
+    );
+    expect(appointments.update).not.toHaveBeenCalled();
+  });
+
+  it('does not prepare a named-technician appointment draft when leave blocks availability', async () => {
+    const prisma = createPrisma();
+    prisma.customer.findFirst.mockResolvedValue({
+      displayName: 'RamaReddy',
+      id: 'customer-1',
+      sites: [],
+    });
+    prisma.job.findFirst.mockResolvedValue({
+      addressLine1: '27 Coffey Street',
+      addressLine2: null,
+      customer: { displayName: 'RamaReddy', sites: [] },
+      customerId: 'customer-1',
+      id: 'job-1',
+      jobNumber: 'JOB-2026-000028',
+      postcode: '3029',
+      state: 'VIC',
+      suburb: 'Tarneit',
+      title: 'Fix the leak',
+    });
+    const { appointments, service: ai } = service(prisma);
+    appointments.availability.mockResolvedValueOnce({
+      canOverride: false,
+      conflicts: [],
+      hasConflict: true,
+      reason: 'Mia Nguyen is on leave on 19/08/2026.',
+      reasons: [
+        {
+          canOverride: false,
+          code: 'ON_LEAVE',
+          message: 'Mia Nguyen is on leave on 19/08/2026.',
+        },
+      ],
+    });
+
+    const response = await ai.chat(owner, {
+      context: {
+        customerId: 'customer-1',
+        customerName: 'RamaReddy',
+        jobId: 'job-1',
+        jobNumber: 'JOB-2026-000028',
+        jobTitle: 'Fix the leak',
+      },
+      message: 'Book appointment tomorrow at 10am with Mia',
+    });
+
+    expect(response.message.actionDraft).toBeUndefined();
+    expect(response.message.content).toContain(
+      "I can't prepare that appointment with Mia Nguyen",
+    );
+    expect(response.message.content).toContain(
+      'Mia Nguyen is on leave on 19/08/2026.',
+    );
+    expect(appointments.create).not.toHaveBeenCalled();
+  });
+
   it('routes create customer requests to a customer action and asks for missing fields', async () => {
     const { customers, service: ai } = service();
 

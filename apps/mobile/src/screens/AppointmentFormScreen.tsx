@@ -73,6 +73,18 @@ type ResolvedLocation = {
   accessInstructions: string;
 };
 
+type RetainedQuickCreateEntities = {
+  customer?: {
+    id: string;
+    fingerprint: string;
+  };
+  job?: {
+    customerId: string;
+    fingerprint: string;
+    id: string;
+  };
+};
+
 const appointmentTypes: AppointmentType[] = [
   'INSPECTION',
   'INSTALLATION',
@@ -323,6 +335,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [hasSaved, setHasSaved] = useState(false);
   const [isFormDirty, setIsFormDirty] = useState(false);
   const cleanSnapshotRef = useRef<string | null>(null);
+  const retainedQuickCreateRef = useRef<RetainedQuickCreateEntities>({});
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const hasSavedRef = useRef(false);
@@ -836,8 +849,37 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     });
   }
 
+  function quickCustomerFingerprint(location: ResolvedLocation) {
+    return JSON.stringify({
+      addressLine1: location.addressLine1.trim(),
+      addressLine2: location.addressLine2.trim(),
+      email: quickCustomerEmail.trim().toLowerCase(),
+      name: quickCustomerName.trim(),
+      phone: quickCustomerPhone.trim(),
+      postcode: location.postcode.trim(),
+      state: location.state,
+      suburb: location.suburb.trim(),
+    });
+  }
+
+  function quickJobFingerprint(
+    customerIdForJob: string,
+    location: ResolvedLocation,
+  ) {
+    return JSON.stringify({
+      accessInstructions: location.accessInstructions.trim(),
+      addressLine1: location.addressLine1.trim(),
+      addressLine2: location.addressLine2.trim(),
+      customerId: customerIdForJob,
+      postcode: location.postcode.trim(),
+      state: location.state,
+      suburb: location.suburb.trim(),
+      title: quickJobTitle.trim(),
+    });
+  }
+
   async function save() {
-    if (!token || isSaving) return;
+    if (!token || isSavingRef.current) return;
     if (!validateLocation()) return;
     if (!selectedCustomerId && !useQuickCustomer) {
       showToast({ message: 'Choose or create a customer.', tone: 'error' });
@@ -871,55 +913,88 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       return;
     }
 
+    isSavingRef.current = true;
     setIsSaving(true);
-    let createdCustomer = false;
-    let createdJob = false;
+    let createdCustomerForMessage = false;
+    let createdJobForMessage = false;
     try {
       let finalCustomerId = selectedCustomerId;
       if (useQuickCustomer) {
-        const customerPayload: CustomerPayload = {
-          addressLine1: resolvedLocation.addressLine1,
-          addressLine2: resolvedLocation.addressLine2 || undefined,
-          allowDuplicate: true,
-          contactPreference: 'ANY',
-          customerType: 'RESIDENTIAL',
-          email: quickCustomerEmail.trim().toLowerCase() || undefined,
-          firstName: quickCustomerName.trim(),
-          phone: quickCustomerPhone.trim(),
-          postcode: resolvedLocation.postcode,
-          state: resolvedLocation.state as AustralianState,
-          suburb: resolvedLocation.suburb,
-        };
-        const customerResponse = await createCustomerRequest(
-          token,
-          customerPayload,
-        );
-        finalCustomerId = customerResponse.customer.id;
-        createdCustomer = true;
+        const customerFingerprint = quickCustomerFingerprint(resolvedLocation);
+        const retainedCustomer = retainedQuickCreateRef.current.customer;
+        if (retainedCustomer?.fingerprint === customerFingerprint) {
+          finalCustomerId = retainedCustomer.id;
+          createdCustomerForMessage = true;
+        } else {
+          const customerPayload: CustomerPayload = {
+            addressLine1: resolvedLocation.addressLine1,
+            addressLine2: resolvedLocation.addressLine2 || undefined,
+            allowDuplicate: true,
+            contactPreference: 'ANY',
+            customerType: 'RESIDENTIAL',
+            email: quickCustomerEmail.trim().toLowerCase() || undefined,
+            firstName: quickCustomerName.trim(),
+            phone: quickCustomerPhone.trim(),
+            postcode: resolvedLocation.postcode,
+            state: resolvedLocation.state as AustralianState,
+            suburb: resolvedLocation.suburb,
+          };
+          const customerResponse = await createCustomerRequest(
+            token,
+            customerPayload,
+          );
+          finalCustomerId = customerResponse.customer.id;
+          retainedQuickCreateRef.current.customer = {
+            fingerprint: customerFingerprint,
+            id: finalCustomerId,
+          };
+          retainedQuickCreateRef.current.job = undefined;
+          setSelectedCustomerId(finalCustomerId);
+          createdCustomerForMessage = true;
+        }
       }
 
       let finalJobId = selectedJobId;
       if (useQuickJob) {
-        const jobPayload: JobPayload = {
-          accessInstructions:
-            resolvedLocation.accessInstructions.trim() || undefined,
-          addressLine1: resolvedLocation.addressLine1,
-          addressLine2: resolvedLocation.addressLine2 || undefined,
-          assignedToUserId: null,
-          customerId: finalCustomerId,
-          estimatedDurationMinutes: durationMinutes,
-          postcode: resolvedLocation.postcode,
-          priority: 'NORMAL',
-          scheduledEnd: addMinutes(startAt, durationMinutes).toISOString(),
-          scheduledStart: startAt.toISOString(),
-          state: resolvedLocation.state as AustralianState,
-          status: 'SCHEDULED',
-          suburb: resolvedLocation.suburb,
-          title: quickJobTitle.trim(),
-        };
-        const jobResponse = await createJobRequest(token, jobPayload);
-        finalJobId = jobResponse.job.id;
-        createdJob = true;
+        const jobFingerprint = quickJobFingerprint(
+          finalCustomerId,
+          resolvedLocation,
+        );
+        const retainedJob = retainedQuickCreateRef.current.job;
+        if (
+          retainedJob?.customerId === finalCustomerId &&
+          retainedJob.fingerprint === jobFingerprint
+        ) {
+          finalJobId = retainedJob.id;
+          createdJobForMessage = true;
+        } else {
+          const jobPayload: JobPayload = {
+            accessInstructions:
+              resolvedLocation.accessInstructions.trim() || undefined,
+            addressLine1: resolvedLocation.addressLine1,
+            addressLine2: resolvedLocation.addressLine2 || undefined,
+            assignedToUserId: null,
+            customerId: finalCustomerId,
+            estimatedDurationMinutes: durationMinutes,
+            postcode: resolvedLocation.postcode,
+            priority: 'NORMAL',
+            scheduledEnd: addMinutes(startAt, durationMinutes).toISOString(),
+            scheduledStart: startAt.toISOString(),
+            state: resolvedLocation.state as AustralianState,
+            status: 'SCHEDULED',
+            suburb: resolvedLocation.suburb,
+            title: quickJobTitle.trim(),
+          };
+          const jobResponse = await createJobRequest(token, jobPayload);
+          finalJobId = jobResponse.job.id;
+          retainedQuickCreateRef.current.job = {
+            customerId: finalCustomerId,
+            fingerprint: jobFingerprint,
+            id: finalJobId,
+          };
+          setSelectedJobId(finalJobId);
+          createdJobForMessage = true;
+        }
       }
 
       const payload: AppointmentPayload = {
@@ -957,8 +1032,8 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     } catch (error) {
       showToast({
         message: friendlyAppointmentCreateError(error, {
-          createdCustomer,
-          createdJob,
+          createdCustomer: createdCustomerForMessage,
+          createdJob: createdJobForMessage,
           scheduledEnd: addMinutes(startAt, durationMinutes),
           scheduledStart: startAt,
           technicianName: selectedTechnician?.name,
@@ -968,6 +1043,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         tone: 'error',
       });
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
   }
