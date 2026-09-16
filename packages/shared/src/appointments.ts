@@ -735,14 +735,16 @@ export interface AppointmentReassignmentOptionsResponse {
   recommendation: AppointmentReassignmentRecommendation;
 }
 
-export const APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES: BusinessRole[] = [
+export const FIELD_ASSIGNABLE_APPOINTMENT_ROLES: BusinessRole[] = [
+  'OWNER',
   'TECHNICIAN',
 ];
 
+export const APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES =
+  FIELD_ASSIGNABLE_APPOINTMENT_ROLES;
+
 export function roleCanBeAssignedAppointments(role: BusinessRole | undefined) {
-  return Boolean(
-    role && APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES.includes(role),
-  );
+  return Boolean(role && FIELD_ASSIGNABLE_APPOINTMENT_ROLES.includes(role));
 }
 
 export type DispatcherTechnicianStatus =

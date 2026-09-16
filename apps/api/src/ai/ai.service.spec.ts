@@ -5742,9 +5742,20 @@ describe('AiService', () => {
     ).toBe('Ranjee');
   });
 
-  it('answers technician availability with active Technician role members only', async () => {
+  it('answers technician availability with active Owner and Technician role members only', async () => {
     const prisma = createPrisma();
     const members = [
+      {
+        role: 'OWNER',
+        status: 'ACTIVE',
+        user: {
+          email: 'owner@demo-tradieos.com',
+          firstName: 'Bhupathi',
+          id: 'owner-1',
+          lastName: 'Owner',
+        },
+        userId: 'owner-1',
+      },
       {
         role: 'TECHNICIAN',
         status: 'ACTIVE',
@@ -5798,6 +5809,7 @@ describe('AiService', () => {
     });
 
     expect(response.message.content).toContain('Available technicians');
+    expect(response.message.content).toContain('Bhupathi Owner');
     expect(response.message.content).toContain('Mia Nguyen');
     expect(response.message.content).toContain('Raj Patel');
     expect(response.message.content).not.toContain('Ava Admin');

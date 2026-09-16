@@ -6,9 +6,9 @@ import type {
   AppointmentRecommendationResponse,
 } from '@tradieos/shared';
 import {
-  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
   addDaysToDateOnly,
   createShiftInterval,
+  FIELD_ASSIGNABLE_APPOINTMENT_ROLES,
   formatDateOnlyForDisplay,
   formatMemberShiftTimeRange,
   getBusinessDateParts,
@@ -114,7 +114,7 @@ export class SchedulingService {
       },
       where: {
         businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { id: input.assignedUserId, isActive: true },
         userId: input.assignedUserId,
@@ -249,7 +249,7 @@ export class SchedulingService {
       orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
       where: {
         businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { isActive: true },
         userId: { not: null },

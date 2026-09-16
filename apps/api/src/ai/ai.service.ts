@@ -7,7 +7,6 @@ import {
 import { randomUUID } from 'node:crypto';
 import {
   ACCOUNTS_RECEIVABLE_VIEW_ROLES,
-  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
   APPOINTMENT_VIEW_ROLES,
   APPOINTMENT_WRITE_ROLES,
   COMMUNICATION_APPOINTMENT_SEND_ROLES,
@@ -17,6 +16,7 @@ import {
   formatBusinessDateTime,
   formatBusinessTime,
   formatBusinessTimeRange,
+  FIELD_ASSIGNABLE_APPOINTMENT_ROLES,
   getBusinessDateParts,
   getBusinessDayRangeUtc,
   INVOICE_CREATE_ROLES,
@@ -2994,7 +2994,7 @@ export class AiService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId: currentUser.businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { isActive: true },
         userId: { not: null },
@@ -3894,7 +3894,7 @@ export class AiService {
       : await this.findAnyMemberMention(currentUser.businessId, lower);
     if (namedIneligible) {
       return {
-        content: `${this.userLabel(namedIneligible.user)} cannot be assigned as the field technician for this appointment. In Phase 1, Tori can only assign active Technician role members.`,
+        content: `${this.userLabel(namedIneligible.user)} cannot be assigned as the field technician for this appointment. Tori can only assign active Owner or Technician role members.`,
       };
     }
     const requestedBest = this.looksLikeBestTechnicianAssignment(lower);
@@ -5806,7 +5806,7 @@ export class AiService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId: currentUser.businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { isActive: true },
         userId: { not: null },
@@ -5903,7 +5903,7 @@ export class AiService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { isActive: true },
         userId: { not: null },

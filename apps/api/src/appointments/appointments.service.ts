@@ -16,12 +16,12 @@ import type {
   MyDayResponse,
 } from '@tradieos/shared';
 import {
-  APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES,
   APPOINTMENT_CONFIRM_ROLES,
   APPOINTMENT_STATUS_UPDATE_ROLES,
   APPOINTMENT_VIEW_ROLES,
   APPOINTMENT_WRITE_ROLES,
   AUSTRALIAN_STATES,
+  FIELD_ASSIGNABLE_APPOINTMENT_ROLES,
   getBusinessDayRangeUtc,
   getAllowedAppointmentTransitions,
   getBusinessDateParts,
@@ -81,7 +81,7 @@ const DISPATCHER_MANAGE_ROLES = [
   'SCHEDULER',
 ] as const;
 const BUSINESS_MY_DAY_ROLES = APPOINTMENT_WRITE_ROLES;
-const DISPATCHER_TECHNICIAN_ROLES = APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES;
+const DISPATCHER_TECHNICIAN_ROLES = FIELD_ASSIGNABLE_APPOINTMENT_ROLES;
 const WORKDAY_MINUTES = 8 * 60;
 const TRAVEL_PLACEHOLDER_MINUTES = 10;
 const APPOINTMENT_CREATION_CLOCK_SKEW_MS = 2 * 60 * 1000;
@@ -700,7 +700,7 @@ export class AppointmentsService {
     const members = await this.prisma.businessMember.findMany({
       where: {
         businessId: currentUser.businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         userId: { not: null },
       },
@@ -2173,7 +2173,7 @@ export class AppointmentsService {
     const member = await this.prisma.businessMember.findFirst({
       where: {
         businessId,
-        role: { in: [...APPOINTMENT_ASSIGNABLE_TECHNICIAN_ROLES] },
+        role: { in: [...FIELD_ASSIGNABLE_APPOINTMENT_ROLES] },
         status: 'ACTIVE',
         user: { id: assignedUserId, isActive: true },
         userId: assignedUserId,
@@ -2183,7 +2183,7 @@ export class AppointmentsService {
     if (!member) {
       throw this.domainError(
         'ASSIGNEE_NOT_FOUND',
-        'Assigned technician is not available in this business.',
+        'Assigned field worker is not available in this business.',
         HttpStatus.NOT_FOUND,
       );
     }
