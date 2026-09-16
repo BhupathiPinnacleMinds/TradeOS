@@ -121,7 +121,7 @@ export function JobsScreen() {
         <Text style={styles.eyebrow}>JOBS</Text>
         <Text style={styles.title}>Job Management</Text>
         <Text style={styles.subtitle}>
-          Schedule work, assign technicians and keep every job moving.
+          Track customer work, appointments and job progress.
         </Text>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -234,11 +234,26 @@ function JobCard({
         {[job.addressLine1, job.suburb, job.state].filter(Boolean).join(', ')}
       </Text>
       <Text style={styles.meta}>
-        {formatDateTime(job.scheduledStart, businessTimezone)}
+        {job.status === 'COMPLETED' || job.hasActionableAppointment
+          ? formatDateTime(job.scheduledStart, businessTimezone)
+          : 'No appointment scheduled'}
       </Text>
       <View style={styles.footerRow}>
-        <Text style={styles.status}>{label(job.status)}</Text>
-        <Text style={styles.meta}>{assignee}</Text>
+        <Text style={styles.status}>
+          {label(
+            job.hasActionableAppointment && job.status === 'NEW'
+              ? 'SCHEDULED'
+              : !job.hasActionableAppointment &&
+                  (job.status === 'SCHEDULED' || job.status === 'ON_THE_WAY')
+                ? 'NEW'
+                : job.status,
+          )}
+        </Text>
+        <Text style={styles.meta}>
+          {job.status === 'COMPLETED' || job.hasActionableAppointment
+            ? assignee
+            : 'Unassigned'}
+        </Text>
       </View>
     </Pressable>
   );

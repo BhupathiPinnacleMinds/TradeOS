@@ -51,6 +51,7 @@ import {
   customersRequest,
   friendlyAppointmentCreateError,
   jobDetailRequest,
+  jobsRequest,
   membersRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -716,22 +717,31 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     preferredSiteId?: string,
     shouldSelectFirstJob = false,
   ) {
-    const detail = await customerDetailRequest(authToken, nextCustomerId);
+    const [detail, customerJobs] = await Promise.all([
+      customerDetailRequest(authToken, nextCustomerId),
+      jobsRequest(authToken, {
+        customerId: nextCustomerId,
+        page: 1,
+        pageSize: 100,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+      }),
+    ]);
     if (!mounted) return;
     const activeSites = detail.customer.sites.filter(
       (site) => !site.isArchived,
     );
     setCustomers((current) => upsertCustomer(current, detail.customer));
     setSites(activeSites);
-    setJobs(detail.jobs);
+    setJobs(customerJobs.records);
     const nextSiteId = preferredSiteId
       ? (activeSites.find((site) => site.id === preferredSiteId)?.id ?? '')
       : '';
     setSelectedSiteId(nextSiteId);
     setLocationSource(nextSiteId ? 'CUSTOMER_SITE' : 'CUSTOMER_DEFAULT');
-    if (shouldSelectFirstJob && !jobId && detail.jobs[0]) {
-      setSelectedJobId(detail.jobs[0].id);
-      setQuickJobTitle(detail.jobs[0].title);
+    if (shouldSelectFirstJob && !jobId && customerJobs.records[0]) {
+      setSelectedJobId(customerJobs.records[0].id);
+      setQuickJobTitle(customerJobs.records[0].title);
       setUseQuickJob(false);
     }
   }
@@ -764,6 +774,26 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     setUseQuickJob(true);
     setLocationSource('CUSTOMER_DEFAULT');
     await loadCustomer(token, nextCustomerId);
+  }
+
+  function selectExistingJob(nextJobId: string) {
+    const job = jobs.find((candidate) => candidate.id === nextJobId);
+    if (!job || job.customerId !== selectedCustomerId) return;
+    setSelectedJobId(job.id);
+    setUseQuickJob(false);
+    setQuickJobTitle(job.title);
+    const jobLocation = getJobManualLocation(job);
+    if (jobLocation) {
+      setSelectedSiteId('');
+      setLocationSource('MANUAL');
+      setManualAddressLine1(jobLocation.addressLine1);
+      setManualAddressLine2(jobLocation.addressLine2);
+      setManualSuburb(jobLocation.suburb);
+      setManualState(jobLocation.state);
+      setManualPostcode(jobLocation.postcode);
+      setManualAccessInstructions(jobLocation.accessInstructions);
+      setSaveAddressAsSite(false);
+    }
   }
 
   function getResolvedLocation(): ResolvedLocation {
@@ -905,6 +935,14 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       showToast({ message: 'Choose or create a job.', tone: 'error' });
       return;
     }
+    if (
+      !useQuickJob &&
+      !jobId &&
+      (!selectedJob || selectedJob.customerId !== selectedCustomerId)
+    ) {
+      showToast({ message: 'Choose a job for this customer.', tone: 'error' });
+      return;
+    }
     if (startAt.getTime() < Date.now() - 2 * 60 * 1000) {
       showToast({
         message: 'Appointment start time must be in the future.',
@@ -975,13 +1013,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             addressLine2: resolvedLocation.addressLine2 || undefined,
             assignedToUserId: null,
             customerId: finalCustomerId,
-            estimatedDurationMinutes: durationMinutes,
             postcode: resolvedLocation.postcode,
             priority: 'NORMAL',
-            scheduledEnd: addMinutes(startAt, durationMinutes).toISOString(),
-            scheduledStart: startAt.toISOString(),
+            scheduledEnd: null,
+            scheduledStart: new Date().toISOString(),
             state: resolvedLocation.state as AustralianState,
-            status: 'SCHEDULED',
+            status: 'NEW',
             suburb: resolvedLocation.suburb,
             title: quickJobTitle.trim(),
           };
@@ -1268,6 +1305,24 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="3. Job">
+          {!isJobLinkedAppointment &&
+          selectedCustomerId &&
+          !useQuickCustomer ? (
+            <HorizontalPicker
+              options={[
+                { label: 'Create new job', value: 'create' },
+                { label: 'Select existing job', value: 'existing' },
+              ]}
+              selected={useQuickJob ? 'create' : 'existing'}
+              onSelect={(value) => {
+                setUseQuickJob(value === 'create');
+                if (value === 'create') {
+                  setSelectedJobId('');
+                  setQuickJobTitle('');
+                }
+              }}
+            />
+          ) : null}
           {isJobLinkedAppointment && selectedJob ? (
             <View style={styles.summaryBox}>
               <Text style={styles.label}>Job</Text>
@@ -1281,22 +1336,9 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                 {selectedJob.jobNumber} · {selectedJob.title}
               </Text>
               <Text style={styles.muted}>
-                Create a new job only if this appointment should not be linked
-                to the selected job.
+                {selectedJob.addressLine1}, {selectedJob.suburb} ·{' '}
+                {selectedJob.status.replaceAll('_', ' ')}
               </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setSelectedJobId('');
-                  setQuickJobTitle('');
-                  setUseQuickJob(true);
-                }}
-                style={styles.clearButton}
-              >
-                <Text style={styles.clearButtonText}>
-                  Create a different job
-                </Text>
-              </Pressable>
             </View>
           ) : null}
           {isJobLinkedAppointment ? null : useQuickJob ? (
@@ -1305,28 +1347,36 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               onChangeText={setQuickJobTitle}
               value={quickJobTitle}
             />
-          ) : (
-            <HorizontalPicker
-              options={jobs.map((job) => ({
-                label: `${job.jobNumber} · ${job.title}`,
-                value: job.id,
-              }))}
-              selected={selectedJobId}
-              onSelect={(value) => {
-                setSelectedJobId(value);
-                setQuickJobTitle(
-                  jobs.find((existingJob) => existingJob.id === value)?.title ??
-                    '',
-                );
-              }}
-            />
-          )}
-          {!isJobLinkedAppointment && !selectedJob && !useQuickJob ? (
-            <Toggle
-              active={useQuickJob}
-              label="Create job for this appointment"
-              onPress={() => setUseQuickJob(true)}
-            />
+          ) : null}
+          {!isJobLinkedAppointment && !useQuickJob ? (
+            jobs.some(
+              (job) =>
+                job.customerId === selectedCustomerId &&
+                !job.isArchived &&
+                job.status !== 'COMPLETED' &&
+                job.status !== 'CANCELLED',
+            ) ? (
+              <HorizontalPicker
+                options={jobs
+                  .filter(
+                    (job) =>
+                      job.customerId === selectedCustomerId &&
+                      !job.isArchived &&
+                      job.status !== 'COMPLETED' &&
+                      job.status !== 'CANCELLED',
+                  )
+                  .map((job) => ({
+                    label: `${job.jobNumber} · ${job.title}\n${job.addressLine1}, ${job.suburb} · ${job.status.replaceAll('_', ' ')}`,
+                    value: job.id,
+                  }))}
+                selected={selectedJobId}
+                onSelect={selectExistingJob}
+              />
+            ) : (
+              <Text style={styles.muted}>
+                No active jobs for this customer. Choose Create new job.
+              </Text>
+            )
           ) : null}
         </Section>
 

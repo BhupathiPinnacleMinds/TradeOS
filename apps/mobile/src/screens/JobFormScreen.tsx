@@ -1,18 +1,5 @@
-import type {
-  Customer,
-  JobPayload,
-  JobPriority,
-  JobStatus,
-  TeamMember,
-} from '@tradieos/shared';
-import {
-  DEFAULT_BUSINESS_TIMEZONE,
-  normaliseBusinessTimezone,
-} from '@tradieos/shared';
+import type { Customer, JobPayload, JobPriority } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -30,7 +17,6 @@ import {
   customerDetailRequest,
   customersRequest,
   jobDetailRequest,
-  membersRequest,
   updateJobRequest,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -42,102 +28,22 @@ import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'JobForm'>;
-type ScheduleField = 'scheduledStart' | 'scheduledEnd';
-type PickerState = { field: ScheduleField; mode: 'date' | 'time' } | null;
-
-const statuses: JobStatus[] = [
-  'NEW',
-  'SCHEDULED',
-  'ON_THE_WAY',
-  'IN_PROGRESS',
-  'ON_HOLD',
-  'COMPLETED',
-  'CANCELLED',
-];
 const priorities: JobPriority[] = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
 
 function label(value: string) {
   return value.replaceAll('_', ' ');
 }
 
-function localDateTimeInput(value = new Date()) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  const hour = String(value.getHours()).padStart(2, '0');
-  const minute = String(value.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hour}:${minute}`;
-}
-
-function dateFromFormValue(value?: string | null) {
-  const parsed = value ? new Date(value) : new Date();
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-}
-
-function mergeDatePart(current: Date, selected: Date) {
-  const next = new Date(current);
-  next.setFullYear(
-    selected.getFullYear(),
-    selected.getMonth(),
-    selected.getDate(),
-  );
-  return next;
-}
-
-function mergeTimePart(current: Date, selected: Date) {
-  const next = new Date(current);
-  next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-  return next;
-}
-
-function humanDateTime(
-  value?: string | null,
-  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
-) {
-  if (!value) return 'Select date and time';
-  const date = dateFromFormValue(value);
-  const businessTimezone = normaliseBusinessTimezone(timezone);
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    timeZone: businessTimezone,
-    year: 'numeric',
-  })
-    .format(date)
-    .replace(' at ', ', ');
-}
-
-function calculateDurationMinutes(
-  scheduledStart?: string | null,
-  scheduledEnd?: string | null,
-) {
-  if (!scheduledStart || !scheduledEnd) return null;
-  const start = new Date(scheduledStart);
-  const end = new Date(scheduledEnd);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return null;
-  }
-  const diffMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
-  return diffMinutes > 0 ? diffMinutes : null;
-}
-
 function initialPayload(customerId = ''): JobPayload {
-  const start = new Date();
-  start.setHours(start.getHours() + 2, 0, 0, 0);
-  const end = new Date(start);
-  end.setHours(end.getHours() + 2);
-
   return {
     addressLine1: '',
     customerId,
     postcode: '',
     priority: 'NORMAL',
-    scheduledEnd: localDateTimeInput(end),
-    scheduledStart: localDateTimeInput(start),
+    scheduledEnd: null,
+    scheduledStart: new Date().toISOString(),
     state: 'NSW',
-    status: 'SCHEDULED',
+    status: 'NEW',
     suburb: '',
     title: '',
   };
@@ -145,11 +51,10 @@ function initialPayload(customerId = ''): JobPayload {
 
 export function JobFormScreen({ navigation, route }: Props) {
   const { jobId, customerId } = route.params ?? {};
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { showToast } = useToast();
   const [form, setForm] = useState<JobPayload>(initialPayload(customerId));
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [members, setMembers] = useState<TeamMember[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [useQuickCustomer, setUseQuickCustomer] = useState(false);
   const [createdJobPrompt, setCreatedJobPrompt] = useState<{
@@ -158,8 +63,6 @@ export function JobFormScreen({ navigation, route }: Props) {
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [picker, setPicker] = useState<PickerState>(null);
-  const businessTimezone = user?.business.timezone ?? DEFAULT_BUSINESS_TIMEZONE;
 
   useEffect(() => {
     navigation.setOptions({ title: jobId ? 'Edit job' : 'New job' });
@@ -172,17 +75,13 @@ export function JobFormScreen({ navigation, route }: Props) {
     async function load() {
       setIsLoading(true);
       try {
-        const [customerResponse, teamResponse] = await Promise.all([
-          customersRequest(authToken, {
-            page: 1,
-            pageSize: 100,
-            sortBy: 'displayName',
-          }),
-          membersRequest(authToken),
-        ]);
+        const customerResponse = await customersRequest(authToken, {
+          page: 1,
+          pageSize: 100,
+          sortBy: 'displayName',
+        });
         if (!mounted) return;
         setCustomers(customerResponse.records);
-        setMembers(teamResponse.filter((member) => member.status === 'ACTIVE'));
 
         if (jobId) {
           const response = await jobDetailRequest(authToken, jobId);
@@ -198,12 +97,8 @@ export function JobFormScreen({ navigation, route }: Props) {
             internalNotes: response.job.internalNotes ?? undefined,
             postcode: response.job.postcode,
             priority: response.job.priority,
-            scheduledEnd: response.job.scheduledEnd
-              ? localDateTimeInput(new Date(response.job.scheduledEnd))
-              : undefined,
-            scheduledStart: localDateTimeInput(
-              new Date(response.job.scheduledStart),
-            ),
+            scheduledEnd: response.job.scheduledEnd,
+            scheduledStart: response.job.scheduledStart,
             state: response.job.state,
             status: response.job.status,
             suburb: response.job.suburb,
@@ -261,52 +156,6 @@ export function JobFormScreen({ navigation, route }: Props) {
     setErrors((current) => ({ ...current, [key]: '' }));
   }
 
-  function updateScheduleValue(field: ScheduleField, value: Date) {
-    const nextValue = localDateTimeInput(value);
-    setForm((current) => {
-      const next = { ...current, [field]: nextValue };
-      const duration = calculateDurationMinutes(
-        next.scheduledStart,
-        next.scheduledEnd,
-      );
-      return {
-        ...next,
-        estimatedDurationMinutes:
-          duration ?? current.estimatedDurationMinutes ?? null,
-      };
-    });
-    setErrors((current) => ({ ...current, [field]: '' }));
-  }
-
-  function handlePickerChange(event: DateTimePickerEvent, selectedDate?: Date) {
-    if (!picker) return;
-    if (Platform.OS !== 'ios' && event.type === 'dismissed') {
-      setPicker(null);
-      return;
-    }
-    if (!selectedDate) return;
-
-    const current = dateFromFormValue(form[picker.field]);
-    const next =
-      picker.mode === 'date'
-        ? mergeDatePart(current, selectedDate)
-        : mergeTimePart(current, selectedDate);
-    updateScheduleValue(picker.field, next);
-
-    if (Platform.OS !== 'ios') {
-      setPicker(
-        picker.mode === 'date' ? { field: picker.field, mode: 'time' } : null,
-      );
-    }
-  }
-
-  function completeIosPickerStep() {
-    if (!picker) return;
-    setPicker(
-      picker.mode === 'date' ? { field: picker.field, mode: 'time' } : null,
-    );
-  }
-
   function applyAddressSuggestion(suggestion: AddressSuggestion) {
     update('addressLine1', suggestion.addressLine1);
     update('addressLine2', suggestion.addressLine2 ?? '');
@@ -336,17 +185,10 @@ export function JobFormScreen({ navigation, route }: Props) {
       }
     }
     if (!input.title.trim()) next.title = 'Enter a job title.';
-    if (!input.scheduledStart) next.scheduledStart = 'Enter a scheduled start.';
     if (!input.addressLine1.trim()) next.addressLine1 = 'Enter an address.';
     if (!input.suburb.trim()) next.suburb = 'Enter a suburb.';
     if (!/^\d{4}$/.test(input.postcode.trim()))
       next.postcode = 'Enter a 4-digit postcode.';
-    if (
-      input.scheduledEnd &&
-      new Date(input.scheduledEnd) <= new Date(input.scheduledStart)
-    ) {
-      next.scheduledEnd = 'End time must be after start time.';
-    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -355,7 +197,7 @@ export function JobFormScreen({ navigation, route }: Props) {
     if (!token || isSaving) return;
     const payload: JobPayload = {
       ...form,
-      assignedToUserId: form.assignedToUserId || null,
+      assignedToUserId: jobId ? form.assignedToUserId : null,
       customerId: useQuickCustomer ? undefined : form.customerId,
       quickCustomer:
         useQuickCustomer && form.quickCustomer
@@ -370,10 +212,8 @@ export function JobFormScreen({ navigation, route }: Props) {
               suburb: form.suburb,
             }
           : undefined,
-      scheduledStart: new Date(form.scheduledStart).toISOString(),
-      scheduledEnd: form.scheduledEnd
-        ? new Date(form.scheduledEnd).toISOString()
-        : null,
+      scheduledStart: jobId ? form.scheduledStart : new Date().toISOString(),
+      scheduledEnd: form.scheduledEnd ?? null,
     };
     if (!validate(payload)) {
       showToast({
@@ -590,62 +430,10 @@ export function JobFormScreen({ navigation, route }: Props) {
             value={form.description ?? ''}
           />
           <Picker
-            label="Status"
-            options={statuses}
-            selected={form.status}
-            onSelect={(value) => update('status', value)}
-          />
-          <Picker
             label="Priority"
             options={priorities}
             selected={form.priority}
             onSelect={(value) => update('priority', value)}
-          />
-        </Section>
-
-        <Section title="Schedule">
-          <ScheduleDateTimeField
-            error={errors.scheduledStart}
-            label="Scheduled start"
-            onPress={() => setPicker({ field: 'scheduledStart', mode: 'date' })}
-            timezone={businessTimezone}
-            value={form.scheduledStart}
-          />
-          <ScheduleDateTimeField
-            error={errors.scheduledEnd}
-            label="Scheduled end"
-            onPress={() => setPicker({ field: 'scheduledEnd', mode: 'date' })}
-            timezone={businessTimezone}
-            value={form.scheduledEnd ?? ''}
-          />
-          {picker ? (
-            <View style={styles.pickerContainer}>
-              <DateTimePicker
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                mode={picker.mode}
-                onChange={handlePickerChange}
-                value={dateFromFormValue(form[picker.field])}
-              />
-              {Platform.OS === 'ios' ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={completeIosPickerStep}
-                  style={styles.doneButton}
-                >
-                  <Text style={styles.doneText}>
-                    {picker.mode === 'date' ? 'Next: time' : 'Done'}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-          <Field
-            keyboardType="number-pad"
-            label="Estimated duration minutes"
-            onChangeText={(value) =>
-              update('estimatedDurationMinutes', value ? Number(value) : null)
-            }
-            value={String(form.estimatedDurationMinutes ?? '')}
           />
         </Section>
 
@@ -687,28 +475,6 @@ export function JobFormScreen({ navigation, route }: Props) {
             onChangeText={(value) => update('accessInstructions', value)}
             value={form.accessInstructions ?? ''}
           />
-        </Section>
-
-        <Section title="Assignment">
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.pickerRow}>
-              <Chip
-                active={!form.assignedToUserId}
-                label="Unassigned"
-                onPress={() => update('assignedToUserId', null)}
-              />
-              {members.map((member) => (
-                <Chip
-                  active={form.assignedToUserId === member.userId}
-                  key={member.id}
-                  label={member.name}
-                  onPress={() =>
-                    update('assignedToUserId', member.userId ?? '')
-                  }
-                />
-              ))}
-            </View>
-          </ScrollView>
         </Section>
 
         <Section title="Notes and follow-up">
@@ -845,37 +611,6 @@ function Field({
   );
 }
 
-function ScheduleDateTimeField({
-  error,
-  label,
-  onPress,
-  timezone,
-  value,
-}: {
-  error?: string;
-  label: string;
-  onPress(): void;
-  timezone: string;
-  value?: string | null;
-}) {
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable
-        accessibilityLabel={`${label}. ${humanDateTime(value, timezone)}`}
-        accessibilityRole="button"
-        onPress={onPress}
-        style={[styles.inputButton, error && styles.inputError]}
-      >
-        <Text style={styles.inputButtonText}>
-          {humanDateTime(value, timezone)}
-        </Text>
-      </Pressable>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-    </View>
-  );
-}
-
 function Picker({
   label: rowLabel,
   onSelect,
@@ -970,17 +705,6 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
   },
   error: { color: '#BE123C', fontWeight: '700', marginTop: 4 },
-  doneButton: {
-    alignSelf: 'flex-end',
-    backgroundColor: colours.secondaryActionSurface,
-    borderColor: colours.primary,
-    borderRadius: 999,
-    borderWidth: 1,
-    marginTop: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  doneText: { color: colours.primary, fontWeight: '900' },
   eyebrow: {
     color: colours.primary,
     fontSize: 12,
@@ -999,21 +723,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  inputButton: {
-    backgroundColor: '#F8FAFC',
-    borderColor: colours.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  inputButtonText: {
-    color: colours.ink,
-    fontSize: 16,
-    fontWeight: '700',
-  },
   inputError: { borderColor: '#E11D48', borderWidth: 2 },
   label: { color: colours.ink, fontWeight: '800' },
   loadingPage: {
@@ -1025,14 +734,6 @@ const styles = StyleSheet.create({
   },
   muted: { color: colours.muted, lineHeight: 21, marginTop: 8 },
   pickerRow: { flexDirection: 'row', gap: 8, paddingVertical: 4 },
-  pickerContainer: {
-    backgroundColor: '#F8FAFC',
-    borderColor: colours.border,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
-  },
   promptActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

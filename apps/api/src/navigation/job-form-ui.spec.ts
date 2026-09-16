@@ -8,24 +8,26 @@ describe('Job form mobile UI contracts', () => {
     return readFileSync(join(repoRoot, 'apps', 'mobile', 'src', path), 'utf8');
   }
 
-  it('uses native date/time picker controls for scheduled start and end', () => {
+  it('keeps appointment scheduling controls out of the generic Job form', () => {
     const jobForm = mobileSource('screens/JobFormScreen.tsx');
+    expect(jobForm).not.toContain('label="Scheduled start"');
+    expect(jobForm).not.toContain('label="Scheduled end"');
+    expect(jobForm).not.toContain('label="Estimated duration minutes"');
+    expect(jobForm).not.toContain('<Section title="Assignment">');
+    expect(jobForm).not.toContain('label="Status"');
+    expect(jobForm).toContain("status: 'NEW'");
+    expect(jobForm).toContain(
+      'assignedToUserId: jobId ? form.assignedToUserId : null',
+    );
+  });
 
-    expect(jobForm).toContain(
-      "import DateTimePicker, {\n  type DateTimePickerEvent,\n} from '@react-native-community/datetimepicker';",
-    );
-    expect(jobForm).toContain('<ScheduleDateTimeField');
-    expect(jobForm).toContain('label="Scheduled start"');
-    expect(jobForm).toContain(
-      "setPicker({ field: 'scheduledStart', mode: 'date' })",
-    );
-    expect(jobForm).toContain('label="Scheduled end"');
-    expect(jobForm).toContain(
-      "setPicker({ field: 'scheduledEnd', mode: 'date' })",
-    );
-    expect(jobForm).toContain('<DateTimePicker');
-    expect(jobForm).toContain("picker.mode === 'date'");
-    expect(jobForm).toContain("mode: 'time'");
+  it('shows appointment schedule and technician only for actionable appointments on Jobs cards', () => {
+    const jobsScreen = mobileSource('screens/JobsScreen.tsx');
+    expect(jobsScreen).toContain('job.hasActionableAppointment');
+    expect(jobsScreen).toContain('No appointment scheduled');
+    expect(jobsScreen).toContain("? 'SCHEDULED'");
+    expect(jobsScreen).toContain("? 'NEW'");
+    expect(jobsScreen).toContain(": 'Unassigned'");
   });
 
   it('adds optional quick-customer email in Job and Appointment forms', () => {
@@ -57,40 +59,13 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
-  it('keeps schedule values human-readable while preserving API ISO payloads', () => {
+  it('preserves legacy schedule values while editing a Job', () => {
     const jobForm = mobileSource('screens/JobFormScreen.tsx');
-
-    expect(jobForm).toContain('function humanDateTime');
-    expect(jobForm).toContain("month: 'short'");
+    expect(jobForm).toContain('scheduledStart: response.job.scheduledStart');
+    expect(jobForm).toContain('scheduledEnd: response.job.scheduledEnd');
     expect(jobForm).toContain(
-      'scheduledStart: new Date(form.scheduledStart).toISOString()',
+      'jobId ? form.scheduledStart : new Date().toISOString()',
     );
-    expect(jobForm).toContain('new Date(form.scheduledEnd).toISOString()');
-  });
-
-  it('keeps end-before-start validation visible on scheduled end', () => {
-    const jobForm = mobileSource('screens/JobFormScreen.tsx');
-
-    expect(jobForm).toContain(
-      "next.scheduledEnd = 'End time must be after start time.';",
-    );
-    expect(jobForm).toContain('error={errors.scheduledEnd}');
-  });
-
-  it('derives estimated duration from scheduled start and end picker values', () => {
-    const jobForm = mobileSource('screens/JobFormScreen.tsx');
-
-    expect(jobForm).toContain('function calculateDurationMinutes');
-    expect(jobForm).toContain('end.getTime() - start.getTime()');
-    expect(jobForm).toContain('return diffMinutes > 0 ? diffMinutes : null');
-    expect(jobForm).toContain('updateScheduleValue(field: ScheduleField');
-    expect(jobForm).toContain(
-      'estimatedDurationMinutes:\n          duration ?? current.estimatedDurationMinutes ?? null',
-    );
-    expect(jobForm).toContain(
-      'scheduledStart: new Date(form.scheduledStart).toISOString()',
-    );
-    expect(jobForm).toContain('new Date(form.scheduledEnd).toISOString()');
   });
 
   it('renders quote and invoice requirement toggles side-by-side with selectable state', () => {
@@ -133,13 +108,15 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
-  it('keeps selected jobs primary and demotes creating another job to an explicit alternative', () => {
+  it('offers existing and new jobs for an independently selected customer', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
     expect(appointmentForm).toContain(
       '<Text style={styles.label}>Selected job</Text>',
     );
-    expect(appointmentForm).toContain('Create a different job');
+    expect(appointmentForm).toContain("label: 'Select existing job'");
+    expect(appointmentForm).toContain("label: 'Create new job'");
+    expect(appointmentForm).toContain('onSelect={selectExistingJob}');
     expect(appointmentForm).toContain('hasSelectedExistingJob');
     expect(appointmentForm).toContain('isJobLinkedAppointment');
     expect(appointmentForm).toContain(
@@ -148,12 +125,11 @@ describe('Job form mobile UI contracts', () => {
     expect(appointmentForm).toContain('setSelectedJobId');
     expect(appointmentForm).toContain('setUseQuickJob(true)');
     expect(appointmentForm).toContain('{!hasSelectedExistingJob ? (');
-    expect(appointmentForm).toContain(
-      'label="Create job for this appointment"',
-    );
-    expect(appointmentForm.indexOf('Selected job')).toBeLessThan(
-      appointmentForm.indexOf('label="Create job for this appointment"'),
-    );
+    expect(appointmentForm).toContain('job.customerId === selectedCustomerId');
+    expect(appointmentForm).toContain('if (useQuickJob) {');
+    expect(appointmentForm).toContain('let finalJobId = selectedJobId');
+    expect(appointmentForm).toContain('jobId: finalJobId');
+    expect(appointmentForm).toContain('jobsRequest(authToken, {');
   });
 
   it('keeps quick-created appointment jobs unassigned until appointment creation succeeds', () => {
@@ -263,9 +239,7 @@ describe('Job form mobile UI contracts', () => {
     expect(appointmentForm).toContain(
       '{isJobLinkedAppointment ? null : useQuickJob ? (',
     );
-    expect(appointmentForm).toContain(
-      '{!isJobLinkedAppointment && !selectedJob && !useQuickJob ? (',
-    );
+    expect(appointmentForm).toContain('onSelect={selectExistingJob}');
   });
 
   it('pre-populates appointment defaults from the linked job without exposing job switching controls', () => {
@@ -342,13 +316,9 @@ describe('Job form mobile UI contracts', () => {
     expect(appointmentForm).toContain(
       'onSelect={(value) => void selectCustomer(value)}',
     );
-    expect(appointmentForm).toContain(
-      'label="Create job for this appointment"',
-    );
-    expect(appointmentForm).toContain('Create a different job');
-    expect(appointmentForm).toMatch(
-      /onSelect=\{\(value\) => \{\s*setSelectedJobId\(value\);/,
-    );
+    expect(appointmentForm).toContain("label: 'Create new job'");
+    expect(appointmentForm).toContain("label: 'Select existing job'");
+    expect(appointmentForm).toContain('onSelect={selectExistingJob}');
   });
 
   it('wires address entry through an autocomplete-ready manual fallback component', () => {

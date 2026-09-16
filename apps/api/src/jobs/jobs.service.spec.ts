@@ -348,6 +348,7 @@ describe('JobsService', () => {
     expect(result.records[0]?.technicianDisplayLabel).toBe(
       'Completed by Ram G',
     );
+    expect(result.records[0]?.hasActionableAppointment).toBe(false);
   });
 
   it('collapses several completed appointments by the same technician', async () => {
@@ -455,6 +456,7 @@ describe('JobsService', () => {
     const result = await service.findAll(owner, {});
 
     expect(result.records[0]?.technicianDisplayLabel).toBe('Ram G');
+    expect(result.records[0]?.hasActionableAppointment).toBe(true);
   });
 
   it('uses the active appointment schedule on the Jobs list instead of the stale job schedule', async () => {
@@ -589,13 +591,49 @@ describe('JobsService', () => {
     );
   });
 
-  it('falls back to the job schedule when no active appointments exist', async () => {
-    const { service } = createService();
+  it('marks a legacy scheduled job with no active appointment as unscheduled for cards', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ status: 'SCHEDULED', assignedToUserId: 'tech-1' }),
+    ]);
 
     const result = await service.findAll(owner, {});
 
+    expect(result.records[0]?.hasActionableAppointment).toBe(false);
+    expect(result.records[0]?.technicianDisplayLabel).toBe('Unassigned');
+    expect(result.records[0]?.status).toBe('SCHEDULED');
     expect(result.records[0]?.scheduledStart).toBe('2026-07-14T09:00:00.000Z');
     expect(result.records[0]?.scheduledEnd).toBe('2026-07-14T11:00:00.000Z');
+  });
+
+  it('filters Jobs calendar dates through actionable appointments, not legacy job dates', async () => {
+    const { prisma, service } = createService();
+
+    await service.findAll(owner, { filter: 'today' });
+
+    const findManyCalls = prisma.job.findMany.mock.calls as Array<
+      [
+        {
+          where: {
+            appointments?: {
+              some: { businessId: string; status: { in: string[] } };
+            };
+            scheduledStart?: unknown;
+          };
+        },
+      ]
+    >;
+    const findManyOptions = findManyCalls[0]?.[0];
+    expect(findManyOptions?.where.scheduledStart).toBeUndefined();
+    expect(findManyOptions?.where.appointments?.some.businessId).toBe(
+      owner.businessId,
+    );
+    expect(findManyOptions?.where.appointments?.some.status.in).toContain(
+      'CONFIRMED',
+    );
+    expect(findManyOptions?.where.appointments?.some.status.in).not.toContain(
+      'CANCELLED',
+    );
   });
 
   it('shows unassigned for active jobs with an unassigned upcoming appointment', async () => {
@@ -657,6 +695,35 @@ describe('JobsService', () => {
       [{ data: { jobNumber: string } }],
     ];
     expect(createArg.data.jobNumber).toBe('JOB-2026-000007');
+  });
+
+  it('creates an unscheduled NEW job without a technician or appointment', async () => {
+    const { prisma, service } = createService();
+
+    await service.create(
+      owner,
+      payload({
+        assignedToUserId: null,
+        scheduledEnd: null,
+        status: 'NEW',
+      }),
+    );
+
+    const [[createArg]] = prisma.job.create.mock.calls as [
+      [
+        {
+          data: {
+            assignedToUserId: string | null;
+            scheduledEnd: Date | null;
+            status: string;
+          };
+        },
+      ],
+    ];
+    expect(createArg.data.status).toBe('NEW');
+    expect(createArg.data.assignedToUserId).toBeNull();
+    expect(createArg.data.scheduledEnd).toBeNull();
+    expect(prisma.appointment.findMany).toHaveBeenCalled();
   });
 
   it('persists optional quick customer email when creating a job', async () => {

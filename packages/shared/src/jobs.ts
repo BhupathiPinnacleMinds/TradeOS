@@ -91,6 +91,7 @@ export interface Job {
   customer: JobCustomerSummary;
   assignedTo: JobAssignedUser | null;
   technicianDisplayLabel?: string;
+  hasActionableAppointment?: boolean;
 }
 
 export interface JobListResponse {

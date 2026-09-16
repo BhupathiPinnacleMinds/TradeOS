@@ -123,6 +123,7 @@ type JobTechnicianAppointmentSummary = {
 };
 
 type JobListDisplay = {
+  hasActionableAppointment: boolean;
   scheduledEnd: Date | null;
   scheduledStart: Date;
   technicianDisplayLabel: string;
@@ -654,9 +655,15 @@ export class JobsService {
       this.applyFilter(where, query.filter, currentUser, timezone);
     }
     if (query.dateFrom || query.dateTo) {
-      where.scheduledStart = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+      where.appointments = {
+        some: {
+          businessId: currentUser.businessId,
+          scheduledStart: {
+            ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+            ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+          },
+          status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+        },
       };
     }
     if (query.search?.trim()) {
@@ -692,16 +699,34 @@ export class JobsService {
     const dayAfterTomorrow = getBusinessDayRangeUtc(tomorrow.end, timezone);
 
     if (filter === 'today') {
-      where.scheduledStart = { gte: today.start, lt: today.end };
+      where.appointments = {
+        some: {
+          businessId: currentUser.businessId,
+          scheduledStart: { gte: today.start, lt: today.end },
+          status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+        },
+      };
     }
     if (filter === 'tomorrow') {
-      where.scheduledStart = {
-        gte: tomorrow.start,
-        lt: dayAfterTomorrow.start,
+      where.appointments = {
+        some: {
+          businessId: currentUser.businessId,
+          scheduledStart: {
+            gte: tomorrow.start,
+            lt: dayAfterTomorrow.start,
+          },
+          status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+        },
       };
     }
     if (filter === 'upcoming') {
-      where.scheduledStart = { gte: tomorrow.start };
+      where.appointments = {
+        some: {
+          businessId: currentUser.businessId,
+          scheduledStart: { gte: tomorrow.start },
+          status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+        },
+      };
       where.status = { notIn: [...COMPLETED_STATUSES] };
     }
     if (filter === 'completed') where.status = 'COMPLETED';
@@ -942,7 +967,7 @@ export class JobsService {
       .filter((job) => job.status === 'COMPLETED')
       .map((job) => job.id);
     const activeJobIds = jobs
-      .filter((job) => job.status !== 'COMPLETED')
+      .filter((job) => job.status !== 'COMPLETED' && job.status !== 'CANCELLED')
       .map((job) => job.id);
 
     const [completedAppointments, actionableAppointments]: [
@@ -1009,18 +1034,21 @@ export class JobsService {
       if (!job) continue;
       if (technicians.size === 0) {
         displays.set(jobId, {
+          hasActionableAppointment: false,
           scheduledEnd: job.scheduledEnd,
           scheduledStart: job.scheduledStart,
           technicianDisplayLabel: 'No technician recorded',
         });
       } else if (technicians.size === 1) {
         displays.set(jobId, {
+          hasActionableAppointment: false,
           scheduledEnd: job.scheduledEnd,
           scheduledStart: job.scheduledStart,
           technicianDisplayLabel: `Completed by ${[...technicians.values()][0]}`,
         });
       } else {
         displays.set(jobId, {
+          hasActionableAppointment: false,
           scheduledEnd: job.scheduledEnd,
           scheduledStart: job.scheduledStart,
           technicianDisplayLabel: 'Completed by multiple technicians',
@@ -1037,6 +1065,7 @@ export class JobsService {
       );
       if (nextAppointment) {
         displays.set(job.id, {
+          hasActionableAppointment: true,
           scheduledEnd: nextAppointment.scheduledEnd,
           scheduledStart: nextAppointment.scheduledStart,
           technicianDisplayLabel: nextAppointment.assignedUser
@@ -1046,11 +1075,10 @@ export class JobsService {
         continue;
       }
       displays.set(job.id, {
+        hasActionableAppointment: false,
         scheduledEnd: job.scheduledEnd,
         scheduledStart: job.scheduledStart,
-        technicianDisplayLabel: job.assignedTo
-          ? `${job.assignedTo.firstName} ${job.assignedTo.lastName}`
-          : 'Unassigned',
+        technicianDisplayLabel: 'Unassigned',
       });
     }
 
@@ -1244,6 +1272,7 @@ export class JobsService {
 
   private toJob(job: JobWithRelations, listDisplay?: JobListDisplay): Job {
     return {
+      hasActionableAppointment: listDisplay?.hasActionableAppointment,
       id: job.id,
       businessId: job.businessId,
       customerId: job.customerId,
