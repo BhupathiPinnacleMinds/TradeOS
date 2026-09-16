@@ -50,7 +50,9 @@ function firstConsolePayload<T>() {
   return payload;
 }
 
-function createService() {
+function createService(
+  configOverrides: Record<string, string | undefined> = {},
+) {
   const config = {
     get: jest.fn((key: string, fallback?: string) => {
       const values: Record<string, string> = {
@@ -59,6 +61,15 @@ function createService() {
         JWT_SECRET: 'test-secret-that-is-long-enough-for-local-tests',
         PASSWORD_RESET_TOKEN_TTL_MINUTES: '60',
       };
+      for (const [overrideKey, overrideValue] of Object.entries(
+        configOverrides,
+      )) {
+        if (overrideValue === undefined) {
+          delete values[overrideKey];
+        } else {
+          values[overrideKey] = overrideValue;
+        }
+      }
       return values[key] ?? fallback;
     }),
     getOrThrow: jest.fn((key: string) => {
@@ -92,9 +103,11 @@ function createService() {
       Array.isArray(input) ? Promise.all(input) : input(prisma),
     ),
   };
+  const loggerInfo = jest.fn();
+  const loggerWarn = jest.fn();
   const logger = {
-    info: jest.fn(),
-    warn: jest.fn(),
+    info: loggerInfo,
+    warn: loggerWarn,
   } as unknown as StructuredLogger;
 
   return {
@@ -102,6 +115,8 @@ function createService() {
     jwt,
     jwtSignAsync,
     logger,
+    loggerInfo,
+    loggerWarn,
     prisma,
     service: new AuthService(
       config,
@@ -111,6 +126,19 @@ function createService() {
     ),
   };
 }
+
+const registerDto = {
+  firstName: 'Olivia',
+  lastName: 'Owner',
+  email: ' owner@example.test ',
+  password: 'secure-password123',
+  businessName: ' Pioneer ',
+  tradeType: 'Electrical',
+  gstRegistered: true,
+  state: 'VIC',
+  businessStartTime: '08:00',
+  businessEndTime: '17:00',
+};
 
 function authUser(overrides: Record<string, unknown> = {}) {
   return {
@@ -180,6 +208,88 @@ describe('AuthService account recovery and session revocation', () => {
     );
   });
 
+  it('creates a workspace, returns normal auth success and sends a welcome email', async () => {
+    const { prisma, service } = createService();
+    prisma.user.findFirst.mockResolvedValueOnce(null);
+    prisma.business.create.mockResolvedValueOnce({
+      id: 'business-1',
+      name: 'Pioneer',
+    });
+    prisma.user.create.mockResolvedValueOnce(
+      authUser({ business: { ...authUser().business, name: 'Pioneer' } }),
+    );
+
+    const response = await service.register(registerDto);
+
+    expect(response.accessToken).toBe('access-token');
+    expect(response.user.email).toBe('owner@example.test');
+    const businessCreateArg = firstMockArg<{ data: { name: string } }>(
+      prisma.business.create,
+    );
+    expect(businessCreateArg.data.name).toBe('Pioneer');
+    expect(console.info).toHaveBeenCalledWith(
+      '[TradieOS email:WELCOME]',
+      expect.objectContaining({
+        businessName: 'Pioneer',
+        firstName: 'Olivia',
+        to: 'owner@example.test',
+      }),
+    );
+  });
+
+  it('does not send a welcome email when workspace creation fails', async () => {
+    const { prisma, service } = createService();
+    prisma.user.findFirst.mockResolvedValueOnce(null);
+    prisma.business.create.mockRejectedValueOnce(new Error('create failed'));
+
+    await expect(service.register(registerDto)).rejects.toThrow(
+      'create failed',
+    );
+
+    expect(console.info).not.toHaveBeenCalledWith(
+      '[TradieOS email:WELCOME]',
+      expect.anything(),
+    );
+  });
+
+  it('keeps registration successful when the welcome email fails', async () => {
+    const { loggerWarn, prisma, service } = createService({
+      EMAIL_PROVIDER: 'resend',
+    });
+    prisma.user.findFirst.mockResolvedValueOnce(null);
+    prisma.business.create.mockResolvedValueOnce({
+      id: 'business-1',
+      name: 'Pioneer',
+    });
+    prisma.user.create.mockResolvedValueOnce(
+      authUser({ business: { ...authUser().business, name: 'Pioneer' } }),
+    );
+    Object.defineProperty(service, 'emailProvider', {
+      value: {
+        sendWelcomeEmail: jest.fn().mockResolvedValue({
+          provider: 'resend',
+          status: 'FAILED',
+          error: 'Resend is not configured',
+        }),
+        sendPasswordReset: jest.fn(),
+        sendTeamInvitation: jest.fn(),
+        resendTeamInvitation: jest.fn(),
+        sendTransactionalEmail: jest.fn(),
+      },
+    });
+
+    await expect(service.register(registerDto)).resolves.toMatchObject({
+      accessToken: 'access-token',
+    });
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'workspace_welcome_email_failed',
+      expect.objectContaining({
+        event: 'workspace_welcome_email_failed',
+        reason: 'Resend is not configured',
+      }),
+    );
+  });
+
   it('returns the same neutral forgot-password response for existing users', async () => {
     const { prisma, service } = createService();
     prisma.user.findFirst.mockResolvedValue({
@@ -198,6 +308,43 @@ describe('AuthService account recovery and session revocation', () => {
     }>(prisma.passwordResetToken.create);
     expect(createArg.data.userId).toBe('user-1');
     expect(createArg.data.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('builds reset email links under /reset-password when only APP_PUBLIC_URL is configured', async () => {
+    const { prisma, service } = createService({
+      APP_RESET_PASSWORD_URL: undefined,
+      APP_PUBLIC_URL: 'https://staging.tradieos.com',
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'user-1',
+      email: 'owner@example.test',
+      firstName: 'Olivia',
+    });
+
+    await service.forgotPassword({ email: 'owner@example.test' });
+
+    const { resetUrl } = firstConsolePayload<{ resetUrl: string }>();
+    expect(resetUrl).toBe(
+      'https://staging.tradieos.com/reset-password?token=%5Bredacted%5D',
+    );
+  });
+
+  it('normalises a root APP_RESET_PASSWORD_URL to the reset-password route', async () => {
+    const { prisma, service } = createService({
+      APP_RESET_PASSWORD_URL: 'https://staging.tradieos.com',
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'user-1',
+      email: 'owner@example.test',
+      firstName: 'Olivia',
+    });
+
+    await service.forgotPassword({ email: 'owner@example.test' });
+
+    const { resetUrl } = firstConsolePayload<{ resetUrl: string }>();
+    expect(resetUrl).toBe(
+      'https://staging.tradieos.com/reset-password?token=%5Bredacted%5D',
+    );
   });
 
   it('returns a neutral forgot-password response without creating a token for unknown email', async () => {

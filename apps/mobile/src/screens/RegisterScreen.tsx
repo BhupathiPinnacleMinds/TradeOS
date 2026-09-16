@@ -28,6 +28,7 @@ import {
 } from '@tradieos/shared';
 import { useAuth } from '../auth/AuthContext';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
+import { useToast } from '../components/ToastProvider';
 import { colours } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -36,6 +37,7 @@ type BusinessHoursField = 'businessStartTime' | 'businessEndTime';
 
 export function RegisterScreen({ navigation }: Props) {
   const { register } = useAuth();
+  const { showToast } = useToast();
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -89,6 +91,13 @@ export function RegisterScreen({ navigation }: Props) {
 
     try {
       await register(form);
+      const businessName = form.businessName.trim();
+      showToast({
+        message: businessName
+          ? `${businessName} has been created successfully. Welcome to TradeOS.`
+          : 'Business workspace created successfully. Welcome to TradeOS.',
+        tone: 'success',
+      });
     } catch (submitError) {
       setError(
         submitError instanceof Error

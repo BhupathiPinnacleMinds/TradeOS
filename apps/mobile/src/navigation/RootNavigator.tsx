@@ -221,12 +221,12 @@ export function RootNavigator() {
   return (
     <Stack.Navigator
       initialRouteName={
-        !token && publicQuoteToken
-          ? 'PublicQuote'
-          : !token && publicInvoiceToken
-            ? 'PublicInvoice'
-            : !token && resetPasswordToken
-              ? 'ResetPassword'
+        resetPasswordToken
+          ? 'ResetPassword'
+          : !token && publicQuoteToken
+            ? 'PublicQuote'
+            : !token && publicInvoiceToken
+              ? 'PublicInvoice'
               : !token && inviteToken
                 ? 'AcceptInvitation'
                 : undefined
@@ -236,7 +236,7 @@ export function RootNavigator() {
         headerStyle: { backgroundColor: colours.background },
       }}
     >
-      {token ? (
+      {token && !resetPasswordToken ? (
         <>
           <Stack.Screen
             name="Main"

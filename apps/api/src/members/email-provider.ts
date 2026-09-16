@@ -157,10 +157,16 @@ export class ResendEmailProvider implements EmailProvider {
     businessName: string;
   }) {
     return this.sendTransactionalEmail({
-      html: `<p>Hi ${escapeHtml(input.firstName)}, welcome to ${escapeHtml(
-        input.businessName,
-      )} on TradieOS.</p>`,
-      subject: `Welcome to ${input.businessName} on TradieOS`,
+      html: `
+        <p>Hi ${escapeHtml(input.firstName)},</p>
+        <p>Welcome to TradeOS.</p>
+        <p>Your business workspace &quot;${escapeHtml(
+          input.businessName,
+        )}&quot; has been created successfully.</p>
+        <p>You can now sign in and start setting up your team, customers, jobs and appointments.</p>
+        <p>Thanks,<br />TradeOS</p>
+      `,
+      subject: 'Welcome to TradeOS — your business workspace is ready',
       to: input.to,
     });
   }

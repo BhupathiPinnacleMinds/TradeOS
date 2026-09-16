@@ -130,6 +130,21 @@ export class AuthService {
       return owner;
     });
 
+    const welcomeDelivery = await this.emailProvider.sendWelcomeEmail({
+      to: user.email,
+      firstName: user.firstName,
+      businessName: user.business.name,
+    });
+    if (welcomeDelivery.status === 'FAILED') {
+      this.logger.warn('workspace_welcome_email_failed', {
+        businessId: user.businessId,
+        category: 'auth',
+        event: 'workspace_welcome_email_failed',
+        reason: welcomeDelivery.error ?? 'email_delivery_failed',
+        userId: user.id,
+      });
+    }
+
     return this.authResponse(user);
   }
 
@@ -506,14 +521,39 @@ export class AuthService {
   }
 
   private buildPasswordResetUrl(token: string) {
-    const configuredResetUrl =
-      this.config.get<string>('APP_RESET_PASSWORD_URL') ??
+    const configuredResetUrl = this.config.get<string>(
+      'APP_RESET_PASSWORD_URL',
+    );
+    const configuredAppUrl =
       this.config.get<string>('APP_PUBLIC_URL') ??
-      this.config.get<string>('APP_URL') ??
-      'http://localhost:8081/reset-password';
-    const baseUrl = configuredResetUrl.replace(/\/$/, '');
+      this.config.get<string>('APP_URL');
+    const baseUrl = (
+      this.normalisePasswordResetUrl(configuredResetUrl) ||
+      this.resetPasswordUrlFromPublicAppUrl(configuredAppUrl) ||
+      'http://localhost:8081/reset-password'
+    ).replace(/\/$/, '');
     const separator = baseUrl.includes('?') ? '&' : '?';
     return `${baseUrl}${separator}token=${encodeURIComponent(token)}`;
+  }
+
+  private resetPasswordUrlFromPublicAppUrl(appUrl?: string) {
+    const trimmed = appUrl?.trim().replace(/\/$/, '');
+    return trimmed ? `${trimmed}/reset-password` : null;
+  }
+
+  private normalisePasswordResetUrl(resetUrl?: string) {
+    const trimmed = resetUrl?.trim().replace(/\/$/, '');
+    if (!trimmed) return null;
+
+    try {
+      const url = new URL(trimmed);
+      if (!url.pathname || url.pathname === '/') {
+        url.pathname = '/reset-password';
+      }
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return trimmed;
+    }
   }
 
   private passwordResetFailureReason(

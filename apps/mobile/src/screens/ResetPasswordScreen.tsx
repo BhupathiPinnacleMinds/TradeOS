@@ -18,7 +18,8 @@ import { colours } from '../theme';
 type Props = NativeStackScreenProps<RootStackParamList, 'ResetPassword'>;
 
 export function ResetPasswordScreen({ navigation, route }: Props) {
-  const [token, setToken] = useState(route.params?.token ?? '');
+  const tokenFromLink = route.params?.token?.trim() ?? '';
+  const [token, setToken] = useState(tokenFromLink);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -26,6 +27,13 @@ export function ResetPasswordScreen({ navigation, route }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit() {
+    if (!token.trim()) {
+      setError(
+        'This password reset link is invalid or has expired. Please request a new password reset link.',
+      );
+      return;
+    }
+
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match.');
       return;
@@ -36,15 +44,16 @@ export function ResetPasswordScreen({ navigation, route }: Props) {
     setMessage(null);
 
     try {
-      const response = await resetPasswordRequest({ token, newPassword });
-      setMessage(response.message);
+      await resetPasswordRequest({ token: token.trim(), newPassword });
+      setMessage('Password reset successfully. You can now sign in.');
       setNewPassword('');
       setConfirmPassword('');
     } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : '';
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Password reset failed',
+        /invalid|expired/i.test(message)
+          ? 'This password reset link is invalid or has expired. Please request a new password reset link.'
+          : message || 'Password reset failed',
       );
     } finally {
       setIsSubmitting(false);
@@ -60,17 +69,22 @@ export function ResetPasswordScreen({ navigation, route }: Props) {
         <Text style={styles.kicker}>ACCOUNT RECOVERY</Text>
         <Text style={styles.title}>Choose a new password</Text>
         <Text style={styles.subtitle}>
-          Paste the reset token from your reset link, then set a new password.
+          Enter and confirm your new password to finish resetting your TradeOS
+          account.
         </Text>
 
         <View style={styles.form}>
-          <Text style={styles.label}>Reset token</Text>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setToken}
-            style={styles.input}
-            value={token}
-          />
+          {!tokenFromLink ? (
+            <>
+              <Text style={styles.label}>Reset token</Text>
+              <TextInput
+                autoCapitalize="none"
+                onChangeText={setToken}
+                style={styles.input}
+                value={token}
+              />
+            </>
+          ) : null}
 
           <Text style={styles.label}>New password</Text>
           <TextInput
