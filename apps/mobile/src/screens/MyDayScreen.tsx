@@ -383,15 +383,6 @@ function AppointmentCard({
   return (
     <Pressable style={styles.card} onPress={onOpen}>
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTime}>
-          {showScheduledDate
-            ? formatBusinessCompactDateTimeRange(
-                appointment.scheduledStart,
-                appointment.scheduledEnd,
-                timezone,
-              )
-            : formatBusinessTime(appointment.scheduledStart, timezone)}
-        </Text>
         <View
           style={[styles.statusPill, { backgroundColor: colour.background }]}
         >
@@ -400,6 +391,15 @@ function AppointmentCard({
           </Text>
         </View>
       </View>
+      <Text style={styles.cardTime}>
+        {showScheduledDate
+          ? formatBusinessCompactDateTimeRange(
+              appointment.scheduledStart,
+              appointment.scheduledEnd,
+              timezone,
+            )
+          : formatBusinessTime(appointment.scheduledStart, timezone)}
+      </Text>
       <Text style={styles.cardTitle}>{appointment.job.title}</Text>
       <Text style={styles.meta}>
         {primaryCustomerName(appointment.job.customer)}
@@ -672,11 +672,14 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
-  cardTime: { color: colours.primary, fontSize: 18, fontWeight: '900' },
+  cardTime: {
+    color: colours.primary,
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 24,
+  },
   cardTitle: { color: colours.ink, fontSize: 20, fontWeight: '900' },
   meta: { color: colours.muted, lineHeight: 21 },
   statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },

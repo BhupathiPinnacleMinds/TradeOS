@@ -108,6 +108,37 @@ describe('AppointmentNotificationsService', () => {
         userId: 'tech-1',
       }),
     );
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'Hot water inspection with Raj Patel on 31/08/2026 at 9:30 am has been assigned to you.',
+      }),
+    );
+  });
+
+  it('uses the business date for early-morning appointment assignment notifications', async () => {
+    const { notifications, service } = createService();
+
+    await service.notifyAssigned({
+      actor,
+      appointment: appointment({
+        job: {
+          ...appointment().job,
+          customer: {
+            ...appointment().job.customer,
+            displayName: 'Aarthi',
+          },
+          title: 'TV Mount Fix',
+        },
+        scheduledEnd: '2026-09-19T17:00:00.000Z',
+        scheduledStart: '2026-09-19T16:00:00.000Z',
+      }),
+    });
+
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'TV Mount Fix with Aarthi on 20/09/2026 at 2:00 am has been assigned to you.',
+      }),
+    );
   });
 
   it('does not notify the actor when they assign an appointment to themselves', async () => {
@@ -119,6 +150,25 @@ describe('AppointmentNotificationsService', () => {
     });
 
     expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('notifies an owner when another dispatcher assigns an appointment to them', async () => {
+    const { notifications, service } = createService();
+
+    await service.notifyAssigned({
+      actor: { ...actor, id: 'scheduler-1', role: 'SCHEDULER' },
+      appointment: appointment({
+        assignedUserId: 'owner-1',
+      }),
+    });
+
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'New appointment assigned',
+        type: 'APPOINTMENT_ASSIGNED',
+        userId: 'owner-1',
+      }),
+    );
   });
 
   it('creates reschedule, cancellation and reassignment notifications', async () => {
@@ -136,6 +186,11 @@ describe('AppointmentNotificationsService', () => {
 
     expect(notifications.create).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'APPOINTMENT_RESCHEDULED' }),
+    );
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'Hot water inspection with Raj Patel on 31/08/2026 at 9:30 am has been rescheduled.',
+      }),
     );
     expect(notifications.create).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'APPOINTMENT_CANCELLED' }),

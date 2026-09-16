@@ -174,15 +174,8 @@ export function DashboardScreen() {
             />
           </View>
 
-          <DashboardRow
-            label="Next appointment"
-            meta={
-              nextAppointment
-                ? `${nextAppointment.customerName} · ${
-                    nextAppointment.technicianName ?? 'Unassigned'
-                  }`
-                : 'No upcoming appointment found'
-            }
+          <NextAppointmentRow
+            appointment={nextAppointment}
             onPress={
               nextAppointment
                 ? () =>
@@ -191,14 +184,7 @@ export function DashboardScreen() {
                     })
                 : undefined
             }
-            value={
-              nextAppointment
-                ? formatAppointmentTime(
-                    nextAppointment.startsAt,
-                    businessTimezone,
-                  )
-                : 'Clear'
-            }
+            timezone={businessTimezone}
           />
 
           <DashboardRow
@@ -464,9 +450,71 @@ function HeroMetric({
   return (
     <View style={styles.heroMetric}>
       <Text style={styles.heroMetricValue}>{value ?? '-'}</Text>
-      <Text style={styles.heroMetricLabel}>{label}</Text>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.9}
+        numberOfLines={1}
+        style={styles.heroMetricLabel}
+      >
+        {label}
+      </Text>
     </View>
   );
+}
+
+function NextAppointmentRow({
+  appointment,
+  onPress,
+  timezone,
+}: {
+  appointment: DashboardSummaryResponse['nextAppointment'] | undefined;
+  onPress?: () => void;
+  timezone: string;
+}) {
+  const content = appointment ? (
+    <>
+      <View style={styles.nextAppointmentCopy}>
+        <Text style={styles.rowLabel}>Next appointment</Text>
+        <Text numberOfLines={2} style={styles.nextAppointmentName}>
+          {appointment.customerName}
+        </Text>
+        <Text numberOfLines={2} style={styles.rowMeta}>
+          {appointment.technicianName ?? 'Unassigned'}
+        </Text>
+      </View>
+      <Text style={styles.nextAppointmentTime}>
+        {formatAppointmentTime(appointment.startsAt, timezone)}
+      </Text>
+    </>
+  ) : (
+    <>
+      <View style={styles.nextAppointmentCopy}>
+        <Text style={styles.rowLabel}>Next appointment</Text>
+        <Text style={styles.rowMeta}>No upcoming appointment found</Text>
+      </View>
+      <View style={styles.rowValuePill}>
+        <Text style={styles.rowValue}>Clear</Text>
+      </View>
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityLabel="Open Next appointment"
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.nextAppointmentRow,
+          pressed && styles.cardPressed,
+        ]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.nextAppointmentRow}>{content}</View>;
 }
 
 function DashboardRow({
@@ -627,7 +675,10 @@ const styles = StyleSheet.create({
     borderColor: colours.border,
     borderRadius: 18,
     borderWidth: 1,
-    flex: 1,
+    flexBasis: 96,
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 96,
     padding: 14,
   },
   heroMetricLabel: {
@@ -636,7 +687,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 4,
   },
-  heroMetricRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  heroMetricRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
   heroMetricValue: { color: colours.ink, fontSize: 28, fontWeight: '900' },
   itemTitle: {
     color: colours.ink,
@@ -664,6 +720,27 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '900',
     marginTop: 6,
+  },
+  nextAppointmentCopy: { gap: 4 },
+  nextAppointmentName: {
+    color: colours.ink,
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 22,
+  },
+  nextAppointmentRow: {
+    borderTopColor: colours.border,
+    borderTopWidth: 1,
+    gap: 8,
+    minHeight: 58,
+    paddingVertical: 12,
+  },
+  nextAppointmentTime: {
+    alignSelf: 'flex-start',
+    color: colours.primary,
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 20,
   },
   previewCopy: { flex: 1 },
   previewItem: {

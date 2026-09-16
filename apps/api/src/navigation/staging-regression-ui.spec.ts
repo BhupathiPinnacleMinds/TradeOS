@@ -79,6 +79,20 @@ describe('staging mobile regression UI contracts', () => {
     ).toBe('Good evening, Bhupathi');
   });
 
+  it('keeps dashboard KPI cards and next appointment layout responsive on mobile', () => {
+    const dashboardScreen = mobileSource('screens/DashboardScreen.tsx');
+
+    expect(dashboardScreen).toContain('function NextAppointmentRow');
+    expect(dashboardScreen).toContain('styles.nextAppointmentRow');
+    expect(dashboardScreen).toContain('styles.nextAppointmentTime');
+    expect(dashboardScreen).toContain("flexWrap: 'wrap'");
+    expect(dashboardScreen).toContain('minWidth: 96');
+    expect(dashboardScreen).toContain('numberOfLines={1}');
+    expect(dashboardScreen).not.toContain(
+      'label="Next appointment"\n            meta={',
+    );
+  });
+
   it('shows date plus scheduled time only for My Day completed-today cards', () => {
     const myDayScreen = mobileSource('screens/MyDayScreen.tsx');
     const laterTodayIndex = myDayScreen.indexOf(
@@ -99,8 +113,8 @@ describe('staging mobile regression UI contracts', () => {
       completedTodayIndex,
     );
     expect(myDayScreen).toContain('formatBusinessCompactDateTimeRange');
-    expect(myDayScreen).toContain(
-      'formatBusinessCompactDateTimeRange(\n                appointment.scheduledStart,\n                appointment.scheduledEnd,\n                timezone,',
+    expect(myDayScreen).toMatch(
+      /formatBusinessCompactDateTimeRange\(\s*appointment\.scheduledStart,\s*appointment\.scheduledEnd,\s*timezone,/,
     );
     expect(myDayScreen).toContain(
       ': formatBusinessTime(appointment.scheduledStart, timezone)',
@@ -111,9 +125,10 @@ describe('staging mobile regression UI contracts', () => {
     const myDayScreen = mobileSource('screens/MyDayScreen.tsx');
 
     expect(myDayScreen).toContain('<NextAppointment');
+    expect(myDayScreen).toContain("alignItems: 'flex-start'");
     expect(myDayScreen).toContain('showScheduledDate');
-    expect(myDayScreen).toContain(
-      'formatBusinessCompactDateTimeRange(\n                appointment.scheduledStart,\n                appointment.scheduledEnd,\n                timezone,',
+    expect(myDayScreen).toMatch(
+      /formatBusinessCompactDateTimeRange\(\s*appointment\.scheduledStart,\s*appointment\.scheduledEnd,\s*timezone,/,
     );
     expect(myDayScreen).toContain(
       'showScheduledDate\n          ? null\n          : ` · ${formatBusinessTimeRange(',
