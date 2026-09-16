@@ -59,6 +59,28 @@ function appointmentAddress(appointment: Appointment) {
     .join(', ');
 }
 
+function reassignmentConflictTitle(
+  availability: AppointmentAvailabilityResponse | null,
+) {
+  const reasonCodes = availability?.reasons?.map((reason) => reason.code) ?? [];
+  if (reasonCodes.includes('ON_LEAVE')) {
+    return 'Technician is unavailable';
+  }
+  if (reasonCodes.includes('OUTSIDE_SHIFT')) {
+    return 'Technician is outside their scheduled shift.';
+  }
+  if (
+    reasonCodes.includes('APPOINTMENT_CONFLICT') ||
+    (availability?.conflicts.length ?? 0) > 0
+  ) {
+    return 'This technician already has another appointment at this time.';
+  }
+  if (reasonCodes.includes('OUTSIDE_BUSINESS_HOURS')) {
+    return 'Appointment is outside business hours.';
+  }
+  return 'Technician is unavailable';
+}
+
 export function AppointmentReassignScreen({ navigation, route }: Props) {
   const { appointmentId } = route.params;
   const { token, user } = useAuth();
@@ -222,6 +244,9 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   }
 
   const hasConflict = Boolean(availability?.hasConflict);
+  const canOverrideAvailability = Boolean(
+    canOverrideConflict && availability?.canOverride,
+  );
 
   return (
     <KeyboardAvoidingView
@@ -319,7 +344,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         {hasConflict ? (
           <View style={styles.conflictCard}>
             <Text style={styles.conflictTitle}>
-              This technician already has another appointment at this time.
+              {reassignmentConflictTitle(availability)}
             </Text>
             <Text style={styles.meta}>{availability?.reason}</Text>
             <View style={styles.actions}>
@@ -327,7 +352,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
                 label="Choose another"
                 onPress={() => setAvailability(null)}
               />
-              {canOverrideConflict ? (
+              {canOverrideAvailability ? (
                 <ActionButton
                   danger
                   label="Override"

@@ -28,6 +28,12 @@ describe('member leave mobile UI contracts', () => {
   it('uses native date pickers for self-service leave dates', () => {
     const myLeave = mobileSource('screens/MyLeaveScreen.tsx');
 
+    expect(myLeave).toMatch(
+      /Leave and\s+unavailable days are used when checking appointment scheduling/,
+    );
+    expect(myLeave).not.toContain(
+      'This does not change appointment scheduling rules yet.',
+    );
     expect(myLeave).toContain('mode="date"');
     expect(myLeave).toContain('DateOnlyField');
     expect(myLeave).toContain('formatDateOnlyForDisplay(value)');
@@ -59,5 +65,20 @@ describe('member leave mobile UI contracts', () => {
     expect(controller).toContain("@Post('me/leave/:leaveId/cancel')");
     expect(controller).toContain("@Get('team/leave')");
     expect(appModule).toContain('MemberLeaveModule');
+  });
+
+  it('renders reassignment warning headings from structured availability reasons', () => {
+    const reassign = mobileSource('screens/AppointmentReassignScreen.tsx');
+
+    expect(reassign).toContain('reassignmentConflictTitle');
+    expect(reassign).toContain("reasonCodes.includes('ON_LEAVE')");
+    expect(reassign).toContain('Technician is unavailable');
+    expect(reassign).toContain("reasonCodes.includes('OUTSIDE_SHIFT')");
+    expect(reassign).toContain('Technician is outside their scheduled shift.');
+    expect(reassign).toContain("reasonCodes.includes('APPOINTMENT_CONFLICT')");
+    expect(reassign).toContain(
+      'This technician already has another appointment at this time.',
+    );
+    expect(reassign).toContain('availability?.canOverride');
   });
 });

@@ -197,8 +197,9 @@ export function MyLeaveScreen() {
         <Text style={styles.eyebrow}>SELF-SERVICE</Text>
         <Text style={styles.title}>My availability</Text>
         <Text style={styles.subtitle}>
-          Add sick leave, planned leave or unavailable days. This does not
-          change appointment scheduling rules yet.
+          Add sick leave, planned leave or unavailable days. Leave and
+          unavailable days are used when checking appointment scheduling and
+          technician availability.
         </Text>
 
         <Pressable
