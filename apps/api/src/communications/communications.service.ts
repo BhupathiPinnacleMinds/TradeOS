@@ -217,69 +217,28 @@ export class CustomerCommunicationsService {
   async processDueCustomerCommunications(
     currentUser?: AuthenticatedUser,
     limit = DEFAULT_PROCESS_LIMIT,
+    appointmentEmailOnly = false,
   ) {
     if (currentUser) {
       this.assertRole(currentUser, ['OWNER', 'ADMIN', 'OFFICE_MANAGER']);
     }
     const startedAt = Date.now();
-    const due = await this.findDueCommunications(limit);
+    const due = await this.findDueCommunications(limit, appointmentEmailOnly);
     let sent = 0;
     let failed = 0;
     let claimed = 0;
     let skipped = 0;
     for (const record of due) {
-      let current = await this.claimDueCommunication(record);
+      const current = await this.claimDueCommunication(record);
       if (!current) {
         skipped += 1;
         continue;
       }
       claimed += 1;
-      current = await this.prepareScheduledCommunicationForDelivery(current);
-      if (!current || current.status !== 'PROCESSING') {
-        skipped += 1;
-        continue;
-      }
-      const delivery = await this.provider.send({
-        businessId: current.businessId,
-        channel: current.channel,
-        communicationId: current.id,
-        entityReference: this.entityReference(current),
-        message: current.message,
-        recipient: current.recipient,
-        subject: current.subject,
-        type: current.type,
-      });
-      if (delivery.status === 'SENT') {
-        await this.prisma.customerCommunication.update({
-          where: { id: current.id },
-          data: {
-            failedAt: null,
-            failureReason: null,
-            processingExpiresAt: null,
-            processingStartedAt: null,
-            provider: delivery.provider ?? null,
-            providerMessageId: delivery.providerMessageId ?? null,
-            sentAt: new Date(),
-            status: 'SENT',
-          },
-        });
-        sent += 1;
-      } else {
-        await this.prisma.customerCommunication.update({
-          where: { id: current.id },
-          data: {
-            failedAt: new Date(),
-            failureReason: this.safeFailure(delivery.failureReason),
-            processingExpiresAt: null,
-            processingStartedAt: null,
-            provider: delivery.provider ?? null,
-            providerMessageId: delivery.providerMessageId ?? null,
-            status: 'FAILED',
-          },
-        });
-        await this.notifyCommunicationFailure(current);
-        failed += 1;
-      }
+      const outcome = await this.deliverClaimedCommunication(current);
+      if (outcome === 'SENT') sent += 1;
+      else if (outcome === 'FAILED') failed += 1;
+      else skipped += 1;
     }
     const result = {
       claimed,
@@ -294,12 +253,101 @@ export class CustomerCommunicationsService {
     return result;
   }
 
+  async dispatchAppointmentConfirmation(
+    businessId: string,
+    appointmentId: string,
+  ) {
+    const record = await this.prisma.customerCommunication.findUnique({
+      where: {
+        businessId_idempotencyKey: {
+          businessId,
+          idempotencyKey: this.idempotencyKey(
+            businessId,
+            'APPOINTMENT_CONFIRMATION',
+            appointmentId,
+          ),
+        },
+      },
+    });
+    if (!record || record.status !== 'SCHEDULED') return;
+    const claimed = await this.claimDueCommunication(record);
+    if (claimed) await this.deliverClaimedCommunication(claimed);
+  }
+
+  private async deliverClaimedCommunication(
+    record: ProcessableCommunicationRecord,
+  ) {
+    const current = await this.prepareScheduledCommunicationForDelivery(record);
+    if (!current || current.status !== 'PROCESSING') return 'SKIPPED' as const;
+    let delivery: Awaited<ReturnType<CustomerCommunicationProvider['send']>>;
+    try {
+      delivery = await this.provider.send({
+        businessId: current.businessId,
+        channel: current.channel,
+        communicationId: current.id,
+        entityReference: this.entityReference(current),
+        message: current.message,
+        recipient: current.recipient,
+        subject: current.subject,
+        type: current.type,
+      });
+    } catch {
+      delivery = {
+        failureReason: 'COMMUNICATION_PROVIDER_ERROR',
+        status: 'FAILED',
+      };
+    }
+    if (delivery.status === 'SENT') {
+      await this.prisma.customerCommunication.update({
+        where: { id: current.id },
+        data: {
+          failedAt: null,
+          failureReason: null,
+          processingExpiresAt: null,
+          processingStartedAt: null,
+          provider: delivery.provider ?? null,
+          providerMessageId: delivery.providerMessageId ?? null,
+          sentAt: new Date(),
+          status: 'SENT',
+        },
+      });
+      return 'SENT' as const;
+    }
+    await this.prisma.customerCommunication.update({
+      where: { id: current.id },
+      data: {
+        failedAt: new Date(),
+        failureReason: this.safeFailure(delivery.failureReason),
+        processingExpiresAt: null,
+        processingStartedAt: null,
+        provider: delivery.provider ?? null,
+        providerMessageId: delivery.providerMessageId ?? null,
+        status: 'FAILED',
+      },
+    });
+    if (
+      current.type === 'APPOINTMENT_CONFIRMATION' ||
+      current.type === 'APPOINTMENT_REMINDER'
+    ) {
+      console.warn('[TradieOS appointment email delivery failed]', {
+        appointmentId: current.relatedAppointmentId,
+        businessId: current.businessId,
+        communicationId: current.id,
+        reason: 'PROVIDER_SEND_FAILED',
+        type: current.type,
+      });
+    }
+    await this.notifyCommunicationFailure(current);
+    return 'FAILED' as const;
+  }
+
   async appointmentCreated(
     tx: Tx,
     currentUser: AuthenticatedUser,
     appointment: {
       addressLine1: string;
       addressLine2: string | null;
+      assignedUser?: { firstName: string; lastName: string } | null;
       appointmentType: string;
       id: string;
       job: {
@@ -321,9 +369,13 @@ export class CustomerCommunicationsService {
       this.getSettings(currentUser.businessId, tx),
     ]);
     const serviceAddress = this.serviceAddress(appointment);
-    if (settings.appointmentConfirmationsEnabled) {
-      await this.createOrSend(tx, {
+    if (
+      settings.appointmentConfirmationsEnabled &&
+      this.canEmail(appointment.job.customer)
+    ) {
+      await this.createOrSchedule(tx, {
         business,
+        channel: 'EMAIL',
         createdBy: currentUser.id,
         customer: appointment.job.customer,
         idempotencyKey: this.idempotencyKey(
@@ -333,6 +385,7 @@ export class CustomerCommunicationsService {
         ),
         relatedAppointmentId: appointment.id,
         relatedJobId: appointment.jobId,
+        scheduledFor: new Date(),
         template: appointmentConfirmationTemplate({
           appointmentType: appointment.appointmentType,
           business,
@@ -341,11 +394,15 @@ export class CustomerCommunicationsService {
           jobTitle: appointment.job.title,
           serviceAddress,
           start: appointment.scheduledStart,
+          technicianName: this.technicianName(appointment.assignedUser),
         }),
         type: 'APPOINTMENT_CONFIRMATION',
       });
     }
-    if (settings.appointmentRemindersEnabled) {
+    if (
+      settings.appointmentRemindersEnabled &&
+      this.canEmail(appointment.job.customer)
+    ) {
       await this.scheduleAppointmentReminder(
         tx,
         currentUser,
@@ -394,7 +451,10 @@ export class CustomerCommunicationsService {
       }),
       type: 'APPOINTMENT_RESCHEDULED',
     });
-    if (settings.appointmentRemindersEnabled) {
+    if (
+      settings.appointmentRemindersEnabled &&
+      this.canEmail(appointment.job.customer)
+    ) {
       await this.scheduleAppointmentReminder(
         tx,
         currentUser,
@@ -724,6 +784,7 @@ export class CustomerCommunicationsService {
   ) {
     await this.createOrSchedule(tx, {
       business,
+      channel: 'EMAIL',
       createdBy: currentUser.id,
       customer: appointment.job.customer,
       idempotencyKey: this.idempotencyKey(
@@ -744,6 +805,7 @@ export class CustomerCommunicationsService {
         jobTitle: appointment.job.title,
         serviceAddress: this.serviceAddress(appointment),
         start: appointment.scheduledStart,
+        technicianName: this.technicianName(appointment.assignedUser),
       }),
       type: 'APPOINTMENT_REMINDER',
     });
@@ -817,7 +879,11 @@ export class CustomerCommunicationsService {
         },
       },
     });
-    if (existing?.status === 'SENT' || existing?.status === 'CANCELLED') {
+    if (
+      existing?.status === 'SENT' ||
+      existing?.status === 'CANCELLED' ||
+      existing?.status === 'PROCESSING'
+    ) {
       return existing;
     }
     const data: Prisma.CustomerCommunicationUncheckedCreateInput = {
@@ -898,10 +964,24 @@ export class CustomerCommunicationsService {
     });
   }
 
-  private async findDueCommunications(limit: number) {
+  private async findDueCommunications(
+    limit: number,
+    appointmentEmailOnly: boolean,
+  ) {
     const now = new Date();
     return this.prisma.customerCommunication.findMany({
       where: {
+        ...(appointmentEmailOnly
+          ? {
+              channel: 'EMAIL' as const,
+              type: {
+                in: [
+                  'APPOINTMENT_CONFIRMATION' as const,
+                  'APPOINTMENT_REMINDER' as const,
+                ],
+              },
+            }
+          : {}),
         OR: [
           {
             scheduledFor: { lte: now },
@@ -978,11 +1058,19 @@ export class CustomerCommunicationsService {
         businessId: record.businessId,
         id: record.relatedAppointmentId,
       },
-      select: { scheduledStart: true, status: true },
+      select: {
+        job: { select: { status: true } },
+        scheduledStart: true,
+        status: true,
+      },
     });
     if (
       !appointment ||
       !['SCHEDULED', 'CONFIRMED'].includes(appointment.status) ||
+      ['ON_HOLD', 'COMPLETED', 'CANCELLED'].includes(appointment.job.status) ||
+      !record.idempotencyKey.endsWith(
+        appointment.scheduledStart.toISOString(),
+      ) ||
       appointment.scheduledStart.getTime() <= Date.now()
     ) {
       return this.cancelClaimedCommunication(
@@ -1315,6 +1403,21 @@ export class CustomerCommunicationsService {
       return 'EMAIL';
     }
     return 'SMS';
+  }
+
+  private canEmail(customer: CustomerWithPreferences) {
+    return Boolean(
+      customer.email?.trim() &&
+      customer.communicationPreference?.emailEnabled !== false,
+    );
+  }
+
+  private technicianName(
+    user?: { firstName: string; lastName: string } | null,
+  ) {
+    return user
+      ? [user.firstName, user.lastName].filter(Boolean).join(' ')
+      : null;
   }
 
   private recipientFor(

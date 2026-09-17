@@ -595,6 +595,18 @@ export class AppointmentsService {
       actor: currentUser,
       appointment,
     });
+    try {
+      await this.communications.dispatchAppointmentConfirmation(
+        currentUser.businessId,
+        created.id,
+      );
+    } catch (error) {
+      console.error('[TradieOS appointment confirmation dispatch failed]', {
+        appointmentId: created.id,
+        businessId: currentUser.businessId,
+        reason: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
+      });
+    }
 
     return { appointment };
   }

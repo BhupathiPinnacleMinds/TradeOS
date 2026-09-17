@@ -32,6 +32,7 @@ export function appointmentConfirmationTemplate(input: {
   jobTitle: string;
   serviceAddress: string;
   start: Date;
+  technicianName?: string | null;
 }): CommunicationTemplate {
   const timezone = input.business.timezone ?? 'Australia/Melbourne';
   return {
@@ -42,6 +43,7 @@ export function appointmentConfirmationTemplate(input: {
       `Date: ${formatBusinessDate(input.start, timezone)}`,
       `Time: ${formatBusinessTimeRange(input.start, input.end, timezone)}`,
       `Address: ${input.serviceAddress}`,
+      input.technicianName ? `Technician: ${input.technicianName}` : null,
       contactLine(input.business)
         ? `Questions? Contact us on ${contactLine(input.business)}.`
         : null,
@@ -58,6 +60,7 @@ export function appointmentReminderTemplate(input: {
   jobTitle: string;
   serviceAddress: string;
   start: Date;
+  technicianName?: string | null;
 }): CommunicationTemplate {
   const timezone = input.business.timezone ?? 'Australia/Melbourne';
   return {
@@ -68,7 +71,13 @@ export function appointmentReminderTemplate(input: {
       `Date: ${formatBusinessDate(input.start, timezone)}`,
       `Time: ${formatBusinessTimeRange(input.start, input.end, timezone)}`,
       `Address: ${input.serviceAddress}`,
-    ].join('\n'),
+      input.technicianName ? `Technician: ${input.technicianName}` : null,
+      contactLine(input.business)
+        ? `Questions? Contact us on ${contactLine(input.business)}.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
   };
 }
 

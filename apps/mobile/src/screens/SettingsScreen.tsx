@@ -433,8 +433,9 @@ export function SettingsScreen() {
               <View style={styles.card}>
                 <Text style={styles.label}>Communication settings</Text>
                 <Text style={styles.meta}>
-                  Local-safe Phase 1 reminders and confirmations. Real SMS/email
-                  vendors are not connected yet.
+                  Appointment confirmations and reminders use the configured
+                  TradeOS email service when delivery is enabled. Appointment
+                  SMS is not enabled here.
                 </Text>
                 <SettingToggle
                   disabled={settingsBusy}

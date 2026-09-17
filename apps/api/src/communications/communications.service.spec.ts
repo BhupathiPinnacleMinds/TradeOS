@@ -56,6 +56,7 @@ function appointment(overrides: Record<string, unknown> = {}) {
     job: {
       customer: customer(),
       customerId: 'customer-1',
+      status: 'SCHEDULED',
       title: 'Outdoor leak',
     },
     jobId: 'job-1',
@@ -490,19 +491,59 @@ describe('CustomerCommunicationsService', () => {
   it('creates an appointment confirmation and schedules one reminder', async () => {
     const { provider, records, service, prisma } = createHarness();
 
-    await service.appointmentCreated(prisma as never, owner, appointment());
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      appointment({ assignedUser: { firstName: 'Ganga', lastName: 'G' } }),
+    );
 
     expect(records).toHaveLength(2);
     expect(records.map((record) => record.type)).toEqual([
       'APPOINTMENT_CONFIRMATION',
       'APPOINTMENT_REMINDER',
     ]);
+    expect(records[0].status).toBe('SCHEDULED');
+    expect((records[1].scheduledFor as Date).toISOString()).toBe(
+      '2026-08-12T04:07:00.000Z',
+    );
+    expect(provider.send).not.toHaveBeenCalled();
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
     expect(records[0].status).toBe('SENT');
     expect(records[1].status).toBe('SCHEDULED');
     expect(provider.send).toHaveBeenCalledTimes(1);
     expect(records[0]).toMatchObject({
       provider: 'test-provider',
       providerMessageId: 'message-1',
+    });
+    expect(String(records[0].message)).toContain('Date:');
+    expect(String(records[0].message)).toContain('Address: 16 Coffey Street');
+    expect(String(records[0].message)).toContain('Technician: Ganga G');
+    expect(String(records[1].message)).toContain('Technician: Ganga G');
+  });
+
+  it('records a failed confirmation without claiming it was sent', async () => {
+    const { provider, records, service, prisma } = createHarness();
+    provider.send.mockResolvedValueOnce({
+      failureReason: 'PROVIDER_REJECTED',
+      provider: 'resend',
+      status: 'FAILED',
+    });
+    await service.appointmentCreated(prisma as never, owner, appointment());
+    expect(records[0].status).toBe('SCHEDULED');
+
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
+
+    expect(provider.send).toHaveBeenCalledTimes(1);
+    expect(records[0]).toMatchObject({
+      failureReason: 'PROVIDER_REJECTED',
+      sentAt: null,
+      status: 'FAILED',
     });
   });
 
@@ -584,7 +625,7 @@ describe('CustomerCommunicationsService', () => {
     expect(provider.send).not.toHaveBeenCalled();
   });
 
-  it('uses SMS for a phone-only customer with default ANY preferences', async () => {
+  it('does not claim an appointment email was sent for a phone-only customer', async () => {
     const { provider, records, service, prisma } = createHarness();
 
     await service.appointmentCreated(
@@ -603,14 +644,8 @@ describe('CustomerCommunicationsService', () => {
       }),
     );
 
-    expect(records).toHaveLength(2);
-    expect(records.map((record) => record.channel)).toEqual(['SMS', 'SMS']);
-    expect(records.map((record) => record.recipient)).toEqual([
-      '0414303232',
-      '0414303232',
-    ]);
-    expect(records.map((record) => record.failureReason)).toEqual([null, null]);
-    expect(provider.send).toHaveBeenCalledTimes(1);
+    expect(records).toHaveLength(0);
+    expect(provider.send).not.toHaveBeenCalled();
   });
 
   it('respects appointment communication settings being turned off', async () => {
@@ -630,6 +665,14 @@ describe('CustomerCommunicationsService', () => {
 
     await service.appointmentCreated(prisma as never, owner, appointment());
     await service.appointmentCreated(prisma as never, owner, appointment());
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
 
     expect(records).toHaveLength(2);
     expect(records.map((record) => record.type)).toEqual([
@@ -701,8 +744,7 @@ describe('CustomerCommunicationsService', () => {
       }),
     );
 
-    expect(records[0].status).toBe('FAILED');
-    expect(records[0].failureReason).toBe('COMMUNICATION_RECIPIENT_MISSING');
+    expect(records).toHaveLength(0);
     expect(provider.send).not.toHaveBeenCalled();
   });
 
@@ -1241,6 +1283,10 @@ describe('CustomerCommunicationsService', () => {
       owner,
       futureAppointment(),
     );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
     );
@@ -1266,6 +1312,10 @@ describe('CustomerCommunicationsService', () => {
       owner,
       futureAppointment(),
     );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
     provider.send.mockClear();
 
     const result = await service.processDueCustomerCommunications(owner);
@@ -1277,12 +1327,44 @@ describe('CustomerCommunicationsService', () => {
     expect(provider.send).not.toHaveBeenCalled();
   });
 
+  it('limits an appointment-only worker to appointment email records', async () => {
+    const { provider, records, service, prisma, setQuote } = createHarness();
+    setQuote({ sentAt: makeDate('2026-08-08T04:00:00.000Z') });
+    await service.quoteSent({
+      businessId: owner.businessId,
+      createdBy: owner.id,
+      publicUrl: 'http://localhost:3000/public/quotes/demo-token',
+      quoteId: 'quote-1',
+    });
+    await service.appointmentCreated(
+      prisma as never,
+      owner,
+      futureAppointment(),
+    );
+    const reminder = records.find(
+      (record) => record.type === 'APPOINTMENT_REMINDER',
+    );
+    if (reminder) reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+    provider.send.mockClear();
+
+    await service.processDueCustomerCommunications(undefined, 50, true);
+
+    expect(provider.send).toHaveBeenCalledTimes(2);
+    expect(
+      records.find((record) => record.type === 'QUOTE_FOLLOW_UP')?.status,
+    ).toBe('SCHEDULED');
+  });
+
   it('does not process cancelled or already sent scheduled communications again', async () => {
     const { provider, records, service, prisma } = createHarness();
     await service.appointmentCreated(
       prisma as never,
       owner,
       futureAppointment(),
+    );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
     );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
@@ -1313,6 +1395,10 @@ describe('CustomerCommunicationsService', () => {
       prisma as never,
       owner,
       futureAppointment(),
+    );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
     );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
@@ -1345,6 +1431,10 @@ describe('CustomerCommunicationsService', () => {
       prisma as never,
       owner,
       futureAppointment(),
+    );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
     );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
@@ -1385,29 +1475,65 @@ describe('CustomerCommunicationsService', () => {
     ).toHaveLength(1);
   });
 
-  it('cancels an appointment reminder if the appointment is cancelled before processing', async () => {
-    const { provider, records, service, prisma, setAppointment } =
-      createHarness();
-    await service.appointmentCreated(
-      prisma as never,
-      owner,
-      futureAppointment(),
-    );
-    const reminder = records.find(
-      (record) => record.type === 'APPOINTMENT_REMINDER',
-    );
-    if (reminder) {
-      reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
-    }
-    setAppointment({ status: 'CANCELLED' });
-    provider.send.mockClear();
+  it.each(['CANCELLED', 'COMPLETED'])(
+    'cancels an appointment reminder if the appointment is %s before processing',
+    async (status) => {
+      const { provider, records, service, prisma, setAppointment } =
+        createHarness();
+      await service.appointmentCreated(
+        prisma as never,
+        owner,
+        futureAppointment(),
+      );
+      await service.dispatchAppointmentConfirmation(
+        owner.businessId,
+        'appointment-1',
+      );
+      const reminder = records.find(
+        (record) => record.type === 'APPOINTMENT_REMINDER',
+      );
+      if (reminder) {
+        reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+      }
+      setAppointment({ status });
+      provider.send.mockClear();
 
-    const result = await service.processDueCustomerCommunications(undefined);
+      const result = await service.processDueCustomerCommunications(undefined);
 
-    expect(result).toMatchObject({ claimed: 1, skipped: 1, sent: 0 });
-    expect(reminder?.status).toBe('CANCELLED');
-    expect(provider.send).not.toHaveBeenCalled();
-  });
+      expect(result).toMatchObject({ claimed: 1, skipped: 1, sent: 0 });
+      expect(reminder?.status).toBe('CANCELLED');
+      expect(provider.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['ON_HOLD', 'COMPLETED', 'CANCELLED'])(
+    'suppresses reminders for a %s parent job',
+    async (jobStatus) => {
+      const { provider, records, service, prisma, setAppointment } =
+        createHarness();
+      await service.appointmentCreated(
+        prisma as never,
+        owner,
+        futureAppointment(),
+      );
+      await service.dispatchAppointmentConfirmation(
+        owner.businessId,
+        'appointment-1',
+      );
+      const reminder = records.find(
+        (record) => record.type === 'APPOINTMENT_REMINDER',
+      );
+      if (reminder)
+        reminder.scheduledFor = makeDate('2026-08-11T00:00:00.000Z');
+      setAppointment({ job: { status: jobStatus } });
+      provider.send.mockClear();
+
+      await service.processDueCustomerCommunications(undefined);
+
+      expect(reminder?.status).toBe('CANCELLED');
+      expect(provider.send).not.toHaveBeenCalled();
+    },
+  );
 
   it('cancels a quote follow-up if the quote was accepted before processing', async () => {
     const { provider, records, service, setQuote } = createHarness();
@@ -1447,6 +1573,10 @@ describe('CustomerCommunicationsService', () => {
       owner,
       futureAppointment(),
     );
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
     const reminder = records.find(
       (record) => record.type === 'APPOINTMENT_REMINDER',
     );
@@ -1484,6 +1614,10 @@ describe('CustomerCommunicationsService', () => {
   it('keeps the original confirmation accessible after repeated reschedules and cancellation', async () => {
     const { records, service, prisma } = createHarness();
     await service.appointmentCreated(prisma as never, owner, appointment());
+    await service.dispatchAppointmentConfirmation(
+      owner.businessId,
+      'appointment-1',
+    );
 
     for (const hour of [5, 6, 7, 8, 9, 10, 11, 12]) {
       await service.appointmentRescheduled(

@@ -74,6 +74,32 @@ describe('CustomerCommunicationWorker', () => {
     expect(service.processDueCustomerCommunications).toHaveBeenCalledWith(
       undefined,
       12,
+      false,
+    );
+  });
+
+  it('processes only appointment email while broader customer communications are disabled', async () => {
+    const service = {
+      processDueCustomerCommunications: jest
+        .fn()
+        .mockResolvedValue({ sent: 0 }),
+    };
+    const worker = new CustomerCommunicationWorker(
+      service as unknown as CustomerCommunicationsService,
+      logger(),
+      config({
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+        CUSTOMER_COMMUNICATION_WORKER_ENABLED: 'true',
+      }),
+    );
+
+    await worker.tick();
+    worker.onModuleDestroy();
+
+    expect(service.processDueCustomerCommunications).toHaveBeenCalledWith(
+      undefined,
+      50,
+      true,
     );
   });
 

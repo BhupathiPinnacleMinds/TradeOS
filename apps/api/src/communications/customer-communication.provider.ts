@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { CustomerCommunicationChannel } from '@tradieos/shared';
+import { createEmailProvider } from '../members/email-provider';
 
 export type CustomerCommunicationDelivery = {
   businessId: string;
@@ -59,6 +60,52 @@ export class RoutedCustomerCommunicationProvider implements CustomerCommunicatio
     return delivery.channel === 'EMAIL'
       ? this.emailProvider.send(delivery)
       : this.smsProvider.send(delivery);
+  }
+}
+
+class AppointmentEmailCommunicationProvider implements CustomerCommunicationProvider {
+  constructor(
+    private readonly appointmentEmail: ReturnType<
+      typeof createEmailProvider
+    > | null,
+    private readonly fallback: CustomerCommunicationProvider,
+    private readonly smsConfigured: boolean,
+  ) {}
+
+  async send(delivery: CustomerCommunicationDelivery) {
+    if (
+      delivery.type !== 'APPOINTMENT_CONFIRMATION' &&
+      delivery.type !== 'APPOINTMENT_REMINDER'
+    ) {
+      if (delivery.channel === 'SMS' && !this.smsConfigured) {
+        return failed('unsupported-sms', 'COMMUNICATION_SMS_NOT_CONFIGURED');
+      }
+      return this.fallback.send(delivery);
+    }
+    if (delivery.channel !== 'EMAIL' || !this.appointmentEmail) {
+      return failed(
+        'email-not-configured',
+        'COMMUNICATION_EMAIL_NOT_CONFIGURED',
+      );
+    }
+    const result = await this.appointmentEmail.sendTransactionalEmail({
+      html: textToHtml(delivery.message),
+      subject: delivery.subject ?? 'Your appointment with TradieOS',
+      text: delivery.message,
+      to: delivery.recipient,
+    });
+    return result.status === 'SENT' && result.provider === 'resend'
+      ? {
+          provider: result.provider,
+          providerMessageId: result.messageId,
+          status: 'SENT' as const,
+        }
+      : failed(
+          result.provider,
+          'error' in result
+            ? result.error
+            : 'COMMUNICATION_EMAIL_NOT_CONFIGURED',
+        );
   }
 }
 
@@ -173,28 +220,47 @@ export class TwilioCustomerSmsProvider implements CustomerChannelProvider {
 export function createCustomerCommunicationProvider(
   config: ConfigService,
 ): CustomerCommunicationProvider {
+  const configuredEmail = config.get<string>('EMAIL_PROVIDER', 'console');
+  const appointmentEmail =
+    configuredEmail.trim().toLowerCase() === 'resend'
+      ? createEmailProvider({
+          apiKey: config.get<string>('RESEND_API_KEY'),
+          fromAddress: config.get<string>('EMAIL_FROM_ADDRESS'),
+          fromName: config.get<string>('EMAIL_FROM_NAME'),
+          isProduction: config.get<string>('NODE_ENV') === 'production',
+          provider: configuredEmail,
+        })
+      : null;
   const enabled =
     config.get<string>('CUSTOMER_COMMUNICATIONS_ENABLED', 'true') !== 'false';
   if (!enabled) {
-    return new LocalCustomerCommunicationProvider();
+    return new AppointmentEmailCommunicationProvider(
+      appointmentEmail,
+      new LocalCustomerCommunicationProvider(),
+      false,
+    );
   }
   const emailProvider = config.get<string>('CUSTOMER_EMAIL_PROVIDER', 'local');
   const smsProvider = config.get<string>('CUSTOMER_SMS_PROVIDER', 'local');
-  return new RoutedCustomerCommunicationProvider(
-    emailProvider === 'resend'
-      ? new ResendCustomerEmailProvider(
-          required(config, 'RESEND_API_KEY'),
-          config.get<string>('EMAIL_FROM_NAME', 'TradieOS'),
-          required(config, 'EMAIL_FROM_ADDRESS'),
-        )
-      : new LocalChannelProvider('local-email'),
-    smsProvider === 'twilio'
-      ? new TwilioCustomerSmsProvider(
-          required(config, 'TWILIO_ACCOUNT_SID'),
-          required(config, 'TWILIO_AUTH_TOKEN'),
-          required(config, 'TWILIO_MESSAGING_FROM'),
-        )
-      : new LocalChannelProvider('local-sms'),
+  return new AppointmentEmailCommunicationProvider(
+    appointmentEmail,
+    new RoutedCustomerCommunicationProvider(
+      emailProvider === 'resend'
+        ? new ResendCustomerEmailProvider(
+            required(config, 'RESEND_API_KEY'),
+            config.get<string>('EMAIL_FROM_NAME', 'TradieOS'),
+            required(config, 'EMAIL_FROM_ADDRESS'),
+          )
+        : new LocalChannelProvider('local-email'),
+      smsProvider === 'twilio'
+        ? new TwilioCustomerSmsProvider(
+            required(config, 'TWILIO_ACCOUNT_SID'),
+            required(config, 'TWILIO_AUTH_TOKEN'),
+            required(config, 'TWILIO_MESSAGING_FROM'),
+          )
+        : new LocalChannelProvider('local-sms'),
+    ),
+    smsProvider === 'twilio',
   );
 }
 

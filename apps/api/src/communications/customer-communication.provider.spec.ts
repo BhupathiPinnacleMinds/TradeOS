@@ -202,8 +202,8 @@ describe('CustomerCommunicationProvider', () => {
     await expect(
       provider.send(delivery({ channel: 'SMS', recipient: '0422462867' })),
     ).resolves.toMatchObject({
-      provider: 'local-sms',
-      status: 'SENT',
+      provider: 'unsupported-sms',
+      status: 'FAILED',
     });
   });
 
@@ -228,9 +228,78 @@ describe('CustomerCommunicationProvider', () => {
     await expect(
       provider.send(delivery({ channel: 'SMS', recipient: '0422462867' })),
     ).resolves.toMatchObject({
-      provider: 'local-sms',
+      provider: 'unsupported-sms',
+      status: 'FAILED',
+    });
+  });
+
+  it('uses the shared Resend provider for appointment email even when customer communications are disabled', async () => {
+    const fetchMock = createFetchMock(response(200, { id: 'em_appointment' }));
+    global.fetch = fetchMock;
+    const provider = createCustomerCommunicationProvider(
+      config({
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+        EMAIL_PROVIDER: 'resend',
+        EMAIL_FROM_ADDRESS: 'noreply@example.test',
+        EMAIL_FROM_NAME: 'TradieOS',
+        RESEND_API_KEY: 're_test_key',
+      }),
+    );
+
+    await expect(
+      provider.send(
+        delivery({
+          entityReference: 'appointment-1',
+          message: 'Appointment on 21 Sep 2026 at 9:30 am',
+          subject: 'Appointment confirmed with Demo Tradie Co',
+          type: 'APPOINTMENT_CONFIRMATION',
+        }),
+      ),
+    ).resolves.toMatchObject({
+      provider: 'resend',
+      providerMessageId: 'em_appointment',
       status: 'SENT',
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = fetchInitAt(fetchMock).body;
+    expect(typeof body).toBe('string');
+    const payload = JSON.parse(body as string) as {
+      to: string;
+      subject: string;
+      text: string;
+    };
+    expect(payload).toMatchObject({
+      to: 'mohith@example.test',
+      subject: 'Appointment confirmed with Demo Tradie Co',
+      text: 'Appointment on 21 Sep 2026 at 9:30 am',
+    });
+  });
+
+  it('does not report appointment email as sent when Resend rejects it', async () => {
+    global.fetch = createFetchMock(response(503, { message: 'unavailable' }));
+    const provider = createCustomerCommunicationProvider(
+      config({
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+        EMAIL_PROVIDER: 'resend',
+        EMAIL_FROM_ADDRESS: 'noreply@example.test',
+        RESEND_API_KEY: 're_test_key',
+      }),
+    );
+    await expect(
+      provider.send(delivery({ type: 'APPOINTMENT_REMINDER' })),
+    ).resolves.toMatchObject({ provider: 'resend', status: 'FAILED' });
+  });
+
+  it('does not report console appointment email as real delivery', async () => {
+    const provider = createCustomerCommunicationProvider(
+      config({
+        EMAIL_PROVIDER: 'console',
+        CUSTOMER_COMMUNICATIONS_ENABLED: 'false',
+      }),
+    );
+    await expect(
+      provider.send(delivery({ type: 'APPOINTMENT_CONFIRMATION' })),
+    ).resolves.toMatchObject({ status: 'FAILED' });
   });
 
   it('fails fast when real provider config is incomplete', () => {

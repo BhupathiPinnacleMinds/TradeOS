@@ -285,6 +285,7 @@ function createService() {
     appointmentCancelled: jest.fn(),
     appointmentCompleted: jest.fn(),
     appointmentCreated: jest.fn(),
+    dispatchAppointmentConfirmation: jest.fn(),
     appointmentRescheduled: jest.fn(),
   };
   return {
@@ -775,6 +776,7 @@ describe('AppointmentsService', () => {
         appointmentCancelled: jest.fn(),
         appointmentCompleted: jest.fn(),
         appointmentCreated: jest.fn(),
+        dispatchAppointmentConfirmation: jest.fn(),
         appointmentRescheduled: jest.fn(),
       } as never,
     );

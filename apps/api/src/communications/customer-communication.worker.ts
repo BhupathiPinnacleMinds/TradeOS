@@ -13,6 +13,7 @@ export class CustomerCommunicationWorker
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly enabled: boolean;
+  private readonly appointmentEmailOnly: boolean;
   private readonly intervalSeconds: number;
   private readonly batchSize: number;
   private interval: NodeJS.Timeout | null = null;
@@ -26,6 +27,8 @@ export class CustomerCommunicationWorker
     this.enabled =
       config.get<string>('CUSTOMER_COMMUNICATION_WORKER_ENABLED', 'false') ===
       'true';
+    this.appointmentEmailOnly =
+      config.get<string>('CUSTOMER_COMMUNICATIONS_ENABLED', 'true') === 'false';
     this.intervalSeconds = normalisePositiveInteger(
       config.get<string>('CUSTOMER_COMMUNICATION_WORKER_INTERVAL_SECONDS'),
       DEFAULT_INTERVAL_SECONDS,
@@ -86,6 +89,7 @@ export class CustomerCommunicationWorker
       const result = await this.communications.processDueCustomerCommunications(
         undefined,
         this.batchSize,
+        this.appointmentEmailOnly,
       );
       this.logger.info('communications_worker_completed', {
         category: 'communications_worker',
