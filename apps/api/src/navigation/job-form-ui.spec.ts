@@ -188,6 +188,36 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('switches Appointment customer modes without submitting an abandoned quick customer', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toMatch(
+      /useQuickCustomer\s*\? 'Choose existing customer'\s*: 'Create quick customer'/,
+    );
+    expect(appointmentForm).toContain('onPress={toggleQuickCustomer}');
+    expect(appointmentForm).toContain(
+      'customerBeforeQuickCreateRef.current = selectedCustomerId',
+    );
+    expect(appointmentForm).toContain(
+      'setSelectedCustomerId(customerBeforeQuickCreateRef.current)',
+    );
+    expect(appointmentForm).toContain("setQuickCustomerName('')");
+    expect(appointmentForm).toContain("setQuickCustomerPhone('')");
+    expect(appointmentForm).toContain("setQuickCustomerEmail('')");
+    expect(appointmentForm).toContain('if (useQuickCustomer) {');
+    expect(appointmentForm).toContain(
+      'if (!selectedCustomerId && !useQuickCustomer)',
+    );
+    expect(appointmentForm).toContain(
+      'onSelect={(value) => void selectCustomer(value)}',
+    );
+    const toggleHandler = appointmentForm
+      .split('function toggleQuickCustomer() {')[1]
+      ?.split('async function selectCustomer')[0];
+    expect(toggleHandler).toBeDefined();
+    expect(toggleHandler).not.toContain('createCustomerRequest');
+  });
+
   it('guards New Appointment save against rapid duplicate taps before state updates', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
@@ -328,7 +358,7 @@ describe('Job form mobile UI contracts', () => {
   it('preserves independent appointment creation customer and job selection controls', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
-    expect(appointmentForm).toContain('label="Quick-create customer"');
+    expect(appointmentForm).toContain("'Create quick customer'");
     expect(appointmentForm).toContain('label="Search and select a customer"');
     expect(appointmentForm).toContain('Search results');
     expect(appointmentForm).toContain('Recent customers');
@@ -388,7 +418,11 @@ describe('Job form mobile UI contracts', () => {
     const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
 
     expect(jobDetails).toContain('function jobStatusActions');
-    expect(jobDetails).toContain("job.status !== 'IN_PROGRESS'");
+    expect(jobDetails).toContain("job.status === 'ON_HOLD'");
+    expect(jobDetails).toContain("label: 'Resume Job'");
+    expect(jobDetails).not.toContain("label: 'Start Job'");
+    expect(jobDetails).toContain('OPEN_APPOINTMENTS_REQUIRE_CONFIRMATION');
+    expect(jobDetails).toContain('confirmWithOpenAppointments');
     expect(jobDetails).toContain('availableJobStatusActions.map');
     expect(jobDetails).toContain('Follow-up required');
     expect(jobDetails).toContain('Schedule follow-up');

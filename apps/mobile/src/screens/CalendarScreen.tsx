@@ -9,6 +9,7 @@ import type {
   TeamMember,
 } from '@tradieos/shared';
 import {
+  appointmentDisplayStatus,
   APPOINTMENT_STATUS_COLOURS,
   APPOINTMENT_STATUSES,
   DEFAULT_BUSINESS_TIMEZONE,
@@ -1331,6 +1332,7 @@ function DispatcherAppointmentCard({
   const address = appointmentAddress(appointment);
   const statusColour = APPOINTMENT_STATUS_COLOURS[appointment.status];
   const actions = getAppointmentQuickActions({
+    jobStatus: appointment.job.status,
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
     isExpired: isExpiredUnstartedAppointment({
@@ -1380,7 +1382,7 @@ function DispatcherAppointmentCard({
           {formatTime(appointment.scheduledStart, timezone)}
         </Text>
         <Text style={[styles.dispatcherBadge, { color: statusColour.text }]}>
-          {label(appointment.status)}
+          {appointmentDisplayStatus(appointment)}
         </Text>
       </View>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
@@ -1547,6 +1549,7 @@ function AppointmentCard({
   const statusColour = APPOINTMENT_STATUS_COLOURS[appointment.status];
   const address = appointmentAddress(appointment);
   const actions = getAppointmentQuickActions({
+    jobStatus: appointment.job.status,
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
     isExpired: isExpiredUnstartedAppointment({
@@ -1579,7 +1582,7 @@ function AppointmentCard({
 
   return (
     <Pressable
-      accessibilityLabel={`${appointment.job.title}, ${label(appointment.status)}`}
+      accessibilityLabel={`${appointment.job.title}, ${appointmentDisplayStatus(appointment)}`}
       accessibilityRole="button"
       onPress={onPress}
       style={[styles.eventCard, { borderColor: statusColour.border }]}
@@ -1592,7 +1595,8 @@ function AppointmentCard({
           ]}
         >
           <Text style={[styles.statusText, { color: statusColour.text }]}>
-            {statusIcon(appointment.status)} {label(appointment.status)}
+            {statusIcon(appointment.status)}{' '}
+            {appointmentDisplayStatus(appointment)}
           </Text>
         </View>
         <Text style={styles.chevron}>›</Text>
@@ -1651,6 +1655,7 @@ function AppointmentMoreMenu({
   if (!appointment) return null;
   const address = appointmentAddress(appointment);
   const actions = getAppointmentQuickActions({
+    jobStatus: appointment.job.status,
     hasAddress: Boolean(address),
     hasPhone: Boolean(appointment.job.customer.phone?.trim()),
     isExpired: isExpiredUnstartedAppointment({

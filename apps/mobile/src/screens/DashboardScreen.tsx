@@ -237,6 +237,9 @@ export function DashboardScreen() {
                     )}
                   </Text>
                   <View style={styles.previewCopy}>
+                    {appointment.jobStatus === 'ON_HOLD' ? (
+                      <Text style={styles.itemMeta}>JOB ON HOLD</Text>
+                    ) : null}
                     <Text numberOfLines={1} style={styles.itemTitle}>
                       {appointment.jobTitle}
                     </Text>
@@ -481,6 +484,9 @@ function NextAppointmentRow({
         <Text numberOfLines={2} style={styles.rowMeta}>
           {appointment.technicianName ?? 'Unassigned'}
         </Text>
+        {appointment.jobStatus === 'ON_HOLD' ? (
+          <Text style={styles.rowMeta}>JOB ON HOLD</Text>
+        ) : null}
       </View>
       <Text style={styles.nextAppointmentTime}>
         {formatAppointmentTime(appointment.startsAt, timezone)}

@@ -61,6 +61,7 @@ export interface DashboardSummaryResponse {
     appointmentNumber: string;
     jobId: string;
     jobTitle: string;
+    jobStatus?: string;
     status: string;
     startsAt: string;
     technicianName: string | null;
@@ -70,6 +71,7 @@ export interface DashboardSummaryResponse {
   nextAppointment: {
     id: string;
     jobTitle: string;
+    jobStatus?: string;
     customerName: string;
     startsAt: string;
     technicianName: string | null;

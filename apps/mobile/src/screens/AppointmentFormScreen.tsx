@@ -337,6 +337,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [isFormDirty, setIsFormDirty] = useState(false);
   const cleanSnapshotRef = useRef<string | null>(null);
   const retainedQuickCreateRef = useRef<RetainedQuickCreateEntities>({});
+  const customerBeforeQuickCreateRef = useRef(selectedCustomerId);
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const hasSavedRef = useRef(false);
@@ -763,6 +764,20 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     setManualAccessInstructions('');
   }
 
+  function toggleQuickCustomer() {
+    if (useQuickCustomer) {
+      setUseQuickCustomer(false);
+      setSelectedCustomerId(customerBeforeQuickCreateRef.current);
+      setSelectedJobId('');
+      setQuickCustomerName('');
+      setQuickCustomerPhone('');
+      setQuickCustomerEmail('');
+      return;
+    }
+    customerBeforeQuickCreateRef.current = selectedCustomerId;
+    setUseQuickCustomer(true);
+  }
+
   async function selectCustomer(nextCustomerId: string) {
     if (!token) return;
     setSelectedCustomerId(nextCustomerId);
@@ -1135,8 +1150,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           {!isJobLinkedAppointment && !hasSelectedExistingJob ? (
             <Toggle
               active={useQuickCustomer}
-              label="Quick-create customer"
-              onPress={() => setUseQuickCustomer((current) => !current)}
+              label={
+                useQuickCustomer
+                  ? 'Choose existing customer'
+                  : 'Create quick customer'
+              }
+              onPress={toggleQuickCustomer}
             />
           ) : null}
           {isJobLinkedAppointment ? null : useQuickCustomer ? (
@@ -1354,7 +1373,8 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                 job.customerId === selectedCustomerId &&
                 !job.isArchived &&
                 job.status !== 'COMPLETED' &&
-                job.status !== 'CANCELLED',
+                job.status !== 'CANCELLED' &&
+                job.status !== 'ON_HOLD',
             ) ? (
               <HorizontalPicker
                 options={jobs
@@ -1363,7 +1383,8 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
                       job.customerId === selectedCustomerId &&
                       !job.isArchived &&
                       job.status !== 'COMPLETED' &&
-                      job.status !== 'CANCELLED',
+                      job.status !== 'CANCELLED' &&
+                      job.status !== 'ON_HOLD',
                   )
                   .map((job) => ({
                     label: `${job.jobNumber} · ${job.title}\n${job.addressLine1}, ${job.suburb} · ${job.status.replaceAll('_', ' ')}`,

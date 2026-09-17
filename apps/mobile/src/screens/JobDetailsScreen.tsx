@@ -9,6 +9,7 @@ import type {
   MediaAsset,
 } from '@tradieos/shared';
 import {
+  appointmentDisplayStatus,
   DEFAULT_BUSINESS_TIMEZONE,
   JOB_FOLLOW_UP_RESOLUTION_REASONS,
   formatAudCents,
@@ -146,8 +147,8 @@ function isJobStatusAction(
 function jobStatusActions(job: Job): JobStatusAction[] {
   if (JOB_TERMINAL_STATUSES.includes(job.status)) return [];
   const actions: Array<JobStatusAction | null> = [
-    job.status !== 'IN_PROGRESS'
-      ? { label: 'Start Job', status: 'IN_PROGRESS' as const }
+    job.status === 'ON_HOLD'
+      ? { label: 'Resume Job', status: 'IN_PROGRESS' as const }
       : null,
     job.status !== 'COMPLETED'
       ? { label: 'Complete Job', status: 'COMPLETED' as const }
@@ -284,7 +285,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
 
   const canEdit = canManageJob(user?.role);
   const canArchive = canArchiveJob(user?.role);
-  const canScheduleAppointment = canCreateAppointment(user?.role);
+  const canScheduleAppointment =
+    canCreateAppointment(user?.role) &&
+    job?.status !== 'ON_HOLD' &&
+    job?.status !== 'COMPLETED' &&
+    job?.status !== 'CANCELLED';
   const canUpdateStatus = canEdit;
   const isTechnician = user?.role === 'TECHNICIAN';
   const canAddMedia =
@@ -413,7 +418,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
     void loadJob();
   }, [jobId, showArchivedMedia, token]);
 
-  async function changeStatus(status: JobStatus) {
+  async function changeStatus(status: JobStatus, force = false) {
     if (!token || !job || isBusy) return;
     if (status === 'COMPLETED' && followUp.unresolved) {
       Alert.alert(
@@ -429,9 +434,50 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       );
       return;
     }
+    const openAppointmentCount = appointments.filter((appointment) =>
+      [
+        'SCHEDULED',
+        'CONFIRMED',
+        'ON_THE_WAY',
+        'ARRIVED',
+        'IN_PROGRESS',
+        'PAUSED',
+      ].includes(appointment.status),
+    ).length;
+    const confirmWithOpenAppointments = (count: number) => {
+      const completing = status === 'COMPLETED';
+      Alert.alert(
+        completing ? 'Complete job?' : 'Cancel job?',
+        `${count} appointment${count === 1 ? ' is' : 's are'} still open. ${completing ? 'Completing' : 'Cancelling'} this job will cancel the remaining open appointment${count === 1 ? '' : 's'}. Completed appointments will remain in the job history.`,
+        [
+          { text: 'Keep job open', style: 'cancel' },
+          {
+            text: completing ? 'Complete job' : 'Cancel job and appointments',
+            style: 'destructive',
+            onPress: () => {
+              void changeStatus(status, true);
+            },
+          },
+        ],
+      );
+    };
+    if (
+      !force &&
+      openAppointmentCount &&
+      (status === 'COMPLETED' || status === 'CANCELLED')
+    ) {
+      confirmWithOpenAppointments(openAppointmentCount);
+      return;
+    }
     setIsBusy(true);
     try {
-      const response = await updateJobStatusRequest(token, job.id, status);
+      const response = await updateJobStatusRequest(
+        token,
+        job.id,
+        status,
+        undefined,
+        force,
+      );
       setJob(response.job);
       setSourceQuote(response.sourceQuote);
       setRelatedQuotes(response.relatedQuotes ?? []);
@@ -440,10 +486,25 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       setAppointments(response.appointments);
       setTimeline(response.timeline);
       showToast({
-        message: `Job marked ${label(status).toLowerCase()}.`,
+        message:
+          job.status === 'ON_HOLD' && status === 'IN_PROGRESS'
+            ? `Job resumed as ${label(response.job.status).toLowerCase()}.`
+            : `Job marked ${label(status).toLowerCase()}.`,
         tone: 'success',
       });
     } catch (error) {
+      if (
+        !force &&
+        error instanceof ApiRequestError &&
+        error.code === 'OPEN_APPOINTMENTS_REQUIRE_CONFIRMATION' &&
+        (status === 'COMPLETED' || status === 'CANCELLED')
+      ) {
+        const count = error.details.openAppointmentCount;
+        confirmWithOpenAppointments(
+          typeof count === 'number' && count > 0 ? count : 1,
+        );
+        return;
+      }
       showToast({
         message:
           error instanceof Error
@@ -965,6 +1026,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
           const staleWarning = staleActiveAppointmentWarning(appointment);
           const durationWarning = unusualExecutionDurationWarning(appointment);
           const appointmentActions = getAppointmentQuickActions({
+            jobStatus: appointment.job.status,
             hasAddress: Boolean(appointment.addressLine1),
             hasPhone: Boolean(appointment.job.customer.phone),
             isExpired: isExpiredUnstartedAppointment({
@@ -1011,7 +1073,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 )}
               </Text>
               <Text style={styles.meta}>
-                Status: {label(appointment.status)}
+                Status: {appointmentDisplayStatus(appointment)}
               </Text>
               <Text style={styles.meta}>
                 Technician:{' '}
@@ -1033,6 +1095,7 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               {canUpdateStatus ? (
                 <View style={styles.actions}>
                   {canEdit &&
+                  job.status !== 'ON_HOLD' &&
                   ![
                     'COMPLETED',
                     'CANCELLED',

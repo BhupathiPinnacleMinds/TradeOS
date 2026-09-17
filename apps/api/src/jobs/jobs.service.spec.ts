@@ -38,7 +38,7 @@ function userForRole(role: BusinessRole): AuthenticatedUser {
 }
 
 type MockPrisma = {
-  appointment: { findMany: jest.Mock };
+  appointment: { findFirst: jest.Mock; findMany: jest.Mock; update: jest.Mock };
   auditLog: { create: jest.Mock; findMany: jest.Mock };
   business: { findUnique: jest.Mock };
   customer: { create: jest.Mock; findFirst: jest.Mock };
@@ -173,6 +173,7 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
       jobNumber: 'JOB-2026-000001',
       postcode: '2150',
       priority: 'NORMAL',
+      status: 'SCHEDULED',
       state: 'NSW',
       suburb: 'Parramatta',
       title: 'Replace power point',
@@ -238,8 +239,14 @@ function payload(overrides: Partial<UpsertJobDto> = {}): UpsertJobDto {
 }
 
 function createService() {
+  const communications = { appointmentCancelled: jest.fn() };
+  const notifications = { create: jest.fn() };
   const prisma: MockPrisma = {
-    appointment: { findMany: jest.fn().mockResolvedValue([]) },
+    appointment: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue(appointment()),
+    },
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
@@ -285,7 +292,13 @@ function createService() {
 
   return {
     prisma,
-    service: new JobsService(prisma as never),
+    communications,
+    notifications,
+    service: new JobsService(
+      prisma as never,
+      communications as never,
+      notifications as never,
+    ),
   };
 }
 
@@ -852,6 +865,115 @@ describe('JobsService', () => {
       ([arg]) => arg.data.action === 'JOB_COMPLETED',
     );
     expect(auditCall).toBeDefined();
+  });
+
+  it('keeps appointments unchanged when a scheduled job is put on hold', async () => {
+    const { prisma, service, notifications } = createService();
+    prisma.appointment.findMany.mockResolvedValue([
+      appointment({ status: 'SCHEDULED' }),
+    ]);
+
+    await service.updateStatus(owner, 'job-1', { status: 'ON_HOLD' });
+
+    const [[updateArg]] = prisma.job.update.mock.calls as [
+      [{ data: { status: string } }],
+    ];
+    expect(updateArg.data.status).toBe('ON_HOLD');
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+    expect(notifications.create).toHaveBeenCalled();
+  });
+
+  it('resumes an unstarted held job to SCHEDULED when it has a future appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValue(job({ status: 'ON_HOLD' }));
+    prisma.appointment.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'appointment-1' });
+
+    await service.updateStatus(owner, 'job-1', { status: 'IN_PROGRESS' });
+
+    const [[updateArg]] = prisma.job.update.mock.calls as [
+      [{ data: { status: string } }],
+    ];
+    expect(updateArg.data.status).toBe('SCHEDULED');
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+  });
+
+  it('resumes a held job with prior appointment execution to IN_PROGRESS', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValue(job({ status: 'ON_HOLD' }));
+    prisma.appointment.findFirst.mockResolvedValueOnce({ id: 'appointment-1' });
+
+    await service.updateStatus(owner, 'job-1', { status: 'IN_PROGRESS' });
+
+    const [[updateArg]] = prisma.job.update.mock.calls as [
+      [{ data: { status: string } }],
+    ];
+    expect(updateArg.data.status).toBe('IN_PROGRESS');
+  });
+
+  it('requires explicit confirmation before completing a job with an open appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findMany.mockResolvedValue([
+      appointment({ status: 'SCHEDULED' }),
+    ]);
+
+    await expect(
+      service.updateStatus(owner, 'job-1', { status: 'COMPLETED' }),
+    ).rejects.toThrow('appointment(s) are still open');
+
+    expect(prisma.job.update).not.toHaveBeenCalled();
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+  });
+
+  it('does not let a technician manually change the parent job status', async () => {
+    const { prisma, service } = createService();
+    await service
+      .updateStatus(technician, 'job-1', { status: 'ON_HOLD' })
+      .catch((error: unknown) => {
+        expectDomainError(error, 'INSUFFICIENT_PERMISSION');
+      });
+    expect(prisma.job.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['COMPLETED', 'CANCELLED'] as const)(
+    'atomically cancels open appointments when a job is force-%s',
+    async (status) => {
+      const { prisma, service, communications } = createService();
+      prisma.appointment.findMany.mockResolvedValue([
+        appointment({ status: 'SCHEDULED' }),
+      ]);
+
+      await service.updateStatus(owner, 'job-1', { status, force: true });
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      const [[jobUpdateArg]] = prisma.job.update.mock.calls as [
+        [{ data: { status: string } }],
+      ];
+      const [[appointmentUpdateArg]] = prisma.appointment.update.mock.calls as [
+        [{ data: { status: string } }],
+      ];
+      expect(jobUpdateArg.data.status).toBe(status);
+      expect(appointmentUpdateArg.data.status).toBe('CANCELLED');
+      expect(communications.appointmentCancelled).toHaveBeenCalled();
+    },
+  );
+
+  it('does not announce a completed transition when linked cancellation fails', async () => {
+    const { prisma, service, notifications } = createService();
+    prisma.appointment.findMany.mockResolvedValue([
+      appointment({ status: 'IN_PROGRESS' }),
+    ]);
+    prisma.appointment.update.mockRejectedValueOnce(new Error('write failed'));
+
+    await expect(
+      service.updateStatus(owner, 'job-1', {
+        status: 'COMPLETED',
+        force: true,
+      }),
+    ).rejects.toThrow('write failed');
+
+    expect(notifications.create).not.toHaveBeenCalled();
   });
 
   it('returns source quote and multiple related quotes from structured relationships', async () => {

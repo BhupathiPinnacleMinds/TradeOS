@@ -304,6 +304,7 @@ export class DashboardService {
                 select: { companyName: true, displayName: true },
               },
               id: true,
+              status: true,
               state: true,
               suburb: true,
               title: true,
@@ -331,6 +332,7 @@ export class DashboardService {
                 select: { companyName: true, displayName: true },
               },
               title: true,
+              status: true,
             },
           },
           scheduledStart: true,
@@ -340,6 +342,7 @@ export class DashboardService {
         where: {
           businessId,
           status: { in: [...ACTIVE_APPOINTMENT_EXECUTION_STATUSES] },
+          job: { status: { notIn: ['ON_HOLD', 'COMPLETED', 'CANCELLED'] } },
         },
         orderBy: { updatedAt: 'desc' },
         select: {
@@ -373,6 +376,7 @@ export class DashboardService {
         where: {
           businessId,
           status: { in: [...ACTIVE_APPOINTMENT_EXECUTION_STATUSES] },
+          job: { status: { notIn: ['ON_HOLD', 'COMPLETED', 'CANCELLED'] } },
         },
         orderBy: { updatedAt: 'desc' },
         select: {
@@ -499,6 +503,7 @@ export class DashboardService {
         id: appointment.id,
         jobId: appointment.job.id,
         jobTitle: appointment.job.title,
+        jobStatus: appointment.job.status,
         startsAt: appointment.scheduledStart.toISOString(),
         status: appointment.status,
         technicianName: appointment.assignedUser
@@ -512,6 +517,7 @@ export class DashboardService {
               nextAppointment.job.customer.displayName,
             id: nextAppointment.id,
             jobTitle: nextAppointment.job.title,
+            jobStatus: nextAppointment.job.status,
             startsAt: nextAppointment.scheduledStart.toISOString(),
             technicianName: nextAppointment.assignedUser
               ? `${nextAppointment.assignedUser.firstName} ${nextAppointment.assignedUser.lastName}`

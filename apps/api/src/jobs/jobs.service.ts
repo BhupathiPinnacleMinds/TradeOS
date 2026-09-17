@@ -13,6 +13,7 @@ import type {
   JobStatus,
 } from '@tradieos/shared';
 import {
+  DEFAULT_BUSINESS_TIMEZONE,
   JOB_FOLLOW_UP_RESOLUTION_REASONS,
   JOB_ARCHIVE_ROLES,
   JOB_STATUS_UPDATE_ROLES,
@@ -21,9 +22,12 @@ import {
   canTransitionJobStatus,
   getBusinessDateParts,
   getBusinessDayRangeUtc,
+  formatBusinessDateTime,
   getInvoiceDisplayStatus,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
+import { CustomerCommunicationsService } from '../communications/communications.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   ListJobsQueryDto,
@@ -131,7 +135,11 @@ type JobListDisplay = {
 
 @Injectable()
 export class JobsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly communications: CustomerCommunicationsService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async findAll(
     currentUser: AuthenticatedUser,
@@ -495,16 +503,40 @@ export class JobsService {
         );
       }
     }
+    const openAppointments = await this.prisma.appointment.findMany({
+      where: {
+        businessId: currentUser.businessId,
+        jobId: id,
+        status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+      },
+      include: this.appointmentInclude(),
+    });
+    if (
+      ['COMPLETED', 'CANCELLED'].includes(dto.status) &&
+      openAppointments.length > 0 &&
+      !dto.force
+    ) {
+      throw this.domainError(
+        'OPEN_APPOINTMENTS_REQUIRE_CONFIRMATION',
+        `${openAppointments.length} appointment(s) are still open. Confirm that they should be cancelled with the job.`,
+        HttpStatus.CONFLICT,
+        { openAppointmentCount: openAppointments.length },
+      );
+    }
+    const nextStatus =
+      job.status === 'ON_HOLD' && dto.status === 'IN_PROGRESS'
+        ? await this.resumeJobStatus(currentUser.businessId, id)
+        : dto.status;
     const now = new Date();
     const statusData: Record<string, unknown> = {
-      status: dto.status,
+      status: nextStatus,
       updatedBy: currentUser.id,
     };
 
     if (dto.internalNotes) {
       statusData.internalNotes = dto.internalNotes.trim();
     }
-    if (dto.status === 'IN_PROGRESS' && !job.actualStart) {
+    if (nextStatus === 'IN_PROGRESS' && !job.actualStart) {
       statusData.actualStart = now;
     }
     if (dto.status === 'COMPLETED') {
@@ -515,9 +547,69 @@ export class JobsService {
       statusData.actualEnd = job.actualEnd ?? now;
     }
 
-    const action = this.auditActionForStatus(dto.status);
-    await this.prisma.$transaction(async (tx) => {
+    const affectedAppointments = await this.prisma.$transaction(async (tx) => {
       await tx.job.update({ where: { id }, data: statusData });
+      const currentOpenAppointments = await tx.appointment.findMany({
+        where: {
+          businessId: currentUser.businessId,
+          jobId: id,
+          status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+        },
+        include: this.appointmentInclude(),
+      });
+      if (
+        ['COMPLETED', 'CANCELLED'].includes(dto.status) &&
+        currentOpenAppointments.length > 0 &&
+        !dto.force
+      ) {
+        throw this.domainError(
+          'OPEN_APPOINTMENTS_REQUIRE_CONFIRMATION',
+          `${currentOpenAppointments.length} appointment(s) are still open. Confirm that they should be cancelled with the job.`,
+          HttpStatus.CONFLICT,
+          { openAppointmentCount: currentOpenAppointments.length },
+        );
+      }
+      if (dto.status === 'COMPLETED' || dto.status === 'CANCELLED') {
+        for (const appointment of currentOpenAppointments) {
+          const cancelled = await tx.appointment.update({
+            where: { id: appointment.id },
+            data: { status: 'CANCELLED', updatedBy: currentUser.id },
+            include: this.appointmentInclude(),
+          });
+          await tx.auditLog.create({
+            data: {
+              businessId: currentUser.businessId,
+              actorUserId: currentUser.id,
+              action:
+                dto.status === 'COMPLETED'
+                  ? 'APPOINTMENT_CANCELLED_JOB_COMPLETED'
+                  : 'APPOINTMENT_CANCELLED_JOB_CANCELLED',
+              entityType: 'Appointment',
+              entityId: appointment.id,
+              metadata: {
+                from: appointment.status,
+                jobId: id,
+                reason:
+                  dto.status === 'COMPLETED'
+                    ? 'Appointment cancelled because job was completed by owner/admin.'
+                    : 'Appointment cancelled because parent job was cancelled.',
+                to: 'CANCELLED',
+              },
+            },
+          });
+          await this.communications.appointmentCancelled(
+            tx,
+            currentUser,
+            cancelled,
+          );
+        }
+      }
+      const action =
+        job.status === 'ON_HOLD' && dto.status === 'IN_PROGRESS'
+          ? 'JOB_RESUMED'
+          : dto.status === 'COMPLETED' && currentOpenAppointments.length
+            ? 'JOB_FORCE_COMPLETED'
+            : this.auditActionForStatus(dto.status);
       await tx.auditLog.create({
         data: {
           businessId: currentUser.businessId,
@@ -525,12 +617,106 @@ export class JobsService {
           action,
           entityType: 'Job',
           entityId: id,
-          metadata: { from: job.status, to: dto.status },
+          metadata: {
+            from: job.status,
+            openAppointmentCount: currentOpenAppointments.length,
+            to: nextStatus,
+          },
         },
       });
+      return currentOpenAppointments;
     });
 
+    if (
+      dto.status === 'ON_HOLD' ||
+      (job.status === 'ON_HOLD' && dto.status === 'IN_PROGRESS') ||
+      dto.status === 'CANCELLED' ||
+      dto.status === 'COMPLETED'
+    ) {
+      await this.notifyTechniciansOfJobStatus(
+        currentUser,
+        job,
+        affectedAppointments,
+        dto.status,
+      );
+    }
+
     return this.findOne(currentUser, id);
+  }
+
+  private async resumeJobStatus(
+    businessId: string,
+    jobId: string,
+  ): Promise<JobStatus> {
+    const started = await this.prisma.appointment.findFirst({
+      where: {
+        businessId,
+        jobId,
+        OR: [
+          { travelStartedAt: { not: null } },
+          { arrivedAt: { not: null } },
+          { workStartedAt: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (started) return 'IN_PROGRESS';
+    const future = await this.prisma.appointment.findFirst({
+      where: {
+        businessId,
+        jobId,
+        scheduledEnd: { gte: new Date() },
+        status: { in: ACTIONABLE_APPOINTMENT_STATUSES },
+      },
+      select: { id: true },
+    });
+    return future ? 'SCHEDULED' : 'NEW';
+  }
+
+  private async notifyTechniciansOfJobStatus(
+    currentUser: AuthenticatedUser,
+    job: JobWithRelations,
+    appointments: AppointmentWithRelations[],
+    status: JobStatus,
+  ) {
+    try {
+      const business = await this.prisma.business.findUnique({
+        where: { id: currentUser.businessId },
+        select: { timezone: true },
+      });
+      for (const appointment of appointments) {
+        if (!appointment.assignedUserId) continue;
+        const when = formatBusinessDateTime(
+          appointment.scheduledStart,
+          business?.timezone ?? DEFAULT_BUSINESS_TIMEZONE,
+        );
+        const body =
+          status === 'ON_HOLD'
+            ? `${job.title} has been put on hold. Your appointment on ${when} is paused until the job is resumed.`
+            : status === 'IN_PROGRESS'
+              ? `${job.title} has been resumed. Your appointment on ${when} is active again.`
+              : status === 'COMPLETED'
+                ? `${job.title} was completed. Your remaining appointment on ${when} was cancelled.`
+                : `${job.title} was cancelled. Your appointment on ${when} was also cancelled.`;
+        await this.notifications.create({
+          businessId: currentUser.businessId,
+          userId: appointment.assignedUserId,
+          type: `JOB_${status}`,
+          title:
+            status === 'ON_HOLD'
+              ? 'Job on hold'
+              : status === 'IN_PROGRESS'
+                ? 'Job resumed'
+                : `Job ${status.toLowerCase()}`,
+          body,
+          entityType: 'appointment',
+          entityId: appointment.id,
+          metadata: { appointmentId: appointment.id, jobId: job.id },
+        });
+      }
+    } catch {
+      // Notification failure must not undo a committed lifecycle transition.
+    }
   }
 
   async resolveFollowUp(
@@ -1243,16 +1429,21 @@ export class JobsService {
           customer: {
             select: {
               companyName: true,
+              communicationPreference: {
+                select: { emailEnabled: true, smsEnabled: true },
+              },
               displayName: true,
               email: true,
               id: true,
               phone: true,
             },
           },
+          customerId: true,
           id: true,
           jobNumber: true,
           postcode: true,
           priority: true,
+          status: true,
           state: true,
           suburb: true,
           title: true,

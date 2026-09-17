@@ -1,6 +1,11 @@
 import type { BusinessRole } from './auth';
 import type { AustralianState } from './customers';
-import type { JobAssignedUser, JobCustomerSummary, JobPriority } from './jobs';
+import type {
+  JobAssignedUser,
+  JobCustomerSummary,
+  JobPriority,
+  JobStatus,
+} from './jobs';
 
 export const APPOINTMENT_STATUSES = [
   'SCHEDULED',
@@ -59,6 +64,7 @@ export type AppointmentFilter =
 
 export interface AppointmentJobSummary {
   id: string;
+  status: JobStatus;
   jobNumber: string;
   title: string;
   priority: JobPriority;
@@ -926,6 +932,7 @@ export function shouldExecuteAppointmentMoreActionsMenuItem(actionId: string) {
 
 export interface AppointmentQuickActionInput {
   status: AppointmentStatus;
+  jobStatus?: JobStatus;
   hasPhone: boolean;
   hasAddress: boolean;
   role?: BusinessRole | null;
@@ -1026,6 +1033,7 @@ function canConfirmAppointment(input: AppointmentQuickActionInput) {
 
 export function getAllowedAppointmentTransitions(input: {
   currentStatus: AppointmentStatus;
+  jobStatus?: JobStatus;
   userRole?: BusinessRole | null;
   isAssignedTechnician?: boolean;
 }): AppointmentTransitionOption[] {
@@ -1035,7 +1043,9 @@ export function getAllowedAppointmentTransitions(input: {
     isAssignedUser: input.isAssignedTechnician,
     role: input.userRole,
     status: input.currentStatus,
+    jobStatus: input.jobStatus,
   };
+  if (isAppointmentJobBlocked(input.jobStatus)) return [];
   const canUpdate = canUpdateAppointmentStatus(quickActionInput);
   const canExecuteWork = canExecuteAppointmentWork(quickActionInput);
   const canConfirm = canConfirmAppointment(quickActionInput);
@@ -1188,6 +1198,9 @@ function canReassignAppointment(input: AppointmentQuickActionInput) {
 export function getAppointmentQuickActions(
   input: AppointmentQuickActionInput,
 ): AppointmentQuickAction[] {
+  if (isAppointmentJobBlocked(input.jobStatus)) {
+    return [{ id: 'viewDetails', kind: 'secondary', label: 'View details' }];
+  }
   if (input.status === 'RESCHEDULED') {
     return [
       ...(input.hasRescheduledToAppointment
@@ -1305,4 +1318,19 @@ export function getAppointmentQuickActions(
   }
 
   return actions;
+}
+
+export function isAppointmentJobBlocked(status?: JobStatus | null) {
+  return (
+    status === 'ON_HOLD' || status === 'COMPLETED' || status === 'CANCELLED'
+  );
+}
+
+export function appointmentDisplayStatus(appointment: Appointment) {
+  return appointment.job.status === 'ON_HOLD' &&
+    !['COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(
+      appointment.status,
+    )
+    ? 'JOB ON HOLD'
+    : appointment.status.replaceAll('_', ' ');
 }

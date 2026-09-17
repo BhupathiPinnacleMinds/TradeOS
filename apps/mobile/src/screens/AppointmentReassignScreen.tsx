@@ -5,6 +5,7 @@ import type {
 } from '@tradieos/shared';
 import {
   formatBusinessDateTime,
+  isAppointmentJobBlocked,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -239,6 +240,17 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
     return (
       <View style={styles.loadingPage}>
         <Text style={styles.title}>Appointment not found</Text>
+      </View>
+    );
+  }
+
+  if (isAppointmentJobBlocked(appointment.job.status)) {
+    return (
+      <View style={styles.loadingPage}>
+        <Text style={styles.title}>Appointment unavailable</Text>
+        <Text style={styles.meta}>
+          Reassignment is unavailable while the parent job is on hold or closed.
+        </Text>
       </View>
     );
   }

@@ -1097,9 +1097,10 @@ export function updateJobStatusRequest(
   jobId: string,
   status: JobStatus,
   internalNotes?: string,
+  force?: boolean,
 ) {
   return apiRequest<JobDetailResponse>(`/jobs/${jobId}/status`, {
-    body: JSON.stringify({ internalNotes, status }),
+    body: JSON.stringify({ force, internalNotes, status }),
     method: 'PATCH',
     token,
   });

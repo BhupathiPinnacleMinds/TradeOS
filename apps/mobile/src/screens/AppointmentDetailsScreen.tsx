@@ -5,6 +5,7 @@
   MediaAsset,
 } from '@tradieos/shared';
 import {
+  appointmentDisplayStatus,
   APPOINTMENT_STATUS_COLOURS,
   APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
   APPOINTMENT_SIGNATURE_ACTION_GAP,
@@ -28,6 +29,7 @@ import {
   formatBusinessTimeRange,
   formatMediaSummary,
   getAppointmentQuickActions,
+  isAppointmentJobBlocked,
   hasAppointmentSignatureStrokes,
   hasAppointmentValidationErrors,
   isExpiredUnstartedAppointment,
@@ -975,6 +977,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   }
 
   const quickActions = getAppointmentQuickActions({
+    jobStatus: appointment.job.status,
     hasAddress: Boolean(address),
     hasPhone: Boolean(customer.phone?.trim()),
     isExpired: isExpiredUnstartedAppointment({
@@ -1040,7 +1043,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           },
         }
       : null,
-    !terminalStatus && canEditAppointment
+    !terminalStatus &&
+    !isAppointmentJobBlocked(appointment.job.status) &&
+    canEditAppointment
       ? {
           id: 'edit' as const,
           label: 'Edit Appointment',
@@ -1108,7 +1113,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
         ]}
       >
         <Text style={[styles.statusText, { color: statusColour.text }]}>
-          {label(appointment.status)}
+          {appointmentDisplayStatus(appointment)}
         </Text>
       </View>
 

@@ -1,10 +1,12 @@
 import {
   APPOINTMENT_MORE_ACTIONS_DISMISS_ID,
+  appointmentDisplayStatus,
   dismissedAppointmentMoreActionsMenuState,
   getAppointmentQuickActions,
   openedAppointmentMoreActionsMenuState,
   shouldExecuteAppointmentMoreActionsMenuItem,
 } from '@tradieos/shared';
+import type { Appointment } from '@tradieos/shared';
 
 function actionIds(input: Parameters<typeof getAppointmentQuickActions>[0]) {
   return getAppointmentQuickActions(input).map((action) => action.id);
@@ -15,6 +17,29 @@ function actionLabels(input: Parameters<typeof getAppointmentQuickActions>[0]) {
 }
 
 describe('getAppointmentQuickActions', () => {
+  it('shows a held parent job without changing the appointment status or allowing execution', () => {
+    const display = (
+      status: Appointment['status'],
+      jobStatus: Appointment['job']['status'],
+    ) =>
+      appointmentDisplayStatus({
+        status,
+        job: { status: jobStatus },
+      } as Appointment);
+    expect(display('SCHEDULED', 'ON_HOLD')).toBe('JOB ON HOLD');
+    expect(display('CONFIRMED', 'SCHEDULED')).toBe('CONFIRMED');
+    expect(display('CANCELLED', 'ON_HOLD')).toBe('CANCELLED');
+    expect(
+      actionIds({
+        hasAddress: true,
+        hasPhone: true,
+        isAssignedUser: true,
+        jobStatus: 'ON_HOLD',
+        role: 'TECHNICIAN',
+        status: 'ON_THE_WAY',
+      }),
+    ).toEqual(['viewDetails']);
+  });
   it('shows scheduled appointment actions when contact and address exist', () => {
     expect(
       actionIds({

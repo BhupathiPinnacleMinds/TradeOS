@@ -161,7 +161,8 @@ export class AppointmentsService {
     dto: AppointmentRecommendationDto,
   ) {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
-    await this.assertJob(currentUser.businessId, dto.jobId);
+    const job = await this.assertJob(currentUser.businessId, dto.jobId);
+    this.assertJobAcceptsAppointments(job.status);
     this.assertDateRange(dto.scheduledStart, dto.scheduledEnd);
     return this.scheduling.recommendTechnician(currentUser.businessId, dto);
   }
@@ -533,12 +534,20 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const job = await this.assertJob(currentUser.businessId, dto.jobId);
+    this.assertJobAcceptsAppointments(job.status);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
     const data = await this.normalise(currentUser.businessId, dto, job);
     this.assertNewAppointmentIsNotInPast(data.scheduledStart);
     await this.assertNoConflictOrOverride(currentUser, data, dto);
 
     const created = await this.prisma.$transaction(async (tx) => {
+      await this.lockActiveJob(tx, currentUser, job.id);
+      if (job.status === 'NEW') {
+        await tx.job.updateMany({
+          where: { id: job.id, status: 'NEW' },
+          data: { status: 'SCHEDULED' },
+        });
+      }
       const location = await this.createManualSiteIfRequested(
         tx,
         currentUser,
@@ -598,6 +607,8 @@ export class AppointmentsService {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const existing = await this.getAppointment(currentUser.businessId, id);
     const job = await this.assertJob(currentUser.businessId, dto.jobId);
+    this.assertJobAcceptsAppointments(existing.job.status);
+    this.assertJobAcceptsAppointments(job.status);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
     const data = await this.normalise(
       currentUser.businessId,
@@ -608,6 +619,10 @@ export class AppointmentsService {
     await this.assertNoConflictOrOverride(currentUser, data, dto, id);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await this.lockActiveJob(tx, currentUser, job.id);
+      if (existing.jobId !== job.id) {
+        await this.lockActiveJob(tx, currentUser, existing.jobId);
+      }
       const location = await this.createManualSiteIfRequested(
         tx,
         currentUser,
@@ -689,6 +704,7 @@ export class AppointmentsService {
   ): Promise<AppointmentReassignmentOptionsResponse> {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const appointment = await this.getAppointment(currentUser.businessId, id);
+    this.assertJobAcceptsAppointments(appointment.job.status);
     const scheduledStart = appointment.scheduledStart;
     const scheduledEnd = appointment.scheduledEnd;
     const startOfToday = new Date(scheduledStart);
@@ -813,6 +829,7 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const existing = await this.getAppointment(currentUser.businessId, id);
+    this.assertJobAcceptsAppointments(existing.job.status);
     if (
       ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(
         existing.status,
@@ -853,6 +870,7 @@ export class AppointmentsService {
     );
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await this.lockActiveJob(tx, currentUser, existing.jobId);
       const appointment = await tx.appointment.update({
         where: { id },
         data: {
@@ -1083,6 +1101,9 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_STATUS_UPDATE_ROLES);
     const existing = await this.getAppointmentForUser(currentUser, id);
+    if (status !== 'CANCELLED') {
+      this.assertJobAcceptsAppointments(existing.job.status);
+    }
     if (existing.status === status) {
       return { appointment: this.toAppointment(existing) };
     }
@@ -1107,6 +1128,9 @@ export class AppointmentsService {
     this.applyExecutionTiming(data, existing, status, now);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (status !== 'CANCELLED') {
+        await this.lockActiveJob(tx, currentUser, existing.jobId);
+      }
       if (completion) {
         const workLogData = this.workLogData(currentUser, existing, completion);
         await tx.appointmentWorkLog.upsert({
@@ -2108,7 +2132,8 @@ export class AppointmentsService {
       where: { businessId: currentUser.businessId, id: appointment.jobId },
       select: { actualStart: true, status: true },
     });
-    if (!job || ['CANCELLED', 'COMPLETED'].includes(job.status)) return;
+    if (!job) return;
+    this.assertJobAcceptsAppointments(job.status);
     if (job.status === 'IN_PROGRESS') return;
 
     const now = new Date();
@@ -2150,6 +2175,33 @@ export class AppointmentsService {
     return appointment;
   }
 
+  private async lockActiveJob(
+    tx: Prisma.TransactionClient,
+    currentUser: AuthenticatedUser,
+    jobId: string,
+  ) {
+    const result = await tx.job.updateMany({
+      where: {
+        businessId: currentUser.businessId,
+        id: jobId,
+        status: { in: ['NEW', 'SCHEDULED', 'IN_PROGRESS'] },
+      },
+      data: { updatedBy: currentUser.id },
+    });
+    if (result.count !== 1) {
+      const job = await tx.job.findFirst({
+        where: { businessId: currentUser.businessId, id: jobId },
+        select: { status: true },
+      });
+      this.assertJobAcceptsAppointments(job?.status ?? 'CANCELLED');
+      throw this.domainError(
+        'JOB_CLOSED',
+        'This job is not available for appointment work.',
+        HttpStatus.CONFLICT,
+      );
+    }
+  }
+
   private async assertJob(businessId: string, jobId: string) {
     const job = await this.prisma.job.findFirst({
       where: { businessId, id: jobId, isArchived: false },
@@ -2163,6 +2215,23 @@ export class AppointmentsService {
       );
     }
     return job;
+  }
+
+  private assertJobAcceptsAppointments(status: string) {
+    if (status === 'ON_HOLD') {
+      throw this.domainError(
+        'JOB_ON_HOLD',
+        'This appointment cannot be progressed because the job is on hold.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (status === 'COMPLETED' || status === 'CANCELLED') {
+      throw this.domainError(
+        'JOB_CLOSED',
+        'This appointment cannot be scheduled or progressed because the job is closed.',
+        HttpStatus.CONFLICT,
+      );
+    }
   }
 
   private async assertAssignedUser(
@@ -2374,6 +2443,7 @@ export class AppointmentsService {
           jobNumber: true,
           postcode: true,
           priority: true,
+          status: true,
           state: true,
           suburb: true,
           title: true,

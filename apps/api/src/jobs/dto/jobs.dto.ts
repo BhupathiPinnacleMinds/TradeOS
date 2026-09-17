@@ -242,6 +242,10 @@ export class UpdateJobStatusDto {
   status!: JobStatus;
 
   @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   internalNotes?: string;

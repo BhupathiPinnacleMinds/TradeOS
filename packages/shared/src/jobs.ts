@@ -225,7 +225,6 @@ export const JOB_STATUS_UPDATE_ROLES: BusinessRole[] = [
   'ADMIN',
   'OFFICE_MANAGER',
   'SCHEDULER',
-  'TECHNICIAN',
 ];
 
 export const JOB_ARCHIVE_ROLES: BusinessRole[] = [
@@ -236,9 +235,8 @@ export const JOB_ARCHIVE_ROLES: BusinessRole[] = [
 
 export function getAllowedJobStatusTransitions(status: JobStatus): JobStatus[] {
   if (status === 'COMPLETED' || status === 'CANCELLED') return [];
-  return JOB_STATUSES.filter(
-    (nextStatus) => nextStatus !== status && nextStatus !== 'NEW',
-  );
+  if (status === 'ON_HOLD') return ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+  return ['ON_HOLD', 'COMPLETED', 'CANCELLED'];
 }
 
 export function canTransitionJobStatus(

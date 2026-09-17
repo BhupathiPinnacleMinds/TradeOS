@@ -3,6 +3,7 @@ import type {
   AppointmentTransitionAction,
 } from '@tradieos/shared';
 import {
+  appointmentDisplayStatus,
   APPOINTMENT_STATUS_COLOURS,
   formatBusinessCompactDateTimeRange,
   formatBusinessDate,
@@ -353,6 +354,7 @@ function AppointmentCard({
   const customerCompany = secondaryCustomerCompany(appointment.job.customer);
   const transitions = getAllowedAppointmentTransitions({
     currentStatus: appointment.status,
+    jobStatus: appointment.job.status,
     isAssignedTechnician: appointment.assignedUserId === userId,
     userRole: role,
   });
@@ -387,7 +389,7 @@ function AppointmentCard({
           style={[styles.statusPill, { backgroundColor: colour.background }]}
         >
           <Text style={[styles.statusText, { color: colour.text }]}>
-            {appointment.status.replaceAll('_', ' ')}
+            {appointmentDisplayStatus(appointment)}
           </Text>
         </View>
       </View>
@@ -468,6 +470,13 @@ function myDayCardActions({
   onTransition(action: AppointmentTransitionAction): void;
   transitions: ReturnType<typeof getAllowedAppointmentTransitions>;
 }): MyDayCardAction[] {
+  if (
+    appointment.job.status === 'ON_HOLD' ||
+    appointment.job.status === 'COMPLETED' ||
+    appointment.job.status === 'CANCELLED'
+  ) {
+    return [{ kind: 'secondary', label: 'Details', onPress: onOpen }];
+  }
   const transition = (action: AppointmentTransitionAction) =>
     transitions.find((option) => option.action === action);
   const transitionAction = (

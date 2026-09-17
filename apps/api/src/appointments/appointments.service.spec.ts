@@ -61,7 +61,7 @@ type MockPrisma = {
   business: { findUnique: jest.Mock };
   businessMember: { findFirst: jest.Mock; findMany: jest.Mock };
   customerSite: { create: jest.Mock; findFirst: jest.Mock };
-  job: { findFirst: jest.Mock; update: jest.Mock };
+  job: { findFirst: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
   memberLeave: { findMany: jest.Mock };
   memberShift: { findMany: jest.Mock };
   user: { findFirst: jest.Mock };
@@ -131,6 +131,7 @@ function appointment(overrides: Partial<Record<string, unknown>> = {}) {
       jobNumber: 'JOB-2026-000001',
       postcode: '2150',
       priority: 'NORMAL',
+      status: 'SCHEDULED',
       state: 'NSW',
       suburb: 'Parramatta',
       title: 'Inspection',
@@ -257,6 +258,7 @@ function createService() {
         status: 'SCHEDULED',
       }),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     memberLeave: { findMany: jest.fn().mockResolvedValue([]) },
     memberShift: { findMany: jest.fn().mockResolvedValue([]) },
@@ -387,6 +389,84 @@ describe('AppointmentsService', () => {
     ];
     expect(notificationInput.actor).toBe(owner);
     expect(notificationInput.appointment.assignedUserId).toBe('tech-1');
+  });
+
+  it('schedules a NEW parent job in the same transaction as appointment creation', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findFirst.mockResolvedValueOnce({
+      addressLine1: '12 King Street',
+      addressLine2: null,
+      customer: {
+        addressLine1: '12 King Street',
+        suburb: 'Parramatta',
+        state: 'NSW',
+        postcode: '2150',
+      },
+      customerId: 'customer-1',
+      id: 'job-1',
+      postcode: '2150',
+      state: 'NSW',
+      status: 'NEW',
+      suburb: 'Parramatta',
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    await service.create(owner, {
+      appointmentType: 'INSPECTION',
+      assignedUserId: 'tech-1',
+      jobId: 'job-1',
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    const updateCalls = prisma.job.updateMany.mock.calls as Array<
+      [{ data: { status?: string }; where: { status?: string } }]
+    >;
+    expect(
+      updateCalls.some(
+        ([call]) =>
+          call.where.status === 'NEW' && call.data.status === 'SCHEDULED',
+      ),
+    ).toBe(true);
+    expect(prisma.appointment.create).toHaveBeenCalled();
+  });
+
+  it.each(['ON_HOLD', 'COMPLETED', 'CANCELLED'])(
+    'rejects scheduling against a %s job',
+    async (status) => {
+      const { prisma, service } = createService();
+      prisma.job.findFirst.mockResolvedValueOnce({ status, id: 'job-1' });
+
+      await expect(
+        service.create(owner, {
+          appointmentType: 'INSPECTION',
+          assignedUserId: 'tech-1',
+          jobId: 'job-1',
+          scheduledEnd: BUSINESS_HOURS_END,
+          scheduledStart: BUSINESS_HOURS_START,
+        }),
+      ).rejects.toThrow(
+        status === 'ON_HOLD' ? 'job is on hold' : 'job is closed',
+      );
+
+      expect(prisma.appointment.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects direct appointment progression while the parent job is on hold', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        status: 'CONFIRMED',
+        job: { ...appointment().job, status: 'ON_HOLD' },
+      }),
+    );
+
+    await expect(
+      service.transition(technician, 'appointment-1', 'ON_THE_WAY'),
+    ).rejects.toThrow('job is on hold');
+
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
   });
 
   it('allows active owners to be assigned field appointments', async () => {
