@@ -62,17 +62,13 @@ import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
+import type { ResolvedLocation } from '../utils/appointmentLocation';
+import {
+  formatAppointmentLocation,
+  isPlaceholderAddressText,
+} from '../utils/appointmentLocation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AppointmentForm'>;
-
-type ResolvedLocation = {
-  addressLine1: string;
-  addressLine2: string;
-  suburb: string;
-  state: AustralianState | '';
-  postcode: string;
-  accessInstructions: string;
-};
 
 type RetainedQuickCreateEntities = {
   customer?: {
@@ -176,25 +172,8 @@ function formatTime(value: Date, timezone: string = DEFAULT_BUSINESS_TIMEZONE) {
   return formatBusinessTime(value, timezone);
 }
 
-function formatLocation(location: ResolvedLocation) {
-  return [
-    location.addressLine1,
-    location.addressLine2,
-    location.suburb,
-    location.state,
-    location.postcode,
-  ]
-    .filter(Boolean)
-    .join(', ');
-}
-
 function cleanOptionalText(value?: string | null) {
   return value?.trim() ?? '';
-}
-
-function isPlaceholderAddressText(value?: string | null) {
-  const text = cleanOptionalText(value).toLowerCase();
-  return text === 'address to be confirmed' || text === 'to be confirmed';
 }
 
 function getJobManualLocation(job: Job): ResolvedLocation | null {
@@ -337,7 +316,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [isFormDirty, setIsFormDirty] = useState(false);
   const cleanSnapshotRef = useRef<string | null>(null);
   const retainedQuickCreateRef = useRef<RetainedQuickCreateEntities>({});
-  const customerBeforeQuickCreateRef = useRef(selectedCustomerId);
+  const customerSelectionGenerationRef = useRef(0);
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const hasSavedRef = useRef(false);
@@ -407,12 +386,18 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   );
 
   const selectedCustomer = useMemo(
-    () => customers.find((customer) => customer.id === selectedCustomerId),
-    [customers, selectedCustomerId],
+    () =>
+      useQuickCustomer
+        ? undefined
+        : customers.find((customer) => customer.id === selectedCustomerId),
+    [customers, selectedCustomerId, useQuickCustomer],
   );
   const selectedSite = useMemo(
-    () => sites.find((site) => site.id === selectedSiteId),
-    [selectedSiteId, sites],
+    () =>
+      useQuickCustomer
+        ? undefined
+        : sites.find((site) => site.id === selectedSiteId),
+    [selectedSiteId, sites, useQuickCustomer],
   );
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId),
@@ -455,8 +440,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       manualSuburb,
       selectedCustomer,
       selectedSite,
+      useQuickCustomer,
     ],
   );
+  const selectedLocationText = formatAppointmentLocation(resolvedLocation);
   const formSnapshot = useMemo(
     () =>
       JSON.stringify({
@@ -718,6 +705,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     preferredSiteId?: string,
     shouldSelectFirstJob = false,
   ) {
+    const selectionGeneration = customerSelectionGenerationRef.current;
     const [detail, customerJobs] = await Promise.all([
       customerDetailRequest(authToken, nextCustomerId),
       jobsRequest(authToken, {
@@ -728,7 +716,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         sortOrder: 'desc',
       }),
     ]);
-    if (!mounted) return;
+    if (
+      !mounted ||
+      selectionGeneration !== customerSelectionGenerationRef.current
+    )
+      return;
     const activeSites = detail.customer.sites.filter(
       (site) => !site.isArchived,
     );
@@ -747,47 +739,52 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     }
   }
 
-  function clearCustomerSelection() {
-    setSelectedCustomerId('');
+  function clearCustomerLocation() {
     setSelectedSiteId('');
     setSites([]);
-    setJobs([]);
-    setSelectedJobId('');
-    setQuickJobTitle('');
-    setQuickCustomerEmail('');
-    setUseQuickJob(true);
     setLocationSource('MANUAL');
     setManualAddressLine1('');
     setManualAddressLine2('');
     setManualSuburb('');
+    setManualState('');
     setManualPostcode('');
     setManualAccessInstructions('');
+    setSaveAddressAsSite(false);
+  }
+
+  function clearCustomerDependentState() {
+    customerSelectionGenerationRef.current += 1;
+    setSelectedCustomerId('');
+    clearCustomerLocation();
+    setJobs([]);
+    setSelectedJobId('');
+    if (!useQuickJob) setQuickJobTitle('');
+    setUseQuickJob(true);
+  }
+
+  function clearCustomerSelection() {
+    clearCustomerDependentState();
+    setQuickJobTitle('');
+    setQuickCustomerEmail('');
   }
 
   function toggleQuickCustomer() {
+    clearCustomerDependentState();
+    setQuickCustomerName('');
+    setQuickCustomerPhone('');
+    setQuickCustomerEmail('');
+    setCustomerSearch('');
     if (useQuickCustomer) {
       setUseQuickCustomer(false);
-      setSelectedCustomerId(customerBeforeQuickCreateRef.current);
-      setSelectedJobId('');
-      setQuickCustomerName('');
-      setQuickCustomerPhone('');
-      setQuickCustomerEmail('');
       return;
     }
-    customerBeforeQuickCreateRef.current = selectedCustomerId;
     setUseQuickCustomer(true);
   }
 
   async function selectCustomer(nextCustomerId: string) {
     if (!token) return;
+    clearCustomerDependentState();
     setSelectedCustomerId(nextCustomerId);
-    setSelectedSiteId('');
-    setSites([]);
-    setJobs([]);
-    setSelectedJobId('');
-    setQuickJobTitle('');
-    setUseQuickJob(true);
-    setLocationSource('CUSTOMER_DEFAULT');
     await loadCustomer(token, nextCustomerId);
   }
 
@@ -812,7 +809,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   }
 
   function getResolvedLocation(): ResolvedLocation {
-    if (locationSource === 'CUSTOMER_SITE' && selectedSite) {
+    if (
+      !useQuickCustomer &&
+      locationSource === 'CUSTOMER_SITE' &&
+      selectedSite
+    ) {
       return {
         accessInstructions: selectedSite.accessInstructions ?? '',
         addressLine1: selectedSite.addressLine1,
@@ -823,7 +824,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
       };
     }
 
-    if (locationSource === 'CUSTOMER_DEFAULT' && selectedCustomer) {
+    if (
+      !useQuickCustomer &&
+      locationSource === 'CUSTOMER_DEFAULT' &&
+      selectedCustomer
+    ) {
       return {
         accessInstructions: '',
         addressLine1: selectedCustomer.addressLine1 ?? '',
@@ -851,9 +856,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     }
     if (
       !resolvedLocation.addressLine1.trim() ||
+      isPlaceholderAddressText(resolvedLocation.addressLine1) ||
       !resolvedLocation.suburb.trim() ||
       !resolvedLocation.state ||
-      !resolvedLocation.postcode.trim()
+      !resolvedLocation.postcode.trim() ||
+      resolvedLocation.postcode.trim() === '0000'
     ) {
       showToast({
         message:
@@ -971,7 +978,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
     let createdCustomerForMessage = false;
     let createdJobForMessage = false;
     try {
-      let finalCustomerId = selectedCustomerId;
+      let finalCustomerId = useQuickCustomer ? '' : selectedCustomerId;
       if (useQuickCustomer) {
         const customerFingerprint = quickCustomerFingerprint(resolvedLocation);
         const retainedCustomer = retainedQuickCreateRef.current.customer;
@@ -1002,7 +1009,6 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             id: finalCustomerId,
           };
           retainedQuickCreateRef.current.job = undefined;
-          setSelectedCustomerId(finalCustomerId);
           createdCustomerForMessage = true;
         }
       }
@@ -1057,10 +1063,12 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         appointmentType,
         assignedUserId,
         customerSiteId:
-          locationSource === 'CUSTOMER_SITE' ? selectedSiteId : undefined,
+          !useQuickCustomer && locationSource === 'CUSTOMER_SITE'
+            ? selectedSiteId
+            : undefined,
         estimatedDurationMinutes: durationMinutes,
         jobId: finalJobId,
-        locationSource,
+        locationSource: useQuickCustomer ? 'MANUAL' : locationSource,
         notes: notes.trim() || undefined,
         postcode: resolvedLocation.postcode,
         saveAddressAsCustomerSite:
@@ -1153,7 +1161,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
               label={
                 useQuickCustomer
                   ? 'Choose existing customer'
-                  : 'Create quick customer'
+                  : 'Quick-create customer'
               }
               onPress={toggleQuickCustomer}
             />
@@ -1237,13 +1245,19 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="2. Location">
-          <HorizontalPicker
-            options={locationSourceOptions}
-            selected={locationSource}
-            onSelect={(value) =>
-              setLocationSource(value as AppointmentLocationSource)
-            }
-          />
+          {useQuickCustomer ? (
+            <Text style={styles.muted}>
+              Enter an appointment address for the new customer.
+            </Text>
+          ) : (
+            <HorizontalPicker
+              options={locationSourceOptions}
+              selected={locationSource}
+              onSelect={(value) =>
+                setLocationSource(value as AppointmentLocationSource)
+              }
+            />
+          )}
 
           {locationSource === 'CUSTOMER_SITE' ? (
             sites.length ? (
@@ -1312,10 +1326,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
           <View style={styles.summaryBox}>
             <Text style={styles.label}>Selected appointment location</Text>
             <Text style={styles.muted}>
-              {formatLocation(resolvedLocation) ||
+              {selectedLocationText ||
                 'Choose or enter an appointment location.'}
             </Text>
-            {resolvedLocation.accessInstructions ? (
+            {selectedLocationText && resolvedLocation.accessInstructions ? (
               <Text style={styles.muted}>
                 Access: {resolvedLocation.accessInstructions}
               </Text>
@@ -1484,8 +1498,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
 
         <Section title="8. Review and save">
           <Text style={styles.muted}>
-            {selectedCustomer?.displayName || quickCustomerName || 'Customer'} ·{' '}
-            {quickJobTitle || selectedJob?.title || 'Job'} ·{' '}
+            {(useQuickCustomer
+              ? quickCustomerName.trim()
+              : selectedCustomer?.displayName) || 'Customer'}{' '}
+            · {quickJobTitle || selectedJob?.title || 'Job'} ·{' '}
             {formatBusinessDate(startAt, businessTimezone)} at{' '}
             {formatBusinessTime(startAt, businessTimezone)}
           </Text>
@@ -1499,7 +1515,7 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             {formatBusinessTimezoneAbbreviation(startAt, businessTimezone)}
           </Text>
           <Text style={styles.muted}>
-            Location: {formatLocation(resolvedLocation) || 'Not selected'}
+            Location: {selectedLocationText || 'Not selected'}
           </Text>
           <Text style={styles.muted}>
             Technician: {selectedTechnician?.name ?? 'Unassigned'}

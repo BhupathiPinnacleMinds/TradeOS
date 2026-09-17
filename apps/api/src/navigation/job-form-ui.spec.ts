@@ -192,18 +192,20 @@ describe('Job form mobile UI contracts', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
     expect(appointmentForm).toMatch(
-      /useQuickCustomer\s*\? 'Choose existing customer'\s*: 'Create quick customer'/,
+      /useQuickCustomer\s*\? 'Choose existing customer'\s*: 'Quick-create customer'/,
     );
     expect(appointmentForm).toContain('onPress={toggleQuickCustomer}');
-    expect(appointmentForm).toContain(
-      'customerBeforeQuickCreateRef.current = selectedCustomerId',
-    );
-    expect(appointmentForm).toContain(
-      'setSelectedCustomerId(customerBeforeQuickCreateRef.current)',
-    );
+    expect(appointmentForm).toContain('clearCustomerDependentState();');
+    expect(appointmentForm).toContain("setSelectedCustomerId('')");
+    expect(appointmentForm).not.toContain('customerBeforeQuickCreateRef');
     expect(appointmentForm).toContain("setQuickCustomerName('')");
     expect(appointmentForm).toContain("setQuickCustomerPhone('')");
     expect(appointmentForm).toContain("setQuickCustomerEmail('')");
+    expect(appointmentForm).toContain("setManualAccessInstructions('')");
+    expect(appointmentForm).toContain("setManualAddressLine1('')");
+    expect(appointmentForm).toContain("setManualState('')");
+    expect(appointmentForm).toContain("setLocationSource('MANUAL')");
+    expect(appointmentForm).toContain('setSaveAddressAsSite(false)');
     expect(appointmentForm).toContain('if (useQuickCustomer) {');
     expect(appointmentForm).toContain(
       'if (!selectedCustomerId && !useQuickCustomer)',
@@ -216,6 +218,53 @@ describe('Job form mobile UI contracts', () => {
       ?.split('async function selectCustomer')[0];
     expect(toggleHandler).toBeDefined();
     expect(toggleHandler).not.toContain('createCustomerRequest');
+  });
+
+  it('keeps New Appointment review and submission on the active customer and address source', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain(
+      "let finalCustomerId = useQuickCustomer ? '' : selectedCustomerId",
+    );
+    expect(appointmentForm).not.toContain(
+      'setSelectedCustomerId(finalCustomerId)',
+    );
+    expect(appointmentForm).toMatch(
+      /useQuickCustomer\s*\? quickCustomerName\.trim\(\)\s*: selectedCustomer\?\.displayName/,
+    );
+    expect(appointmentForm).toContain(
+      "locationSource: useQuickCustomer ? 'MANUAL' : locationSource",
+    );
+    expect(appointmentForm).toMatch(
+      /!useQuickCustomer && locationSource === 'CUSTOMER_SITE'[\s\S]*\? selectedSiteId\s*: undefined/,
+    );
+    expect(appointmentForm).toContain(
+      'selectionGeneration !== customerSelectionGenerationRef.current',
+    );
+    expect(appointmentForm).toContain("selectedLocationText || 'Not selected'");
+    expect(appointmentForm).toContain(
+      'Enter an appointment address for the new customer.',
+    );
+    expect(appointmentForm).toContain('useQuickCustomer ? (');
+    expect(appointmentForm).toContain(
+      'const customerResponse = await createCustomerRequest(',
+    );
+    expect(appointmentForm).toContain(
+      'const jobResponse = await createJobRequest(token, jobPayload)',
+    );
+    expect(appointmentForm).toContain('saveAddressAsCustomerSite:');
+  });
+
+  it('does not present a state-only customer address as an appointment location', () => {
+    const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
+
+    expect(appointmentForm).toContain(
+      'formatAppointmentLocation(resolvedLocation)',
+    );
+    expect(appointmentForm).toContain('selectedLocationText ||');
+    expect(appointmentForm).toContain(
+      'Choose or enter an appointment location.',
+    );
   });
 
   it('guards New Appointment save against rapid duplicate taps before state updates', () => {
@@ -294,6 +343,7 @@ describe('Job form mobile UI contracts', () => {
   it('pre-populates appointment defaults from the linked job without exposing job switching controls', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
     const jobDetails = mobileSource('screens/JobDetailsScreen.tsx');
+    const appointmentLocation = mobileSource('utils/appointmentLocation.ts');
 
     expect(jobDetails).toContain(
       "navigation.navigate('AppointmentForm', {\n                  customerId: job.customerId,\n                  jobId: job.id,",
@@ -302,8 +352,9 @@ describe('Job form mobile UI contracts', () => {
       "navigation.navigate('AppointmentForm', {\n                customerId: job.customerId,\n                jobId: job.id,",
     );
     expect(appointmentForm).toContain('function getJobManualLocation');
-    expect(appointmentForm).toContain('function isPlaceholderAddressText');
-    expect(appointmentForm).toContain(
+    expect(appointmentForm).toContain('isPlaceholderAddressText');
+    expect(appointmentLocation).toContain('function isPlaceholderAddressText');
+    expect(appointmentLocation).toContain(
       "text === 'address to be confirmed' || text === 'to be confirmed'",
     );
     expect(appointmentForm).toContain("postcode === '0000'");
@@ -358,7 +409,7 @@ describe('Job form mobile UI contracts', () => {
   it('preserves independent appointment creation customer and job selection controls', () => {
     const appointmentForm = mobileSource('screens/AppointmentFormScreen.tsx');
 
-    expect(appointmentForm).toContain("'Create quick customer'");
+    expect(appointmentForm).toContain("'Quick-create customer'");
     expect(appointmentForm).toContain('label="Search and select a customer"');
     expect(appointmentForm).toContain('Search results');
     expect(appointmentForm).toContain('Recent customers');
