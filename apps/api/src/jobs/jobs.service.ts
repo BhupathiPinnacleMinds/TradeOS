@@ -413,17 +413,16 @@ export class JobsService {
     dto: UpsertJobDto,
   ): Promise<JobDetailResponse> {
     this.assertRole(currentUser, JOB_WRITE_ROLES);
-    if (!dto.customerId) {
+    const existing = await this.getJob(currentUser.businessId, id);
+    if (dto.customerId && dto.customerId !== existing.customerId) {
       throw this.domainError(
         'INVALID_JOB_DATA',
-        'Job updates must reference an existing customer.',
+        'Customer cannot be changed after the job is created.',
         HttpStatus.BAD_REQUEST,
       );
     }
-    const existing = await this.getJob(currentUser.businessId, id);
-    await this.assertCustomer(currentUser.businessId, dto.customerId);
     await this.assertAssignedUser(currentUser.businessId, dto.assignedToUserId);
-    const data = this.normalise(dto, dto.customerId);
+    const data = this.normalise(dto, existing.customerId);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.job.update({

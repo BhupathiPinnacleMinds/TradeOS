@@ -726,6 +726,50 @@ describe('JobsService', () => {
     expect(prisma.appointment.findMany).toHaveBeenCalled();
   });
 
+  it('updates job details without changing its customer when customerId is omitted', async () => {
+    const { prisma, service } = createService();
+
+    await service.update(
+      owner,
+      'job-1',
+      payload({
+        customerId: undefined,
+        title: 'Updated title',
+        priority: 'HIGH',
+      }),
+    );
+
+    const [[updateArg]] = prisma.job.update.mock.calls as [
+      [{ data: { customerId: string; title: string; priority: string } }],
+    ];
+    expect(updateArg.data.customerId).toBe('customer-1');
+    expect(updateArg.data.title).toBe('Updated title');
+    expect(updateArg.data.priority).toBe('HIGH');
+  });
+
+  it('accepts the existing customerId for backward-compatible job updates', async () => {
+    const { prisma, service } = createService();
+
+    await service.update(owner, 'job-1', payload({ customerId: 'customer-1' }));
+
+    const [[updateArg]] = prisma.job.update.mock.calls as [
+      [{ data: { customerId: string } }],
+    ];
+    expect(updateArg.data.customerId).toBe('customer-1');
+  });
+
+  it('rejects moving a job to another customer before writing job or appointment data', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.update(owner, 'job-1', payload({ customerId: 'customer-2' })),
+    ).rejects.toThrow('Customer cannot be changed after the job is created.');
+
+    expect(prisma.job.update).not.toHaveBeenCalled();
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('persists optional quick customer email when creating a job', async () => {
     const { prisma, service } = createService();
 

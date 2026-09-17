@@ -55,6 +55,7 @@ export function JobFormScreen({ navigation, route }: Props) {
   const { showToast } = useToast();
   const [form, setForm] = useState<JobPayload>(initialPayload(customerId));
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [editCustomerName, setEditCustomerName] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [useQuickCustomer, setUseQuickCustomer] = useState(false);
   const [createdJobPrompt, setCreatedJobPrompt] = useState<{
@@ -86,6 +87,7 @@ export function JobFormScreen({ navigation, route }: Props) {
         if (jobId) {
           const response = await jobDetailRequest(authToken, jobId);
           if (!mounted) return;
+          setEditCustomerName(response.job.customer.displayName);
           setForm({
             addressLine1: response.job.addressLine1,
             addressLine2: response.job.addressLine2 ?? undefined,
@@ -198,7 +200,7 @@ export function JobFormScreen({ navigation, route }: Props) {
     const payload: JobPayload = {
       ...form,
       assignedToUserId: jobId ? form.assignedToUserId : null,
-      customerId: useQuickCustomer ? undefined : form.customerId,
+      customerId: jobId || useQuickCustomer ? undefined : form.customerId,
       quickCustomer:
         useQuickCustomer && form.quickCustomer
           ? {
@@ -215,7 +217,12 @@ export function JobFormScreen({ navigation, route }: Props) {
       scheduledStart: jobId ? form.scheduledStart : new Date().toISOString(),
       scheduledEnd: form.scheduledEnd ?? null,
     };
-    if (!validate(payload)) {
+    if (
+      !validate({
+        ...payload,
+        customerId: jobId ? form.customerId : payload.customerId,
+      })
+    ) {
       showToast({
         message: 'Please check the highlighted fields.',
         tone: 'error',
@@ -279,12 +286,15 @@ export function JobFormScreen({ navigation, route }: Props) {
           {!jobId ? (
             <Toggle
               active={useQuickCustomer}
-              label="Create quick customer"
+              label={
+                useQuickCustomer
+                  ? 'Choose existing customer'
+                  : 'Create quick customer'
+              }
               onPress={() => {
                 setUseQuickCustomer((current) => !current);
                 setForm((current) => ({
                   ...current,
-                  customerId: useQuickCustomer ? current.customerId : undefined,
                   quickCustomer: useQuickCustomer
                     ? undefined
                     : {
@@ -301,7 +311,18 @@ export function JobFormScreen({ navigation, route }: Props) {
               }}
             />
           ) : null}
-          {!useQuickCustomer ? (
+          {jobId ? (
+            <>
+              <Text style={styles.muted}>
+                {editCustomerName ||
+                  selectedCustomer?.displayName ||
+                  'Customer'}
+              </Text>
+              <Text style={styles.muted}>
+                Customer cannot be changed after the job is created.
+              </Text>
+            </>
+          ) : !useQuickCustomer ? (
             <>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={styles.pickerRow}>

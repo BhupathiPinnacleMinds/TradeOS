@@ -21,6 +21,25 @@ describe('Job form mobile UI contracts', () => {
     );
   });
 
+  it('locks the customer on Edit Job and keeps quick customer mode reversible on New Job', () => {
+    const jobForm = mobileSource('screens/JobFormScreen.tsx');
+    expect(jobForm).toContain(
+      'setEditCustomerName(response.job.customer.displayName)',
+    );
+    expect(jobForm).toContain(
+      'Customer cannot be changed after the job is created.',
+    );
+    expect(jobForm).toMatch(
+      /useQuickCustomer\s*\? 'Choose existing customer'\s*: 'Create quick customer'/,
+    );
+    expect(jobForm).toContain(
+      'customerId: jobId || useQuickCustomer ? undefined : form.customerId',
+    );
+    expect(jobForm).toContain('quickCustomer: useQuickCustomer');
+    expect(jobForm).toContain('{jobId ? (');
+    expect(jobForm).toContain(') : !useQuickCustomer ? (');
+  });
+
   it('shows appointment schedule and technician only for actionable appointments on Jobs cards', () => {
     const jobsScreen = mobileSource('screens/JobsScreen.tsx');
     expect(jobsScreen).toContain('job.hasActionableAppointment');
