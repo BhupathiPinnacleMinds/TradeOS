@@ -229,7 +229,7 @@ export class AppointmentsService {
           businessId: currentUser.businessId,
           scheduledStart: { gte: startOfDay, lt: endOfDay },
           ...(currentUser.role === TECHNICIAN_ROLE
-            ? { assignedUserId: currentUser.id }
+            ? { OR: this.crewWhere(currentUser.id) }
             : {}),
         },
         include: this.appointmentInclude(),
@@ -281,8 +281,8 @@ export class AppointmentsService {
     const technicians = members
       .map((member) => {
         if (!member.user) return null;
-        const technicianAppointments = appointments.filter(
-          (appointment) => appointment.assignedUserId === member.user?.id,
+        const technicianAppointments = appointments.filter((appointment) =>
+          this.hasCrewMember(appointment, member.user?.id),
         );
         const estimatedWorkMinutes = technicianAppointments.reduce(
           (sum, appointment) => sum + this.appointmentDuration(appointment),
@@ -401,11 +401,10 @@ export class AppointmentsService {
       new Date(),
       business.timezone,
     );
-    const appointmentOwnerFilter = BUSINESS_MY_DAY_ROLES.includes(
-      currentUser.role,
-    )
-      ? {}
-      : { assignedUserId: currentUser.id };
+    const appointmentOwnerFilter: Prisma.AppointmentWhereInput =
+      BUSINESS_MY_DAY_ROLES.includes(currentUser.role)
+        ? {}
+        : { OR: this.crewWhere(currentUser.id) };
 
     const [appointments, completedTodayAppointments] = await Promise.all([
       this.prisma.appointment.findMany({
@@ -473,7 +472,7 @@ export class AppointmentsService {
         mappedFutureAppointment &&
         mappedFutureAppointment.businessId === currentUser.businessId &&
         (BUSINESS_MY_DAY_ROLES.includes(currentUser.role) ||
-          mappedFutureAppointment.assignedUserId === currentUser.id) &&
+          this.hasCrewMember(futureAppointment!, currentUser.id)) &&
         REMAINING_MY_DAY_STATUSES.includes(
           mappedFutureAppointment.status as never,
         )
@@ -535,10 +534,26 @@ export class AppointmentsService {
     this.assertRole(currentUser, APPOINTMENT_WRITE_ROLES);
     const job = await this.assertJob(currentUser.businessId, dto.jobId);
     this.assertJobAcceptsAppointments(job.status);
-    await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
-    const data = await this.normalise(currentUser.businessId, dto, job);
+    const crew = this.resolveCrew(dto);
+    await Promise.all(
+      crew.ids.map((id) => this.assertAssignedUser(currentUser.businessId, id)),
+    );
+    const data = await this.normalise(
+      currentUser.businessId,
+      {
+        ...dto,
+        assignedUserId: crew.ids[0] ?? null,
+      },
+      job,
+    );
     this.assertNewAppointmentIsNotInPast(data.scheduledStart);
-    await this.assertNoConflictOrOverride(currentUser, data, dto);
+    await this.assertNoConflictOrOverride(
+      currentUser,
+      data,
+      dto,
+      undefined,
+      crew.ids,
+    );
 
     const created = await this.prisma.$transaction(async (tx) => {
       await this.lockActiveJob(tx, currentUser, job.id);
@@ -567,13 +582,26 @@ export class AppointmentsService {
           appointmentNumber,
           businessId: currentUser.businessId,
           createdBy: currentUser.id,
+          multipleTechniciansRequired: crew.multiple,
+          crewAssignments: {
+            create: crew.ids.map((userId) => ({
+              user: {
+                connect: {
+                  id_businessId: {
+                    id: userId,
+                    businessId: currentUser.businessId,
+                  },
+                },
+              },
+            })),
+          },
         },
         include: this.appointmentInclude(),
       });
       await this.log(tx, currentUser, 'APPOINTMENT_CREATED', appointment);
-      if (appointment.assignedUserId) {
+      for (const technicianId of crew.ids) {
         await this.log(tx, currentUser, 'APPOINTMENT_ASSIGNED', appointment, {
-          assignedUserId: appointment.assignedUserId,
+          assignedUserId: technicianId,
         });
       }
       await this.log(
@@ -621,14 +649,19 @@ export class AppointmentsService {
     const job = await this.assertJob(currentUser.businessId, dto.jobId);
     this.assertJobAcceptsAppointments(existing.job.status);
     this.assertJobAcceptsAppointments(job.status);
-    await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
+    const crew = this.resolveCrew(dto, existing);
+    await Promise.all(
+      crew.ids.map((technicianId) =>
+        this.assertAssignedUser(currentUser.businessId, technicianId),
+      ),
+    );
     const data = await this.normalise(
       currentUser.businessId,
-      dto,
+      { ...dto, assignedUserId: crew.ids[0] ?? null },
       job,
       existing,
     );
-    await this.assertNoConflictOrOverride(currentUser, data, dto, id);
+    await this.assertNoConflictOrOverride(currentUser, data, dto, id, crew.ids);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.lockActiveJob(tx, currentUser, job.id);
@@ -644,7 +677,25 @@ export class AppointmentsService {
       );
       const appointment = await tx.appointment.update({
         where: { id },
-        data: { ...data, ...location, updatedBy: currentUser.id },
+        data: {
+          ...data,
+          ...location,
+          multipleTechniciansRequired: crew.multiple,
+          crewAssignments: {
+            deleteMany: {},
+            create: crew.ids.map((userId) => ({
+              user: {
+                connect: {
+                  id_businessId: {
+                    id: userId,
+                    businessId: currentUser.businessId,
+                  },
+                },
+              },
+            })),
+          },
+          updatedBy: currentUser.id,
+        },
         include: this.appointmentInclude(),
       });
       await this.log(tx, currentUser, 'APPOINTMENT_UPDATED', appointment, {
@@ -685,26 +736,54 @@ export class AppointmentsService {
           previousAssignedUserId: existing.assignedUserId,
         });
       }
+      if (this.crewChanged(existing, crew.ids)) {
+        await this.log(tx, currentUser, 'APPOINTMENT_REASSIGNED', appointment, {
+          assignedTechnicianIds: crew.ids,
+          removedTechnicianIds: this.crewIds(existing).filter(
+            (id) => !crew.ids.includes(id),
+          ),
+        });
+      }
       return appointment;
     });
 
     const appointment = this.toAppointment(updated);
+    const previousCrewIds = this.crewIds(existing);
+    const crewChanged = this.crewChanged(existing, crew.ids);
     if (
       existing.scheduledStart.getTime() !== updated.scheduledStart.getTime() ||
       existing.scheduledEnd.getTime() !== updated.scheduledEnd.getTime()
     ) {
       await this.notifications.notifyRescheduled({
         actor: currentUser,
-        appointment,
+        appointment: crewChanged
+          ? {
+              ...appointment,
+              technicians: appointment.technicians.filter((member) =>
+                previousCrewIds.includes(member.id),
+              ),
+              assignedUserId: null,
+            }
+          : appointment,
       });
     }
-    if (existing.assignedUserId !== appointment.assignedUserId) {
-      await this.notifications.notifyNewTechnician({
-        actor: currentUser,
-        appointment,
-        newTechnicianId: appointment.assignedUserId,
-        previousTechnicianName: this.technicianName(existing.assignedUser),
-      });
+    if (crewChanged) {
+      for (const oldTechnicianId of previousCrewIds.filter(
+        (technicianId) => !crew.ids.includes(technicianId),
+      )) {
+        this.notifications.notifyOldTechnician({
+          actor: currentUser,
+          appointment,
+          newTechnicianName:
+            appointment.technicians
+              .map((member) =>
+                [member.firstName, member.lastName].filter(Boolean).join(' '),
+              )
+              .join(', ') || 'the assigned crew',
+          oldTechnicianId,
+        });
+      }
+      await this.notifyAddedCrew(currentUser, appointment, previousCrewIds);
     }
 
     return { appointment };
@@ -761,13 +840,21 @@ export class AppointmentsService {
 
     const dayAppointments = await this.prisma.appointment.findMany({
       where: {
-        assignedUserId: { in: users.map((user) => user.userId) },
+        OR: [
+          { assignedUserId: { in: users.map((user) => user.userId) } },
+          {
+            crewAssignments: {
+              some: { userId: { in: users.map((user) => user.userId) } },
+            },
+          },
+        ],
         businessId: currentUser.businessId,
         scheduledStart: { gte: startOfToday, lt: startOfTomorrow },
         status: { notIn: [...CLOSED_STATUSES] },
       },
       select: {
         assignedUserId: true,
+        crewAssignments: { select: { userId: true } },
         scheduledEnd: true,
         scheduledStart: true,
       },
@@ -799,11 +886,19 @@ export class AppointmentsService {
           name: user.name,
           role: user.role,
           todayWorkload: dayAppointments.filter(
-            (item) => item.assignedUserId === user.userId,
+            (item) =>
+              item.assignedUserId === user.userId ||
+              item.crewAssignments?.some(
+                (member) => member.userId === user.userId,
+              ),
           ).length,
           upcomingToday: dayAppointments.filter(
             (item) =>
-              item.assignedUserId === user.userId && item.scheduledStart >= now,
+              (item.assignedUserId === user.userId ||
+                item.crewAssignments?.some(
+                  (member) => member.userId === user.userId,
+                )) &&
+              item.scheduledStart >= now,
           ).length,
           userId: user.userId,
         };
@@ -854,31 +949,28 @@ export class AppointmentsService {
         { status: existing.status },
       );
     }
-    await this.assertAssignedUser(currentUser.businessId, dto.assignedUserId);
-
-    const availability = await this.checkAvailability(currentUser, {
-      assignedUserId: dto.assignedUserId ?? null,
-      excludeAppointmentId: id,
-      scheduledEnd: existing.scheduledEnd,
-      scheduledStart: existing.scheduledStart,
-    });
-    const canOverride =
-      dto.allowConflictOverride &&
-      availability.canOverride &&
-      ['OWNER', 'ADMIN'].includes(currentUser.role);
-    if (availability.hasConflict && !canOverride) {
-      throw this.domainError(
-        'APPOINTMENT_CONFLICT',
-        availability.reason,
-        HttpStatus.CONFLICT,
-        { availability: { ...availability, canOverride } },
-      );
-    }
+    const crew = this.resolveCrew(dto, existing);
+    await Promise.all(
+      crew.ids.map((technicianId) =>
+        this.assertAssignedUser(currentUser.businessId, technicianId),
+      ),
+    );
+    await this.assertNoConflictOrOverride(
+      currentUser,
+      {
+        assignedUserId: crew.ids[0] ?? null,
+        scheduledEnd: existing.scheduledEnd,
+        scheduledStart: existing.scheduledStart,
+      },
+      dto,
+      id,
+      crew.ids,
+    );
 
     const previousTechnicianName = this.technicianName(existing.assignedUser);
     const nextTechnicianName = await this.getTechnicianName(
       currentUser.businessId,
-      dto.assignedUserId ?? null,
+      crew.ids[0] ?? null,
     );
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -886,12 +978,30 @@ export class AppointmentsService {
       const appointment = await tx.appointment.update({
         where: { id },
         data: {
-          assignedUserId: dto.assignedUserId ?? null,
+          assignedUserId: crew.ids[0] ?? null,
+          multipleTechniciansRequired: crew.multiple,
+          crewAssignments: {
+            deleteMany: {},
+            create: crew.ids.map((userId) => ({
+              user: {
+                connect: {
+                  id_businessId: {
+                    id: userId,
+                    businessId: currentUser.businessId,
+                  },
+                },
+              },
+            })),
+          },
           updatedBy: currentUser.id,
         },
         include: this.appointmentInclude(),
       });
       await this.log(tx, currentUser, 'APPOINTMENT_REASSIGNED', appointment, {
+        assignedTechnicianIds: crew.ids,
+        removedTechnicianIds: this.crewIds(existing).filter(
+          (technicianId) => !crew.ids.includes(technicianId),
+        ),
         newTechnicianName: nextTechnicianName,
         previousAssignedUserId: existing.assignedUserId,
         previousTechnicianName,
@@ -916,18 +1026,21 @@ export class AppointmentsService {
     });
 
     const appointment = this.toAppointment(updated);
-    this.notifications.notifyOldTechnician({
-      actor: currentUser,
+    for (const oldTechnicianId of this.crewIds(existing).filter(
+      (technicianId) => !crew.ids.includes(technicianId),
+    )) {
+      this.notifications.notifyOldTechnician({
+        actor: currentUser,
+        appointment,
+        newTechnicianName: nextTechnicianName,
+        oldTechnicianId,
+      });
+    }
+    await this.notifyAddedCrew(
+      currentUser,
       appointment,
-      newTechnicianName: nextTechnicianName,
-      oldTechnicianId: existing.assignedUserId,
-    });
-    await this.notifications.notifyNewTechnician({
-      actor: currentUser,
-      appointment,
-      newTechnicianId: appointment.assignedUserId,
-      previousTechnicianName,
-    });
+      this.crewIds(existing),
+    );
 
     return { appointment };
   }
@@ -1137,6 +1250,20 @@ export class AppointmentsService {
       status,
       updatedBy: currentUser.id,
     };
+    const completionCrew =
+      status === 'COMPLETED' ? this.crewAtCompletion(existing) : [];
+    if (status === 'COMPLETED' && completionCrew.length) {
+      data.completionCrew = {
+        createMany: {
+          data: completionCrew.map((member) => ({
+            businessId: currentUser.businessId,
+            completedAt: now,
+            displayName: member.displayName,
+            userId: member.userId,
+          })),
+        },
+      };
+    }
     this.applyExecutionTiming(data, existing, status, now);
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -1201,6 +1328,11 @@ export class AppointmentsService {
         appointment,
         {
           durations: this.executionDurations(appointment, now),
+          ...(status === 'COMPLETED'
+            ? {
+                completedBy: completionCrew.map((member) => member.displayName),
+              }
+            : {}),
           from: existing.status,
           to: status,
         },
@@ -1266,8 +1398,11 @@ export class AppointmentsService {
     if (query.jobId) where.jobId = query.jobId;
     if (query.customerId) where.job = { customerId: query.customerId };
     if (query.assignedUserId && currentUser.role !== TECHNICIAN_ROLE) {
-      where.assignedUserId =
-        query.assignedUserId === 'unassigned' ? null : query.assignedUserId;
+      if (query.assignedUserId === 'unassigned') {
+        where.assignedUserId = null;
+      } else {
+        where.AND = [{ OR: this.crewWhere(query.assignedUserId) }];
+      }
     }
     if (query.filter) this.applyFilter(where, query.filter, currentUser);
     if (query.dateFrom || query.dateTo) {
@@ -1293,9 +1428,36 @@ export class AppointmentsService {
       ];
     }
     if (currentUser.role === TECHNICIAN_ROLE) {
-      where.assignedUserId = currentUser.id;
+      where.AND = [
+        ...(Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []),
+        { OR: this.crewWhere(currentUser.id) },
+      ];
     }
     return where;
+  }
+
+  private crewWhere(userId: string): Prisma.AppointmentWhereInput[] {
+    return [
+      { assignedUserId: userId },
+      { crewAssignments: { some: { userId } } },
+    ];
+  }
+
+  private hasCrewMember(
+    appointment: AppointmentWithRelations,
+    userId?: string,
+  ) {
+    return Boolean(
+      userId &&
+      (appointment.assignedUserId === userId ||
+        appointment.crewAssignments?.some(
+          (member) => member.userId === userId,
+        )),
+    );
   }
 
   private applyFilter(
@@ -1320,7 +1482,8 @@ export class AppointmentsService {
     }
     if (filter === 'completed') where.status = 'COMPLETED';
     if (filter === 'cancelled') where.status = 'CANCELLED';
-    if (filter === 'my-appointments') where.assignedUserId = currentUser.id;
+    if (filter === 'my-appointments')
+      where.AND = [{ OR: this.crewWhere(currentUser.id) }];
   }
 
   private orderBy(
@@ -1635,28 +1798,122 @@ export class AppointmentsService {
     },
     dto: Pick<UpsertAppointmentDto, 'allowConflictOverride'>,
     excludeAppointmentId?: string,
+    technicianIds?: string[],
   ) {
-    const availability = await this.checkAvailability(currentUser, {
-      assignedUserId: data.assignedUserId,
-      excludeAppointmentId,
-      scheduledEnd: data.scheduledEnd,
-      scheduledStart: data.scheduledStart,
-    });
-    if (!availability.hasConflict) return;
-    if (
-      currentUser.role === 'OWNER' &&
-      dto.allowConflictOverride &&
-      availability.canOverride
-    ) {
-      return;
+    for (const technicianId of technicianIds ?? [data.assignedUserId]) {
+      const availability = await this.checkAvailability(currentUser, {
+        assignedUserId: technicianId,
+        excludeAppointmentId,
+        scheduledEnd: data.scheduledEnd,
+        scheduledStart: data.scheduledStart,
+      });
+      if (!availability.hasConflict) continue;
+      if (
+        ['OWNER', 'ADMIN'].includes(currentUser.role) &&
+        dto.allowConflictOverride &&
+        availability.canOverride
+      )
+        continue;
+      throw this.domainError(
+        'APPOINTMENT_CONFLICT',
+        availability.reason,
+        HttpStatus.CONFLICT,
+        { availability, technicianId },
+      );
     }
+  }
 
-    throw this.domainError(
-      'APPOINTMENT_CONFLICT',
-      availability.reason,
-      HttpStatus.CONFLICT,
-      { availability },
+  private resolveCrew(
+    dto: Pick<
+      UpsertAppointmentDto,
+      'assignedUserId' | 'technicianIds' | 'multipleTechniciansRequired'
+    >,
+    existing?: AppointmentWithRelations,
+  ) {
+    const previousIds = existing?.crewAssignments?.length
+      ? existing.crewAssignments.map((assignment) => assignment.userId)
+      : existing?.assignedUserId
+        ? [existing.assignedUserId]
+        : [];
+    const multiple =
+      dto.multipleTechniciansRequired ??
+      existing?.multipleTechniciansRequired ??
+      false;
+    const ids =
+      dto.technicianIds !== undefined
+        ? dto.technicianIds.map((id) => id.trim()).filter(Boolean)
+        : dto.assignedUserId !== undefined &&
+            !(
+              existing?.multipleTechniciansRequired &&
+              dto.assignedUserId === existing.assignedUserId &&
+              dto.multipleTechniciansRequired === undefined
+            )
+          ? dto.assignedUserId
+            ? [dto.assignedUserId]
+            : []
+          : previousIds;
+    if (
+      new Set(ids).size !== ids.length ||
+      (multiple && ids.length < 2) ||
+      (!multiple && ids.length > 1)
+    ) {
+      throw this.domainError(
+        'INVALID_APPOINTMENT_CREW',
+        multiple
+          ? 'Select at least two different technicians for this appointment.'
+          : 'Select only one technician, or enable Multiple technicians required.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return { ids, multiple };
+  }
+
+  private crewAtCompletion(appointment: AppointmentWithRelations) {
+    const crew = appointment.crewAssignments?.length
+      ? appointment.crewAssignments.map((assignment) => assignment.user)
+      : appointment.assignedUser
+        ? [appointment.assignedUser]
+        : [];
+    return crew.map((user) => ({
+      userId: user.id,
+      displayName: [user.firstName, user.lastName].filter(Boolean).join(' '),
+    }));
+  }
+
+  private crewIds(appointment: AppointmentWithRelations) {
+    return appointment.crewAssignments?.length
+      ? appointment.crewAssignments.map((member) => member.userId)
+      : appointment.assignedUserId
+        ? [appointment.assignedUserId]
+        : [];
+  }
+
+  private crewChanged(
+    appointment: AppointmentWithRelations,
+    nextIds: string[],
+  ) {
+    const previous = this.crewIds(appointment);
+    return (
+      previous.length !== nextIds.length ||
+      previous.some((id) => !nextIds.includes(id))
     );
+  }
+
+  private async notifyAddedCrew(
+    actor: AuthenticatedUser,
+    appointment: Appointment,
+    previousIds: string[],
+  ) {
+    for (const technician of appointment.technicians.filter(
+      (member) => !previousIds.includes(member.id),
+    )) {
+      await this.notifications.notifyNewTechnician({
+        actor,
+        appointment,
+        newTechnicianId: technician.id,
+        previousTechnicianName: 'the previous crew',
+      });
+    }
   }
 
   private async checkAvailability(
@@ -1763,7 +2020,7 @@ export class AppointmentsService {
     const appointment = await this.getAppointment(currentUser.businessId, id);
     if (
       currentUser.role === TECHNICIAN_ROLE &&
-      appointment.assignedUserId !== currentUser.id
+      !this.hasCrewMember(appointment, currentUser.id)
     ) {
       throw this.domainError(
         'APPOINTMENT_NOT_FOUND',
@@ -1786,7 +2043,7 @@ export class AppointmentsService {
     );
     const allowed = getAllowedAppointmentTransitions({
       currentStatus: appointment.status,
-      isAssignedTechnician: appointment.assignedUserId === currentUser.id,
+      isAssignedTechnician: this.hasCrewMember(appointment, currentUser.id),
       userRole: currentUser.role,
     });
     if (!action || !allowed.some((option) => option.action === action)) {
@@ -2431,6 +2688,15 @@ export class AppointmentsService {
       assignedUser: {
         select: { email: true, firstName: true, id: true, lastName: true },
       },
+      crewAssignments: {
+        include: {
+          user: {
+            select: { email: true, firstName: true, id: true, lastName: true },
+          },
+        },
+        orderBy: { assignedAt: 'asc' },
+      },
+      completionCrew: { orderBy: { userId: 'asc' } },
       job: {
         select: {
           addressLine1: true,
@@ -2485,6 +2751,18 @@ export class AppointmentsService {
       appointmentType: appointment.appointmentType,
       assignedUser: appointment.assignedUser,
       assignedUserId: appointment.assignedUserId,
+      multipleTechniciansRequired:
+        appointment.multipleTechniciansRequired ?? false,
+      technicians: appointment.crewAssignments?.length
+        ? appointment.crewAssignments.map((assignment) => assignment.user)
+        : appointment.assignedUser
+          ? [appointment.assignedUser]
+          : [],
+      completionCrew:
+        appointment.completionCrew?.map((member) => ({
+          userId: member.userId,
+          displayName: member.displayName,
+        })) ?? [],
       businessId: appointment.businessId,
       createdAt: appointment.createdAt.toISOString(),
       createdBy: appointment.createdBy,

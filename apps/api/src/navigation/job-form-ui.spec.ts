@@ -740,7 +740,10 @@ describe('Job form mobile UI contracts', () => {
     );
     expect(appointmentForm).toContain('selectedTechnician');
     expect(appointmentForm).toContain(
-      "Technician: {selectedTechnician?.name ?? 'Unassigned'}",
+      'selectedCrew.map((member) => member.name).join',
+    );
+    expect(appointmentForm).toContain(
+      "selectedTechnician?.name ?? 'Unassigned'",
     );
   });
 

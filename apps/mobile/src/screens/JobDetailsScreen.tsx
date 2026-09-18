@@ -18,6 +18,7 @@ import {
   formatMediaCount,
   formatBusinessTimeRange,
   getAppointmentQuickActions,
+  getAppointmentTechnicianNames,
   isExpiredUnstartedAppointment,
   mediaDisplayTitle,
   normaliseBusinessTimezone,
@@ -221,7 +222,8 @@ function hasOpenAssignedAppointment(
   if (!userId) return false;
   return appointments.some(
     (appointment) =>
-      appointment.assignedUserId === userId &&
+      (appointment.technicians.some((technician) => technician.id === userId) ||
+        appointment.assignedUserId === userId) &&
       !CLOSED_APPOINTMENT_STATUSES.includes(appointment.status as never),
   );
 }
@@ -299,6 +301,24 @@ export function JobDetailsScreen({ navigation, route }: Props) {
   const canCreateInvoice = roleCanCreateInvoices(user?.role ?? 'READ_ONLY');
   const availableJobStatusActions = job ? jobStatusActions(job) : [];
   const latestCompletedAppointment = completedAppointments(appointments)[0];
+  const completedJobCrew = [
+    ...new Map(
+      completedAppointments(appointments).flatMap((appointment) =>
+        appointment.completionCrew.length
+          ? appointment.completionCrew.map(
+              (member) => [member.userId, member.displayName] as const,
+            )
+          : appointment.assignedUserId
+            ? [
+                [
+                  appointment.assignedUserId,
+                  getAppointmentTechnicianNames(appointment)[0] ?? 'Technician',
+                ] as const,
+              ]
+            : [],
+      ),
+    ).values(),
+  ];
   const latestCompletionDurationWarning = latestCompletedAppointment
     ? unusualExecutionDurationWarning(latestCompletedAppointment)
     : null;
@@ -870,10 +890,18 @@ export function JobDetailsScreen({ navigation, route }: Props) {
       {latestCompletedAppointment ? (
         <Card title="Latest completion">
           <Text style={styles.meta}>
-            Technician:{' '}
-            {latestCompletedAppointment.assignedUser
-              ? `${latestCompletedAppointment.assignedUser.firstName} ${latestCompletedAppointment.assignedUser.lastName}`
-              : 'Unassigned'}
+            Job completed by:{' '}
+            {completedJobCrew.join(', ') || 'No technician recorded'}
+          </Text>
+          <Text style={styles.meta}>
+            Completed by:{' '}
+            {latestCompletedAppointment.completionCrew.length
+              ? latestCompletedAppointment.completionCrew
+                  .map((member) => member.displayName)
+                  .join(', ')
+              : getAppointmentTechnicianNames(latestCompletedAppointment).join(
+                  ', ',
+                ) || 'Unassigned'}
           </Text>
           <Text style={styles.meta}>
             Completed:{' '}
@@ -1033,7 +1061,10 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               scheduledEnd: appointment.scheduledEnd,
               status: appointment.status,
             }),
-            isAssignedUser: appointment.assignedUserId === user?.id,
+            isAssignedUser:
+              appointment.technicians.some(
+                (technician) => technician.id === user?.id,
+              ) || appointment.assignedUserId === user?.id,
             role: user?.role,
             status: appointment.status,
           });
@@ -1076,10 +1107,9 @@ export function JobDetailsScreen({ navigation, route }: Props) {
                 Status: {appointmentDisplayStatus(appointment)}
               </Text>
               <Text style={styles.meta}>
-                Technician:{' '}
-                {appointment.assignedUser
-                  ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-                  : 'Unassigned'}
+                Technicians:{' '}
+                {getAppointmentTechnicianNames(appointment).join(', ') ||
+                  'Unassigned'}
               </Text>
               <Text style={styles.meta}>
                 Notes: {appointment.notes ?? 'No appointment notes.'}

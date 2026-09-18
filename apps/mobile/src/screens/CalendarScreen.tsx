@@ -21,6 +21,7 @@ import {
   getBusinessDayRangeUtc,
   normaliseBusinessTimezone,
   getAppointmentQuickActions,
+  getAppointmentTechnicianNames,
   isExpiredUnstartedAppointment,
   zonedTimeToUtc,
 } from '@tradieos/shared';
@@ -1339,7 +1340,9 @@ function DispatcherAppointmentCard({
       scheduledEnd: appointment.scheduledEnd,
       status: appointment.status,
     }),
-    isAssignedUser: appointment.assignedUserId === userId,
+    isAssignedUser:
+      appointment.technicians.some((technician) => technician.id === userId) ||
+      appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,
   });
@@ -1556,7 +1559,9 @@ function AppointmentCard({
       scheduledEnd: appointment.scheduledEnd,
       status: appointment.status,
     }),
-    isAssignedUser: appointment.assignedUserId === userId,
+    isAssignedUser:
+      appointment.technicians.some((technician) => technician.id === userId) ||
+      appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,
   });
@@ -1613,9 +1618,7 @@ function AppointmentCard({
         {primaryCustomerName(appointment.job.customer)}
       </Text>
       <Text style={styles.meta}>
-        {appointment.assignedUser
-          ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-          : 'Unassigned'}
+        {getAppointmentTechnicianNames(appointment).join(', ') || 'Unassigned'}
       </Text>
       {appointment.suburb ? (
         <Text style={styles.meta}>{appointment.suburb}</Text>
@@ -1662,7 +1665,9 @@ function AppointmentMoreMenu({
       scheduledEnd: appointment.scheduledEnd,
       status: appointment.status,
     }),
-    isAssignedUser: appointment.assignedUserId === userId,
+    isAssignedUser:
+      appointment.technicians.some((technician) => technician.id === userId) ||
+      appointment.assignedUserId === userId,
     role: role as Parameters<typeof getAppointmentQuickActions>[0]['role'],
     status: appointment.status,
   });

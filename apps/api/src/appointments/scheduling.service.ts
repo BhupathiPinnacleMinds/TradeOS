@@ -198,7 +198,10 @@ export class SchedulingService {
     }
 
     const conflictWhere: Prisma.AppointmentWhereInput = {
-      assignedUserId: input.assignedUserId,
+      OR: [
+        { assignedUserId: input.assignedUserId },
+        { crewAssignments: { some: { userId: input.assignedUserId } } },
+      ],
       businessId,
       scheduledEnd: { gt: input.scheduledStart },
       scheduledStart: { lt: input.scheduledEnd },
@@ -223,9 +226,7 @@ export class SchedulingService {
       jobTitle: conflict.job.title,
       scheduledEnd: conflict.scheduledEnd.toISOString(),
       scheduledStart: conflict.scheduledStart.toISOString(),
-      technicianName: conflict.assignedUser
-        ? `${conflict.assignedUser.firstName} ${conflict.assignedUser.lastName}`
-        : null,
+      technicianName,
     }));
 
     if (mappedConflicts.length > 0) {
@@ -313,11 +314,23 @@ export class SchedulingService {
     const dayAppointments = await this.prisma.appointment.findMany({
       select: {
         assignedUserId: true,
+        crewAssignments: { select: { userId: true } },
         scheduledEnd: true,
         scheduledStart: true,
       },
       where: {
-        assignedUserId: { in: availableCandidates.map((user) => user.id) },
+        OR: [
+          {
+            assignedUserId: { in: availableCandidates.map((user) => user.id) },
+          },
+          {
+            crewAssignments: {
+              some: {
+                userId: { in: availableCandidates.map((user) => user.id) },
+              },
+            },
+          },
+        ],
         businessId,
         scheduledStart: { gte: dayRange.start, lt: dayRange.end },
         status: { notIn: CLOSED_APPOINTMENT_STATUSES },
@@ -326,19 +339,26 @@ export class SchedulingService {
 
     const workloadMinutes = new Map<string, number>();
     for (const appointment of dayAppointments) {
-      if (!appointment.assignedUserId) continue;
-      workloadMinutes.set(
-        appointment.assignedUserId,
-        (workloadMinutes.get(appointment.assignedUserId) ?? 0) +
-          Math.max(
-            0,
-            Math.round(
-              (appointment.scheduledEnd.getTime() -
-                appointment.scheduledStart.getTime()) /
-                60_000,
+      for (const userId of new Set(
+        appointment.crewAssignments?.length
+          ? appointment.crewAssignments.map((assignment) => assignment.userId)
+          : appointment.assignedUserId
+            ? [appointment.assignedUserId]
+            : [],
+      )) {
+        workloadMinutes.set(
+          userId,
+          (workloadMinutes.get(userId) ?? 0) +
+            Math.max(
+              0,
+              Math.round(
+                (appointment.scheduledEnd.getTime() -
+                  appointment.scheduledStart.getTime()) /
+                  60_000,
+              ),
             ),
-          ),
-      );
+        );
+      }
     }
 
     const ranked = [...availableCandidates].sort(

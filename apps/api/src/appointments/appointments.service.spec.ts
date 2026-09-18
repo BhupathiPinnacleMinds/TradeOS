@@ -392,6 +392,159 @@ describe('AppointmentsService', () => {
     expect(notificationInput.appointment.assignedUserId).toBe('tech-1');
   });
 
+  it('creates one appointment with a two-technician crew and exposes both members', async () => {
+    const { prisma, service } = createService();
+    const secondUser = {
+      email: 'second@example.com',
+      firstName: 'Ganga',
+      id: 'tech-2',
+      lastName: 'G',
+    };
+    prisma.appointment.findMany.mockResolvedValue([]);
+    prisma.appointment.create.mockResolvedValue(
+      appointment({
+        crewAssignments: [
+          { userId: 'tech-1', user: appointment().assignedUser },
+          { userId: 'tech-2', user: secondUser },
+        ],
+        multipleTechniciansRequired: true,
+      }),
+    );
+
+    const result = await service.create(owner, {
+      appointmentType: 'INSPECTION',
+      assignedUserId: 'tech-1',
+      jobId: 'job-1',
+      multipleTechniciansRequired: true,
+      technicianIds: ['tech-1', 'tech-2'],
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    });
+
+    expect(result.appointment.technicians.map((member) => member.id)).toEqual([
+      'tech-1',
+      'tech-2',
+    ]);
+    expect(result.appointment.multipleTechniciansRequired).toBe(true);
+    expect(prisma.appointment.create).toHaveBeenCalledTimes(1);
+    expect(
+      firstMockArg<{ data: { crewAssignments: { create: unknown[] } } }>(
+        prisma.appointment.create,
+      ).data.crewAssignments.create,
+    ).toHaveLength(2);
+  });
+
+  it('rejects a multi-technician appointment with fewer than two unique members', async () => {
+    const { prisma, service } = createService();
+    const input = {
+      appointmentType: 'INSPECTION' as const,
+      assignedUserId: 'tech-1',
+      jobId: 'job-1',
+      multipleTechniciansRequired: true,
+      scheduledEnd: BUSINESS_HOURS_END,
+      scheduledStart: BUSINESS_HOURS_START,
+    };
+    await expect(
+      service.create(owner, { ...input, technicianIds: ['tech-1'] }),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_APPOINTMENT_CREW' } });
+    await expect(
+      service.create(owner, { ...input, technicianIds: ['tech-1', 'tech-1'] }),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_APPOINTMENT_CREW' } });
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it('blocks the whole crew when its second member is on leave', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst.mockImplementation(
+      (query: { where: { userId: string } }) =>
+        Promise.resolve({
+          id: query.where.userId === 'tech-2' ? 'member-2' : 'member-1',
+          user: {
+            firstName: query.where.userId === 'tech-2' ? 'Ganga' : 'Mia',
+            lastName: 'Field',
+          },
+        }),
+    );
+    prisma.memberLeave.findMany.mockImplementation(
+      (query: { where: { memberId: string } }) =>
+        Promise.resolve(
+          query.where.memberId === 'member-2' ? [memberLeave()] : [],
+        ),
+    );
+    prisma.appointment.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.create(owner, {
+        appointmentType: 'INSPECTION',
+        jobId: 'job-1',
+        multipleTechniciansRequired: true,
+        technicianIds: ['tech-1', 'tech-2'],
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      }),
+    ).rejects.toMatchObject({ response: { code: 'APPOINTMENT_CONFLICT' } });
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a crew member outside an active shift without creating an appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findFirst.mockImplementation(
+      (query: { where: { userId: string } }) =>
+        Promise.resolve({
+          id: query.where.userId === 'tech-2' ? 'member-2' : 'member-1',
+          user: {
+            firstName: query.where.userId === 'tech-2' ? 'Ganga' : 'Mia',
+            lastName: 'Field',
+          },
+        }),
+    );
+    prisma.memberShift.findMany.mockImplementation(
+      (query: { where: { memberId: string } }) =>
+        Promise.resolve(
+          query.where.memberId === 'member-2'
+            ? [memberShift({ startTime: '08:00', endTime: '09:00' })]
+            : [],
+        ),
+    );
+    prisma.appointment.findMany.mockResolvedValue([]);
+    await expect(
+      service.create(owner, {
+        appointmentType: 'INSPECTION',
+        jobId: 'job-1',
+        multipleTechniciansRequired: true,
+        technicianIds: ['tech-1', 'tech-2'],
+        scheduledEnd: BUSINESS_HOURS_END,
+        scheduledStart: BUSINESS_HOURS_START,
+      }),
+    ).rejects.toMatchObject({ response: { code: 'APPOINTMENT_CONFLICT' } });
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it('allows a secondary crew member to load the appointment', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValue(
+      appointment({
+        crewAssignments: [
+          { userId: 'tech-1', user: appointment().assignedUser },
+          {
+            userId: 'tech-2',
+            user: {
+              id: 'tech-2',
+              firstName: 'Ganga',
+              lastName: 'G',
+              email: 'ganga@example.com',
+            },
+          },
+        ],
+        multipleTechniciansRequired: true,
+      }),
+    );
+    const secondTechnician = { ...technician, id: 'tech-2' };
+    await expect(
+      service.findOne(secondTechnician, 'appointment-1'),
+    ).resolves.toMatchObject({ appointment: { id: 'appointment-1' } });
+  });
+
   it('schedules a NEW parent job in the same transaction as appointment creation', async () => {
     const { prisma, service } = createService();
     prisma.job.findFirst.mockResolvedValueOnce({
@@ -832,6 +985,76 @@ describe('AppointmentsService', () => {
     expect(updateCalls[0][0].data.status).toBe('COMPLETED');
     expect(updateCalls[0][0].data.actualEnd).toBeInstanceOf(Date);
     expect(prisma.appointmentWorkLog.upsert).toHaveBeenCalled();
+  });
+
+  it('snapshots only the crew assigned at completion, including historical display names', async () => {
+    const { prisma, service } = createService();
+    const crewAtCompletion = [
+      { userId: 'tech-1', user: appointment().assignedUser },
+      {
+        userId: 'tech-2',
+        user: {
+          id: 'tech-2',
+          firstName: 'Ganga',
+          lastName: 'G',
+          email: 'ganga@example.com',
+        },
+      },
+    ];
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        crewAssignments: crewAtCompletion,
+        multipleTechniciansRequired: true,
+        signatures: [
+          {
+            appointmentId: 'appointment-1',
+            businessId: 'business-1',
+            capturedAt: new Date('2026-07-15T00:45:00.000Z'),
+            capturedByUserId: 'tech-1',
+            consentText:
+              'I confirm the work described above has been completed.',
+            createdAt: new Date('2026-07-15T00:45:00.000Z'),
+            customerName: 'Priya Shah',
+            id: 'signature-1',
+            jobId: 'job-1',
+            signatureData: {
+              height: 160,
+              strokes: [[{ x: 1, y: 1 }]],
+              width: 320,
+            },
+            signerTitle: null,
+            skippedAt: null,
+            skipReason: null,
+            updatedAt: new Date('2026-07-15T00:45:00.000Z'),
+          },
+        ],
+        status: 'IN_PROGRESS',
+      }),
+    );
+
+    await service.transition(technician, 'appointment-1', 'COMPLETED', {
+      followUpRequired: false,
+      technicianNotes: 'Complete.',
+      workCompleted: 'Finished together.',
+    });
+
+    const data = firstMockArg<{
+      data: {
+        completionCrew: {
+          createMany: { data: Array<{ userId: string; displayName: string }> };
+        };
+      };
+    }>(prisma.appointment.update).data;
+    expect(data.completionCrew.createMany.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: 'tech-1',
+          displayName: 'Mia Technician',
+        }),
+        expect.objectContaining({ userId: 'tech-2', displayName: 'Ganga G' }),
+      ]),
+    );
+    expect(data.completionCrew.createMany.data).toHaveLength(2);
   });
 
   it('keeps same-record reschedules active instead of leaving RESCHEDULED', async () => {
@@ -1540,10 +1763,110 @@ describe('AppointmentsService', () => {
       .calls as unknown as AppointmentUpdateCall[];
     expect(updateCalls[0][0].data).toEqual({
       assignedUserId: 'tech-2',
+      multipleTechniciansRequired: false,
+      crewAssignments: {
+        deleteMany: {},
+        create: [
+          {
+            user: {
+              connect: {
+                id_businessId: { id: 'tech-2', businessId: 'business-1' },
+              },
+            },
+          },
+        ],
+      },
       updatedBy: 'owner-1',
     });
     expect(notificationMocks.notifyOldTechnician).toHaveBeenCalled();
     expect(notificationMocks.notifyNewTechnician).toHaveBeenCalled();
+  });
+
+  it('replaces one crew member without changing the shared appointment', async () => {
+    const { notificationMocks, prisma, service } = createService();
+    const existingCrew = [
+      { userId: 'tech-1', user: appointment().assignedUser },
+      {
+        userId: 'tech-2',
+        user: {
+          id: 'tech-2',
+          firstName: 'Ganga',
+          lastName: 'G',
+          email: 'ganga@example.com',
+        },
+      },
+    ];
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        crewAssignments: existingCrew,
+        multipleTechniciansRequired: true,
+      }),
+    );
+    prisma.appointment.findMany.mockResolvedValue([]);
+    prisma.appointment.update.mockResolvedValue(
+      appointment({
+        crewAssignments: [
+          existingCrew[0],
+          {
+            userId: 'tech-3',
+            user: {
+              id: 'tech-3',
+              firstName: 'Ram',
+              lastName: 'G',
+              email: 'ram@example.com',
+            },
+          },
+        ],
+        multipleTechniciansRequired: true,
+      }),
+    );
+
+    const result = await service.reassign(owner, 'appointment-1', {
+      multipleTechniciansRequired: true,
+      technicianIds: ['tech-1', 'tech-3'],
+      reason: 'Crew change',
+    });
+
+    expect(result.appointment.id).toBe('appointment-1');
+    expect(result.appointment.technicians.map((member) => member.id)).toEqual([
+      'tech-1',
+      'tech-3',
+    ]);
+    expect(prisma.appointment.update).toHaveBeenCalledTimes(1);
+    expect(notificationMocks.notifyOldTechnician).toHaveBeenCalledWith(
+      expect.objectContaining({ oldTechnicianId: 'tech-2' }),
+    );
+    expect(notificationMocks.notifyNewTechnician).toHaveBeenCalledWith(
+      expect.objectContaining({ newTechnicianId: 'tech-3' }),
+    );
+  });
+
+  it('does not allow crew management to leave a multi-technician visit with one member', async () => {
+    const { prisma, service } = createService();
+    prisma.appointment.findFirst.mockResolvedValueOnce(
+      appointment({
+        crewAssignments: [
+          { userId: 'tech-1', user: appointment().assignedUser },
+          {
+            userId: 'tech-2',
+            user: {
+              id: 'tech-2',
+              firstName: 'Ganga',
+              lastName: 'G',
+              email: 'ganga@example.com',
+            },
+          },
+        ],
+        multipleTechniciansRequired: true,
+      }),
+    );
+    await expect(
+      service.reassign(owner, 'appointment-1', {
+        multipleTechniciansRequired: true,
+        technicianIds: ['tech-1'],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_APPOINTMENT_CREW' } });
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
   });
 
   it('denies technicians from reassigning appointments', async () => {
@@ -1741,6 +2064,74 @@ describe('AppointmentsService', () => {
       });
   });
 
+  it('shows one crew appointment in both dispatcher workloads without duplicating the business total', async () => {
+    const { prisma, service } = createService();
+    prisma.businessMember.findMany.mockResolvedValueOnce([
+      {
+        role: 'TECHNICIAN',
+        user: {
+          id: 'tech-1',
+          firstName: 'Mia',
+          lastName: 'Technician',
+          email: 'mia@example.com',
+        },
+      },
+      {
+        role: 'TECHNICIAN',
+        user: {
+          id: 'tech-2',
+          firstName: 'Ganga',
+          lastName: 'G',
+          email: 'ganga@example.com',
+        },
+      },
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        crewAssignments: [
+          { userId: 'tech-1', user: appointment().assignedUser },
+          {
+            userId: 'tech-2',
+            user: {
+              id: 'tech-2',
+              firstName: 'Ganga',
+              lastName: 'G',
+              email: 'ganga@example.com',
+            },
+          },
+        ],
+        multipleTechniciansRequired: true,
+      }),
+    ]);
+    const result = await service.dispatcher(owner, {
+      date: '2026-07-15T00:00:00.000Z',
+    });
+    expect(result.summary.totalAppointmentsToday).toBe(1);
+    expect(result.technicians.map((member) => member.todaysWorkload)).toEqual([
+      1, 1,
+    ]);
+  });
+
+  it('uses crew membership when filtering appointment lists by either technician', async () => {
+    const { prisma, service } = createService();
+    await service.findAll(owner, {
+      assignedUserId: 'tech-2',
+      page: 1,
+      pageSize: 20,
+    });
+    const calls = prisma.appointment.findMany.mock.calls as Array<
+      [{ where: { AND: unknown[] } }]
+    >;
+    expect(calls[0][0].where.AND).toEqual([
+      {
+        OR: [
+          { assignedUserId: 'tech-2' },
+          { crewAssignments: { some: { userId: 'tech-2' } } },
+        ],
+      },
+    ]);
+  });
+
   it('filters dispatcher board by search and high priority', async () => {
     const { prisma, service } = createService();
     prisma.businessMember.findMany.mockResolvedValueOnce([
@@ -1807,9 +2198,12 @@ describe('AppointmentsService', () => {
     expect(result.remainingCount).toBe(1);
     const findManyCalls = prisma.appointment.findMany.mock
       .calls as unknown as Array<
-      [{ where: { assignedUserId: string; businessId: string } }]
+      [{ where: { OR: unknown; businessId: string } }]
     >;
-    expect(findManyCalls[0][0].where.assignedUserId).toBe('tech-1');
+    expect(findManyCalls[0][0].where.OR).toEqual([
+      { assignedUserId: 'tech-1' },
+      { crewAssignments: { some: { userId: 'tech-1' } } },
+    ]);
     expect(findManyCalls[0][0].where.businessId).toBe('business-1');
   });
 
@@ -2104,7 +2498,7 @@ describe('AppointmentsService', () => {
       [
         {
           where: {
-            assignedUserId?: string;
+            OR: unknown;
             businessId: string;
             status: { in: string[] };
           };
@@ -2112,7 +2506,10 @@ describe('AppointmentsService', () => {
       ]
     >;
     const fallbackCall = findFirstCalls[0][0];
-    expect(fallbackCall.where.assignedUserId).toBe('tech-1');
+    expect(fallbackCall.where.OR).toEqual([
+      { assignedUserId: 'tech-1' },
+      { crewAssignments: { some: { userId: 'tech-1' } } },
+    ]);
     expect(fallbackCall.where.businessId).toBe('business-1');
     expect(fallbackCall.where.status.in).toEqual(
       expect.arrayContaining([
@@ -2190,14 +2587,25 @@ describe('AppointmentsService', () => {
         {
           where: {
             assignedUserId?: string;
+            OR?: unknown[];
             completedAt?: { gte: Date; lt: Date };
             scheduledStart?: { gte: Date; lt: Date };
           };
         },
       ]
     >;
-    expect(findManyCalls[0][0].where.assignedUserId).toBe('tech-1');
-    expect(findManyCalls[1][0].where.assignedUserId).toBe('tech-1');
+    expect(findManyCalls[0][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { assignedUserId: 'tech-1' },
+        { crewAssignments: { some: { userId: 'tech-1' } } },
+      ]),
+    );
+    expect(findManyCalls[1][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { assignedUserId: 'tech-1' },
+        { crewAssignments: { some: { userId: 'tech-1' } } },
+      ]),
+    );
   });
 
   it.each<BusinessRole>(['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'])(

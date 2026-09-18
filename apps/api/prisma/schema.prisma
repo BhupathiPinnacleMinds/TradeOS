@@ -411,6 +411,7 @@ model User {
   updatedCustomers               Customer[]               @relation("CustomerUpdater")
   assignedJobs                   Job[]                    @relation("JobAssignee")
   assignedAppointments           Appointment[]            @relation("AppointmentAssignee")
+  appointmentCrewAssignments     AppointmentCrewMember[]
   appointmentWorkLogs            AppointmentWorkLog[]     @relation("AppointmentWorkLogTechnician")
   capturedAppointmentSignatures  AppointmentSignature[]   @relation("AppointmentSignatureCapturedBy")
   uploadedMediaAssets            MediaAsset[]             @relation("MediaAssetUploader")
@@ -690,53 +691,56 @@ model JobSequence {
 }
 
 model Appointment {
-  id                       String                    @id @default(cuid())
-  businessId               String
-  jobId                    String
-  customerSiteId           String?
-  assignedUserId           String?
-  appointmentNumber        String
-  appointmentType          AppointmentType           @default(INSPECTION)
-  locationSource           AppointmentLocationSource @default(CUSTOMER_DEFAULT)
-  status                   AppointmentStatus         @default(SCHEDULED)
-  scheduledStart           DateTime
-  scheduledEnd             DateTime
-  actualStart              DateTime?
-  actualEnd                DateTime?
-  travelStartedAt          DateTime?
-  arrivedAt                DateTime?
-  workStartedAt            DateTime?
-  currentWorkStartedAt     DateTime?
-  pausedAt                 DateTime?
-  completedAt              DateTime?
-  totalTravelMinutes       Int                       @default(0)
-  totalWorkMinutes         Int                       @default(0)
-  totalPausedMinutes       Int                       @default(0)
-  estimatedDurationMinutes Int?
-  travelDurationMinutes    Int?
-  travelDistanceKm         Decimal?                  @db.Decimal(8, 2)
-  addressLine1             String
-  addressLine2             String?
-  suburb                   String
-  state                    String
-  postcode                 String
-  accessInstructions       String?
-  notes                    String?
-  createdBy                String?
-  updatedBy                String?
-  createdAt                DateTime                  @default(now())
-  updatedAt                DateTime                  @updatedAt
-  business                 Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  job                      Job                       @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Cascade)
-  customerSite             CustomerSite?             @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: NoAction)
-  assignedUser             User?                     @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: Restrict)
-  creator                  User?                     @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  updater                  User?                     @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
-  workLogs                 AppointmentWorkLog[]
-  signatures               AppointmentSignature[]
-  mediaAssets              MediaAsset[]
-  sourceQuotes             Quote[]                   @relation("QuoteSourceAppointment")
-  communications           CustomerCommunication[]
+  id                          String                      @id @default(cuid())
+  businessId                  String
+  jobId                       String
+  customerSiteId              String?
+  assignedUserId              String?
+  multipleTechniciansRequired Boolean                     @default(false)
+  appointmentNumber           String
+  appointmentType             AppointmentType             @default(INSPECTION)
+  locationSource              AppointmentLocationSource   @default(CUSTOMER_DEFAULT)
+  status                      AppointmentStatus           @default(SCHEDULED)
+  scheduledStart              DateTime
+  scheduledEnd                DateTime
+  actualStart                 DateTime?
+  actualEnd                   DateTime?
+  travelStartedAt             DateTime?
+  arrivedAt                   DateTime?
+  workStartedAt               DateTime?
+  currentWorkStartedAt        DateTime?
+  pausedAt                    DateTime?
+  completedAt                 DateTime?
+  totalTravelMinutes          Int                         @default(0)
+  totalWorkMinutes            Int                         @default(0)
+  totalPausedMinutes          Int                         @default(0)
+  estimatedDurationMinutes    Int?
+  travelDurationMinutes       Int?
+  travelDistanceKm            Decimal?                    @db.Decimal(8, 2)
+  addressLine1                String
+  addressLine2                String?
+  suburb                      String
+  state                       String
+  postcode                    String
+  accessInstructions          String?
+  notes                       String?
+  createdBy                   String?
+  updatedBy                   String?
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+  business                    Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  job                         Job                         @relation(fields: [jobId, businessId], references: [id, businessId], onDelete: Cascade)
+  customerSite                CustomerSite?               @relation(fields: [customerSiteId, businessId], references: [id, businessId], onDelete: NoAction)
+  assignedUser                User?                       @relation("AppointmentAssignee", fields: [assignedUserId, businessId], references: [id, businessId], onDelete: Restrict)
+  crewAssignments             AppointmentCrewMember[]
+  completionCrew              AppointmentCompletionCrew[]
+  creator                     User?                       @relation("AppointmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater                     User?                       @relation("AppointmentUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  workLogs                    AppointmentWorkLog[]
+  signatures                  AppointmentSignature[]
+  mediaAssets                 MediaAsset[]
+  sourceQuotes                Quote[]                     @relation("QuoteSourceAppointment")
+  communications              CustomerCommunication[]
 
   @@unique([businessId, appointmentNumber])
   @@unique([id, businessId])
@@ -744,6 +748,30 @@ model Appointment {
   @@index([businessId, customerSiteId])
   @@index([businessId, assignedUserId, scheduledStart])
   @@index([businessId, status, scheduledStart])
+}
+
+model AppointmentCrewMember {
+  businessId    String
+  appointmentId String
+  userId        String
+  assignedAt    DateTime    @default(now())
+  appointment   Appointment @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: Cascade)
+  user          User        @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@id([businessId, appointmentId, userId])
+  @@index([businessId, userId])
+}
+
+model AppointmentCompletionCrew {
+  businessId    String
+  appointmentId String
+  userId        String
+  displayName   String
+  completedAt   DateTime
+  appointment   Appointment @relation(fields: [appointmentId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@id([businessId, appointmentId, userId])
+  @@index([businessId, appointmentId])
 }
 
 model AppointmentSignature {

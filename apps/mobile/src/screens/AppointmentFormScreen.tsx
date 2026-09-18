@@ -301,6 +301,9 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const [assignedUserId, setAssignedUserId] = useState<string | null>(
     technicianId ?? null,
   );
+  const [multipleTechniciansRequired, setMultipleTechniciansRequired] =
+    useState(false);
+  const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [appointmentType, setAppointmentType] =
     useState<AppointmentType>('INSPECTION');
   const [startAt, setStartAt] = useState(() =>
@@ -406,6 +409,13 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
   const selectedTechnician = useMemo(
     () => members.find((member) => member.userId === assignedUserId),
     [assignedUserId, members],
+  );
+  const selectedCrew = useMemo(
+    () =>
+      members.filter(
+        (member) => member.userId && technicianIds.includes(member.userId),
+      ),
+    [members, technicianIds],
   );
   const isJobLinkedAppointment = Boolean(jobId);
   const hasSelectedExistingJob = Boolean(selectedJob && !useQuickJob);
@@ -932,6 +942,10 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
 
   async function save() {
     if (!token || isSavingRef.current) return;
+    if (multipleTechniciansRequired && technicianIds.length < 2) {
+      showToast({ message: 'Select at least two technicians.', tone: 'error' });
+      return;
+    }
     if (!validateLocation()) return;
     if (!selectedCustomerId && !useQuickCustomer) {
       showToast({ message: 'Choose or create a customer.', tone: 'error' });
@@ -1061,7 +1075,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         addressLine1: resolvedLocation.addressLine1,
         addressLine2: resolvedLocation.addressLine2.trim() || undefined,
         appointmentType,
-        assignedUserId,
+        assignedUserId: multipleTechniciansRequired
+          ? technicianIds[0]
+          : assignedUserId,
+        multipleTechniciansRequired,
+        technicianIds: multipleTechniciansRequired ? technicianIds : undefined,
         customerSiteId:
           !useQuickCustomer && locationSource === 'CUSTOMER_SITE'
             ? selectedSiteId
@@ -1416,17 +1434,57 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
         </Section>
 
         <Section title="4. Technician">
-          <HorizontalPicker
-            options={[
-              { label: 'Unassigned', value: '' },
-              ...members.map((member) => ({
-                label: member.name,
-                value: member.userId ?? '',
-              })),
-            ]}
-            selected={assignedUserId ?? ''}
-            onSelect={(value) => setAssignedUserId(value || null)}
+          <Toggle
+            active={multipleTechniciansRequired}
+            label="Multiple technicians required"
+            onPress={() => {
+              if (multipleTechniciansRequired) {
+                setAssignedUserId(technicianIds[0] ?? null);
+                setTechnicianIds([]);
+                setMultipleTechniciansRequired(false);
+              } else {
+                setTechnicianIds(assignedUserId ? [assignedUserId] : []);
+                setMultipleTechniciansRequired(true);
+              }
+            }}
           />
+          {multipleTechniciansRequired ? (
+            <>
+              <Text style={styles.muted}>
+                {technicianIds.length} technicians selected · minimum 2
+              </Text>
+              <View style={styles.chipRow}>
+                {members
+                  .filter((member) => member.userId)
+                  .map((member) => (
+                    <Chip
+                      key={member.userId}
+                      active={technicianIds.includes(member.userId ?? '')}
+                      label={member.name}
+                      onPress={() =>
+                        setTechnicianIds((current) =>
+                          current.includes(member.userId ?? '')
+                            ? current.filter((id) => id !== member.userId)
+                            : [...current, member.userId ?? ''],
+                        )
+                      }
+                    />
+                  ))}
+              </View>
+            </>
+          ) : (
+            <HorizontalPicker
+              options={[
+                { label: 'Unassigned', value: '' },
+                ...members.map((member) => ({
+                  label: member.name,
+                  value: member.userId ?? '',
+                })),
+              ]}
+              selected={assignedUserId ?? ''}
+              onSelect={(value) => setAssignedUserId(value || null)}
+            />
+          )}
         </Section>
 
         <Section title="5. Date and time">
@@ -1518,7 +1576,11 @@ export function AppointmentFormScreen({ navigation, route }: Props) {
             Location: {selectedLocationText || 'Not selected'}
           </Text>
           <Text style={styles.muted}>
-            Technician: {selectedTechnician?.name ?? 'Unassigned'}
+            Technicians:{' '}
+            {multipleTechniciansRequired
+              ? selectedCrew.map((member) => member.name).join(', ') ||
+                'Select at least two'
+              : (selectedTechnician?.name ?? 'Unassigned')}
           </Text>
           <Text style={styles.muted}>
             Type: {label(appointmentType)} · Duration: {durationMinutes} min
@@ -1693,6 +1755,7 @@ function Chip({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={[styles.chip, active && styles.chipActive]}
     >
@@ -1715,6 +1778,7 @@ function Toggle({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={[styles.toggle, active && styles.chipActive]}
     >
@@ -1726,6 +1790,7 @@ function Toggle({
 }
 
 const styles = StyleSheet.create({
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   chip: {
     backgroundColor: colours.secondaryActionSurface,
     borderColor: '#C7D2FE',

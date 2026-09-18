@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsBoolean,
+  IsArray,
   IsIn,
   IsInt,
   IsNumber,
@@ -141,6 +142,15 @@ export class UpsertAppointmentDto {
   @IsOptional()
   @IsString()
   assignedUserId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  multipleTechniciansRequired?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  technicianIds?: string[];
 
   @IsIn(APPOINTMENT_TYPES)
   appointmentType!: AppointmentType;
@@ -370,6 +380,15 @@ export class ReassignAppointmentDto {
   @IsOptional()
   @IsString()
   assignedUserId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  multipleTechniciansRequired?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  technicianIds?: string[];
 
   @IsOptional()
   @IsBoolean()

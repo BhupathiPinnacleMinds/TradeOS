@@ -570,12 +570,20 @@ export class MediaService {
         ...(where.OR ? [{ AND: where.OR }] : []),
         { uploadedByUserId: currentUser.id },
         { appointment: { assignedUserId: currentUser.id } },
+        {
+          appointment: {
+            crewAssignments: { some: { userId: currentUser.id } },
+          },
+        },
         { job: { assignedToUserId: currentUser.id } },
         {
           job: {
             appointments: {
               some: {
-                assignedUserId: currentUser.id,
+                OR: [
+                  { assignedUserId: currentUser.id },
+                  { crewAssignments: { some: { userId: currentUser.id } } },
+                ],
                 businessId: currentUser.businessId,
               },
             },
@@ -602,7 +610,12 @@ export class MediaService {
           businessId: currentUser.businessId,
           id: query.appointmentId,
         },
-        select: { assignedUserId: true, id: true, jobId: true },
+        select: {
+          assignedUserId: true,
+          crewAssignments: { select: { userId: true } },
+          id: true,
+          jobId: true,
+        },
       });
       if (!appointment) {
         throw this.domainError(
@@ -613,7 +626,10 @@ export class MediaService {
       }
       if (
         currentUser.role === 'TECHNICIAN' &&
-        appointment.assignedUserId !== currentUser.id
+        appointment.assignedUserId !== currentUser.id &&
+        !appointment.crewAssignments?.some(
+          (member) => member.userId === currentUser.id,
+        )
       ) {
         throw this.domainError(
           'MEDIA_ACCESS_DENIED',
@@ -755,7 +771,10 @@ export class MediaService {
     if (context.appointmentId) {
       const appointment = await this.prisma.appointment.findFirst({
         where: {
-          assignedUserId: currentUser.id,
+          OR: [
+            { assignedUserId: currentUser.id },
+            { crewAssignments: { some: { userId: currentUser.id } } },
+          ],
           businessId: currentUser.businessId,
           id: context.appointmentId,
         },
@@ -802,7 +821,10 @@ export class MediaService {
     if (scopedJob.assignedToUserId === currentUser.id) return true;
     const assignedAppointment = await this.prisma.appointment.findFirst({
       where: {
-        assignedUserId: currentUser.id,
+        OR: [
+          { assignedUserId: currentUser.id },
+          { crewAssignments: { some: { userId: currentUser.id } } },
+        ],
         businessId: currentUser.businessId,
         jobId: scopedJob.id,
       },

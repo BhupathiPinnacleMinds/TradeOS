@@ -121,6 +121,11 @@ type JobTechnicianAppointmentSummary = {
     lastName: string;
   } | null;
   assignedUserId: string | null;
+  completionCrew?: { userId: string; displayName: string }[];
+  crewAssignments?: {
+    userId: string;
+    user: { firstName: string; lastName: string };
+  }[];
   jobId: string;
   scheduledEnd: Date;
   scheduledStart: Date;
@@ -685,7 +690,16 @@ export class JobsService {
         select: { timezone: true },
       });
       for (const appointment of appointments) {
-        if (!appointment.assignedUserId) continue;
+        const crewIds = [
+          ...new Set(
+            appointment.crewAssignments?.length
+              ? appointment.crewAssignments.map((member) => member.userId)
+              : appointment.assignedUserId
+                ? [appointment.assignedUserId]
+                : [],
+          ),
+        ];
+        if (!crewIds.length) continue;
         const when = formatBusinessDateTime(
           appointment.scheduledStart,
           business?.timezone ?? DEFAULT_BUSINESS_TIMEZONE,
@@ -698,21 +712,22 @@ export class JobsService {
               : status === 'COMPLETED'
                 ? `${job.title} was completed. Your remaining appointment on ${when} was cancelled.`
                 : `${job.title} was cancelled. Your appointment on ${when} was also cancelled.`;
-        await this.notifications.create({
-          businessId: currentUser.businessId,
-          userId: appointment.assignedUserId,
-          type: `JOB_${status}`,
-          title:
-            status === 'ON_HOLD'
-              ? 'Job on hold'
-              : status === 'IN_PROGRESS'
-                ? 'Job resumed'
-                : `Job ${status.toLowerCase()}`,
-          body,
-          entityType: 'appointment',
-          entityId: appointment.id,
-          metadata: { appointmentId: appointment.id, jobId: job.id },
-        });
+        for (const userId of crewIds)
+          await this.notifications.create({
+            businessId: currentUser.businessId,
+            userId,
+            type: `JOB_${status}`,
+            title:
+              status === 'ON_HOLD'
+                ? 'Job on hold'
+                : status === 'IN_PROGRESS'
+                  ? 'Job resumed'
+                  : `Job ${status.toLowerCase()}`,
+            body,
+            entityType: 'appointment',
+            entityId: appointment.id,
+            metadata: { appointmentId: appointment.id, jobId: job.id },
+          });
       }
     } catch {
       // Notification failure must not undo a committed lifecycle transition.
@@ -1049,13 +1064,18 @@ export class JobsService {
             },
             select: {
               assignedUserId: true,
+              crewAssignments: { select: { userId: true } },
               appointmentNumber: true,
               id: true,
             },
             take: 50,
           });
       const appointmentAssignment = appointmentDiagnostics.some(
-        (appointment) => appointment.assignedUserId === currentUser.id,
+        (appointment) =>
+          appointment.assignedUserId === currentUser.id ||
+          appointment.crewAssignments?.some(
+            (member) => member.userId === currentUser.id,
+          ),
       );
       const allowed = directJobAssignment || appointmentAssignment;
       this.logJobAccessDiagnostic({
@@ -1162,7 +1182,6 @@ export class JobsService {
       completedJobIds.length
         ? this.prisma.appointment.findMany({
             where: {
-              assignedUserId: { not: null },
               businessId,
               completedAt: { not: null },
               jobId: { in: completedJobIds },
@@ -1173,6 +1192,7 @@ export class JobsService {
                 select: { firstName: true, id: true, lastName: true },
               },
               assignedUserId: true,
+              completionCrew: { select: { userId: true, displayName: true } },
               jobId: true,
               scheduledEnd: true,
               scheduledStart: true,
@@ -1192,6 +1212,12 @@ export class JobsService {
                 select: { firstName: true, id: true, lastName: true },
               },
               assignedUserId: true,
+              crewAssignments: {
+                select: {
+                  userId: true,
+                  user: { select: { firstName: true, lastName: true } },
+                },
+              },
               jobId: true,
               scheduledEnd: true,
               scheduledStart: true,
@@ -1204,15 +1230,19 @@ export class JobsService {
     for (const jobId of completedJobIds) {
       const technicians = new Map<string, string>();
       for (const appointment of completedAppointments) {
-        if (appointment.jobId !== jobId || !appointment.assignedUserId) {
-          continue;
+        if (appointment.jobId !== jobId) continue;
+        if (appointment.completionCrew?.length) {
+          for (const member of appointment.completionCrew) {
+            technicians.set(member.userId, member.displayName);
+          }
+        } else if (appointment.assignedUserId) {
+          technicians.set(
+            appointment.assignedUserId,
+            appointment.assignedUser
+              ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+              : 'Technician',
+          );
         }
-        technicians.set(
-          appointment.assignedUserId,
-          appointment.assignedUser
-            ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-            : 'Technician',
-        );
       }
 
       const job = jobs.find((record) => record.id === jobId);
@@ -1236,7 +1266,7 @@ export class JobsService {
           hasActionableAppointment: false,
           scheduledEnd: job.scheduledEnd,
           scheduledStart: job.scheduledStart,
-          technicianDisplayLabel: 'Completed by multiple technicians',
+          technicianDisplayLabel: `Completed by ${[...technicians.values()].join(', ')}`,
         });
       }
     }
@@ -1253,9 +1283,16 @@ export class JobsService {
           hasActionableAppointment: true,
           scheduledEnd: nextAppointment.scheduledEnd,
           scheduledStart: nextAppointment.scheduledStart,
-          technicianDisplayLabel: nextAppointment.assignedUser
-            ? `${nextAppointment.assignedUser.firstName} ${nextAppointment.assignedUser.lastName}`
-            : 'Unassigned',
+          technicianDisplayLabel: nextAppointment.crewAssignments?.length
+            ? nextAppointment.crewAssignments
+                .map(
+                  (member) =>
+                    `${member.user.firstName} ${member.user.lastName}`,
+                )
+                .join(', ')
+            : nextAppointment.assignedUser
+              ? `${nextAppointment.assignedUser.firstName} ${nextAppointment.assignedUser.lastName}`
+              : 'Unassigned',
         });
         continue;
       }
@@ -1422,6 +1459,15 @@ export class JobsService {
       assignedUser: {
         select: { email: true, firstName: true, id: true, lastName: true },
       },
+      crewAssignments: {
+        include: {
+          user: {
+            select: { email: true, firstName: true, id: true, lastName: true },
+          },
+        },
+        orderBy: { assignedAt: 'asc' },
+      },
+      completionCrew: { orderBy: { userId: 'asc' } },
       job: {
         select: {
           addressLine1: true,
@@ -1527,6 +1573,18 @@ export class JobsService {
       appointmentType: appointment.appointmentType,
       assignedUser: appointment.assignedUser,
       assignedUserId: appointment.assignedUserId,
+      multipleTechniciansRequired:
+        appointment.multipleTechniciansRequired ?? false,
+      technicians: appointment.crewAssignments?.length
+        ? appointment.crewAssignments.map((assignment) => assignment.user)
+        : appointment.assignedUser
+          ? [appointment.assignedUser]
+          : [],
+      completionCrew:
+        appointment.completionCrew?.map((member) => ({
+          userId: member.userId,
+          displayName: member.displayName,
+        })) ?? [],
       businessId: appointment.businessId,
       completedAt: appointment.completedAt?.toISOString() ?? null,
       createdAt: appointment.createdAt.toISOString(),

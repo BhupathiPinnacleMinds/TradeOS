@@ -147,7 +147,10 @@ export class DashboardService {
       }),
       this.prisma.appointment.count({
         where: {
-          assignedUserId: currentUser.id,
+          OR: [
+            { assignedUserId: currentUser.id },
+            { crewAssignments: { some: { userId: currentUser.id } } },
+          ],
           businessId,
           scheduledStart: { gte: startOfToday },
           status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW'] },
@@ -193,6 +196,7 @@ export class DashboardService {
         },
         select: {
           assignedUserId: true,
+          crewAssignments: { select: { userId: true } },
           scheduledEnd: true,
           scheduledStart: true,
           status: true,
@@ -435,7 +439,13 @@ export class DashboardService {
             appointment.scheduledStart <= now &&
             appointment.scheduledEnd >= now,
         )
-        .map((appointment) => appointment.assignedUserId)
+        .flatMap((appointment) =>
+          appointment.crewAssignments.length
+            ? appointment.crewAssignments.map((assignment) => assignment.userId)
+            : appointment.assignedUserId
+              ? [appointment.assignedUserId]
+              : [],
+        )
         .filter((id): id is string => Boolean(id)),
     );
     const availableTechnicians = dispatcherMembers.filter(

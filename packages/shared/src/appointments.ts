@@ -82,6 +82,9 @@ export interface Appointment {
   jobId: string;
   customerSiteId: string | null;
   assignedUserId: string | null;
+  multipleTechniciansRequired: boolean;
+  technicians: JobAssignedUser[];
+  completionCrew: { userId: string; displayName: string }[];
   appointmentNumber: string;
   appointmentType: AppointmentType;
   locationSource: AppointmentLocationSource;
@@ -130,6 +133,19 @@ export interface AppointmentListResponse {
 
 export interface AppointmentDetailResponse {
   appointment: Appointment;
+}
+
+export function getAppointmentTechnicianNames(
+  appointment: Pick<Appointment, 'technicians' | 'assignedUser'>,
+) {
+  const technicians = appointment.technicians?.length
+    ? appointment.technicians
+    : appointment.assignedUser
+      ? [appointment.assignedUser]
+      : [];
+  return technicians.map((technician) =>
+    [technician.firstName, technician.lastName].filter(Boolean).join(' '),
+  );
 }
 
 export interface AppointmentWorkLog {
@@ -642,6 +658,8 @@ export interface AppointmentPayload {
   jobId: string;
   customerSiteId?: string | null;
   assignedUserId?: string | null;
+  multipleTechniciansRequired?: boolean;
+  technicianIds?: string[];
   appointmentType: AppointmentType;
   locationSource?: AppointmentLocationSource;
   status?: AppointmentStatus;
@@ -714,6 +732,8 @@ export interface AppointmentAvailabilityResponse {
 
 export interface AppointmentReassignmentPayload {
   assignedUserId?: string | null;
+  multipleTechniciansRequired?: boolean;
+  technicianIds?: string[];
   allowConflictOverride?: boolean;
   reason?: string;
 }

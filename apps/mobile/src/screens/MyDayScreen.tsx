@@ -355,7 +355,9 @@ function AppointmentCard({
   const transitions = getAllowedAppointmentTransitions({
     currentStatus: appointment.status,
     jobStatus: appointment.job.status,
-    isAssignedTechnician: appointment.assignedUserId === userId,
+    isAssignedTechnician:
+      appointment.technicians.some((technician) => technician.id === userId) ||
+      appointment.assignedUserId === userId,
     userRole: role,
   });
   const address = [

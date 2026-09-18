@@ -1460,6 +1460,11 @@ export class QuotesService {
           { relatedJob: { assignedToUserId: currentUser.id } },
           { convertedJob: { assignedToUserId: currentUser.id } },
           { sourceAppointment: { assignedUserId: currentUser.id } },
+          {
+            sourceAppointment: {
+              crewAssignments: { some: { userId: currentUser.id } },
+            },
+          },
         ],
       });
     }

@@ -43,9 +43,13 @@ function formatDateTime(value: string, timezone: string) {
 }
 
 function technicianName(appointment: Appointment) {
-  return appointment.assignedUser
-    ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-    : 'Unassigned';
+  return appointment.technicians?.length
+    ? appointment.technicians
+        .map((user) => `${user.firstName} ${user.lastName}`)
+        .join(', ')
+    : appointment.assignedUser
+      ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
+      : 'Unassigned';
 }
 
 function appointmentAddress(appointment: Appointment) {
@@ -99,6 +103,11 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<
     string | null
   >(null);
+  const [multipleTechniciansRequired, setMultipleTechniciansRequired] =
+    useState(false);
+  const [selectedTechnicianIds, setSelectedTechnicianIds] = useState<string[]>(
+    [],
+  );
   const [reason, setReason] = useState('');
   const [availability, setAvailability] =
     useState<AppointmentAvailabilityResponse | null>(null);
@@ -128,9 +137,15 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         setAppointment(response.appointment);
         setTechnicians(response.technicians);
         setRecommendation(response.recommendation);
+        setMultipleTechniciansRequired(
+          response.appointment.multipleTechniciansRequired,
+        );
+        setSelectedTechnicianIds(
+          response.appointment.technicians.map((technician) => technician.id),
+        );
         setSelectedTechnicianId(
-          response.recommendation.technicianId ??
-            response.appointment.assignedUserId,
+          response.appointment.assignedUserId ??
+            response.recommendation.technicianId,
         );
       } catch (error) {
         if (shouldApply()) {
@@ -161,7 +176,18 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
 
   async function selectTechnician(technicianId: string | null) {
     if (!token || !appointment) return;
-    setSelectedTechnicianId(technicianId);
+    if (multipleTechniciansRequired && technicianId) {
+      if (selectedTechnicianIds.includes(technicianId)) {
+        setSelectedTechnicianIds((ids) =>
+          ids.filter((id) => id !== technicianId),
+        );
+        setAvailability(null);
+        return;
+      }
+      setSelectedTechnicianIds((ids) => [...ids, technicianId]);
+    } else {
+      setSelectedTechnicianId(technicianId);
+    }
     setAvailability(null);
     setIsChecking(true);
     try {
@@ -186,10 +212,23 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   }
 
   function confirmSave(allowConflictOverride = false) {
-    if (!appointment || !selectedTechnician) return;
+    if (
+      !appointment ||
+      (!multipleTechniciansRequired && !selectedTechnician) ||
+      (multipleTechniciansRequired && selectedTechnicianIds.length < 2)
+    )
+      return;
+    const selectedNames = multipleTechniciansRequired
+      ? technicians
+          .filter((technician) =>
+            selectedTechnicianIds.includes(technician.userId),
+          )
+          .map((technician) => technician.name)
+          .join(', ')
+      : (selectedTechnician?.name ?? 'Unassigned');
     Alert.alert(
-      'Change technician?',
-      `${technicianName(appointment)}\n↓\n${selectedTechnician.name}\n\nAppointment\n${formatDateTime(
+      'Change technicians?',
+      `${technicianName(appointment)}\n↓\n${selectedNames}\n\nAppointment\n${formatDateTime(
         appointment.scheduledStart,
         businessTimezone,
       )}`,
@@ -204,12 +243,26 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
   }
 
   async function save(allowConflictOverride = false) {
-    if (!token || !appointment || !selectedTechnician || isSaving) return;
+    if (
+      !token ||
+      !appointment ||
+      isSaving ||
+      (multipleTechniciansRequired
+        ? selectedTechnicianIds.length < 2
+        : !selectedTechnician)
+    )
+      return;
     setIsSaving(true);
     try {
       const response = await reassignAppointmentRequest(token, appointment.id, {
         allowConflictOverride,
-        assignedUserId: selectedTechnician.userId,
+        assignedUserId: multipleTechniciansRequired
+          ? selectedTechnicianIds[0]
+          : selectedTechnician?.userId,
+        multipleTechniciansRequired,
+        technicianIds: multipleTechniciansRequired
+          ? selectedTechnicianIds
+          : undefined,
         reason: reason.trim() || undefined,
       });
       showToast({
@@ -270,7 +323,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.eyebrow}>REASSIGN APPOINTMENT</Text>
+        <Text style={styles.eyebrow}>MANAGE APPOINTMENT TECHNICIANS</Text>
         <Text style={styles.title}>{appointment.job.title}</Text>
 
         <View style={styles.card}>
@@ -280,7 +333,7 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
           </Text>
           <Text style={styles.meta}>Job: {appointment.job.jobNumber}</Text>
           <Text style={styles.meta}>
-            Current technician: {technicianName(appointment)}
+            Current technicians: {technicianName(appointment)}
           </Text>
           <Text style={styles.meta}>
             Time: {formatDateTime(appointment.scheduledStart, businessTimezone)}
@@ -300,15 +353,50 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: multipleTechniciansRequired }}
+          onPress={() => {
+            if (multipleTechniciansRequired) {
+              setSelectedTechnicianId(selectedTechnicianIds[0] ?? null);
+              setSelectedTechnicianIds([]);
+              setMultipleTechniciansRequired(false);
+            } else {
+              setSelectedTechnicianIds(
+                selectedTechnicianId ? [selectedTechnicianId] : [],
+              );
+              setMultipleTechniciansRequired(true);
+            }
+            setAvailability(null);
+          }}
+          style={styles.actionButton}
+        >
+          <Text style={styles.actionText}>
+            {multipleTechniciansRequired ? '✓ ' : ''}Multiple technicians
+            required
+          </Text>
+        </Pressable>
+        {multipleTechniciansRequired ? (
+          <Text style={styles.meta}>
+            {selectedTechnicianIds.length} selected · minimum 2
+          </Text>
+        ) : null}
         <Text style={styles.sectionTitle}>Available technicians</Text>
         {technicians.map((technician) => (
           <Pressable
             accessibilityRole="button"
             key={technician.userId}
+            accessibilityState={{
+              selected: multipleTechniciansRequired
+                ? selectedTechnicianIds.includes(technician.userId)
+                : selectedTechnicianId === technician.userId,
+            }}
             onPress={() => void selectTechnician(technician.userId)}
             style={[
               styles.technicianCard,
-              selectedTechnicianId === technician.userId &&
+              (multipleTechniciansRequired
+                ? selectedTechnicianIds.includes(technician.userId)
+                : selectedTechnicianId === technician.userId) &&
                 styles.technicianSelected,
             ]}
           >
@@ -385,8 +473,14 @@ export function AppointmentReassignScreen({ navigation, route }: Props) {
         />
 
         <ActionButton
-          disabled={!selectedTechnician || isSaving || hasConflict}
-          label={isSaving ? 'Saving...' : 'Confirm reassignment'}
+          disabled={
+            (multipleTechniciansRequired
+              ? selectedTechnicianIds.length < 2
+              : !selectedTechnician) ||
+            isSaving ||
+            hasConflict
+          }
+          label={isSaving ? 'Saving...' : 'Save technicians'}
           onPress={() => confirmSave(false)}
           primary
         />

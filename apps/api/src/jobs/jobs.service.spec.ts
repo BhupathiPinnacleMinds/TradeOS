@@ -429,7 +429,35 @@ describe('JobsService', () => {
     const result = await service.findAll(owner, { filter: 'completed' });
 
     expect(result.records[0]?.technicianDisplayLabel).toBe(
-      'Completed by multiple technicians',
+      'Completed by Ram G, Maya K',
+    );
+  });
+
+  it('aggregates unique historical completion-crew names across completed appointments', async () => {
+    const { prisma, service } = createService();
+    prisma.job.findMany.mockResolvedValueOnce([
+      job({ assignedTo: null, assignedToUserId: null, status: 'COMPLETED' }),
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      appointment({
+        id: 'appointment-1',
+        completionCrew: [
+          { userId: 'tech-1', displayName: 'Ram G' },
+          { userId: 'tech-2', displayName: 'Ganga G' },
+        ],
+      }),
+      appointment({
+        id: 'appointment-2',
+        completionCrew: [
+          { userId: 'tech-2', displayName: 'Ganga G' },
+          { userId: 'tech-3', displayName: 'Bhupathi Reddy' },
+        ],
+      }),
+    ]);
+
+    const result = await service.findAll(owner, { filter: 'completed' });
+    expect(result.records[0]?.technicianDisplayLabel).toBe(
+      'Completed by Ram G, Ganga G, Bhupathi Reddy',
     );
   });
 
@@ -1116,6 +1144,7 @@ describe('JobsService', () => {
       },
       select: {
         assignedUserId: true,
+        crewAssignments: { select: { userId: true } },
         appointmentNumber: true,
         id: true,
       },

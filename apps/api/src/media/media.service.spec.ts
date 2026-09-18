@@ -384,7 +384,10 @@ describe('MediaService', () => {
     expect(prisma.appointment.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          assignedUserId: 'tech-1',
+          OR: [
+            { assignedUserId: 'tech-1' },
+            { crewAssignments: { some: { userId: 'tech-1' } } },
+          ],
           businessId: 'business-1',
           jobId: 'job-1',
         }),

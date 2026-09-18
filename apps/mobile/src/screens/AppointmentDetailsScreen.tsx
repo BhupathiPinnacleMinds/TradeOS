@@ -984,7 +984,10 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
       scheduledEnd: appointment.scheduledEnd,
       status: appointment.status,
     }),
-    isAssignedUser: appointment.assignedUserId === user?.id,
+    isAssignedUser:
+      appointment.technicians.some(
+        (technician) => technician.id === user?.id,
+      ) || appointment.assignedUserId === user?.id,
     role: user?.role,
     status: appointment.status,
   });
@@ -1026,7 +1029,9 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
     reassignAction
       ? {
           ...reassignAction,
-          label: 'Reassign Technician',
+          label: appointment.multipleTechniciansRequired
+            ? 'Manage Technicians'
+            : 'Reassign Technician',
         }
       : null,
   ].filter((action): action is AppointmentQuickAction => Boolean(action));
@@ -1156,11 +1161,17 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           minutes
         </Text>
         <Text style={styles.meta}>
-          Technician:{' '}
-          {appointment.assignedUser
-            ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-            : 'Unassigned'}
+          Technicians: {appointmentTechnicianNames(appointment)}
         </Text>
+        {appointment.status === 'COMPLETED' &&
+        appointment.completionCrew.length ? (
+          <Text style={styles.meta}>
+            Completed by:{' '}
+            {appointment.completionCrew
+              .map((member) => member.displayName)
+              .join(', ')}
+          </Text>
+        ) : null}
       </Card>
 
       <Card title="Execution timer">
@@ -1514,9 +1525,7 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
 
   function confirmAppointment() {
     if (!appointment || busyText) return;
-    const technician = appointment.assignedUser
-      ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-      : 'Unassigned';
+    const technician = appointmentTechnicianNames(appointment);
     Alert.alert(
       'Confirm this appointment?',
       [
@@ -1562,13 +1571,31 @@ function actionText(action: AppointmentTransitionAction | 'cancel') {
   return 'Cancelling appointment...';
 }
 
+function appointmentTechnicianNames(appointment: Appointment) {
+  const names =
+    appointment.technicians?.map((technician) =>
+      [technician.firstName, technician.lastName].filter(Boolean).join(' '),
+    ) ?? [];
+  return names.length
+    ? names.join(', ')
+    : appointment.assignedUser
+      ? [appointment.assignedUser.firstName, appointment.assignedUser.lastName]
+          .filter(Boolean)
+          .join(' ')
+      : 'Unassigned';
+}
+
 function canEditWorkLog(
   appointment: Appointment | null,
   user: ReturnType<typeof useAuth>['user'],
 ) {
   if (!appointment || !user) return false;
   if (!ACTIVE_NOTE_STATUSES.includes(appointment.status as never)) return false;
-  if (user.role === 'TECHNICIAN') return appointment.assignedUserId === user.id;
+  if (user.role === 'TECHNICIAN')
+    return (
+      appointment.technicians.some((technician) => technician.id === user.id) ||
+      appointment.assignedUserId === user.id
+    );
   return ['OWNER', 'ADMIN', 'OFFICE_MANAGER', 'SCHEDULER'].includes(user.role);
 }
 
@@ -2405,9 +2432,7 @@ function RescheduleModal({
   visible: boolean;
 }) {
   const end = addMinutes(start, duration);
-  const technician = appointment.assignedUser
-    ? `${appointment.assignedUser.firstName} ${appointment.assignedUser.lastName}`
-    : 'Unassigned';
+  const technician = appointmentTechnicianNames(appointment);
 
   return (
     <Modal

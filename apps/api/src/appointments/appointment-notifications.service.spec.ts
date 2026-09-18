@@ -115,6 +115,26 @@ describe('AppointmentNotificationsService', () => {
     );
   });
 
+  it('notifies each distinct crew member once when a multi-technician visit is assigned', async () => {
+    const { notifications, service } = createService();
+    await service.notifyAssigned({
+      actor,
+      appointment: appointment({
+        multipleTechniciansRequired: true,
+        technicians: [
+          { ...appointment().assignedUser!, id: 'tech-1' },
+          { ...appointment().assignedUser!, id: 'tech-2' },
+          { ...appointment().assignedUser!, id: 'tech-2' },
+        ],
+      }),
+    });
+    expect(notifications.create).toHaveBeenCalledTimes(2);
+    const calls = notifications.create.mock.calls as Array<
+      [{ userId: string }]
+    >;
+    expect(calls.map(([input]) => input.userId)).toEqual(['tech-1', 'tech-2']);
+  });
+
   it('uses the business date for early-morning appointment assignment notifications', async () => {
     const { notifications, service } = createService();
 

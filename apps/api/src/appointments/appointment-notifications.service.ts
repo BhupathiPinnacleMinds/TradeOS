@@ -20,51 +20,66 @@ export class AppointmentNotificationsService {
     actor: AuthenticatedUser;
     appointment: Appointment;
   }) {
-    await this.notifyTechnician({
-      actorId: input.actor.id,
-      appointment: input.appointment,
-      body: await this.appointmentBody(
-        input.appointment,
-        'has been assigned to you.',
+    const body = await this.appointmentBody(
+      input.appointment,
+      'has been assigned to you.',
+    );
+    await Promise.all(
+      this.assignedIds(input.appointment).map((userId) =>
+        this.notifyTechnician({
+          actorId: input.actor.id,
+          appointment: input.appointment,
+          body,
+          title: 'New appointment assigned',
+          type: 'APPOINTMENT_ASSIGNED',
+          userId,
+        }),
       ),
-      title: 'New appointment assigned',
-      type: 'APPOINTMENT_ASSIGNED',
-      userId: input.appointment.assignedUserId,
-    });
+    );
   }
 
   async notifyRescheduled(input: {
     actor: AuthenticatedUser;
     appointment: Appointment;
   }) {
-    await this.notifyTechnician({
-      actorId: input.actor.id,
-      appointment: input.appointment,
-      body: await this.appointmentBody(
-        input.appointment,
-        'has been rescheduled.',
+    const body = await this.appointmentBody(
+      input.appointment,
+      'has been rescheduled.',
+    );
+    await Promise.all(
+      this.assignedIds(input.appointment).map((userId) =>
+        this.notifyTechnician({
+          actorId: input.actor.id,
+          appointment: input.appointment,
+          body,
+          title: 'Appointment rescheduled',
+          type: 'APPOINTMENT_RESCHEDULED',
+          userId,
+        }),
       ),
-      title: 'Appointment rescheduled',
-      type: 'APPOINTMENT_RESCHEDULED',
-      userId: input.appointment.assignedUserId,
-    });
+    );
   }
 
   async notifyCancelled(input: {
     actor: AuthenticatedUser;
     appointment: Appointment;
   }) {
-    await this.notifyTechnician({
-      actorId: input.actor.id,
-      appointment: input.appointment,
-      body: await this.appointmentBody(
-        input.appointment,
-        'has been cancelled.',
+    const body = await this.appointmentBody(
+      input.appointment,
+      'has been cancelled.',
+    );
+    await Promise.all(
+      this.assignedIds(input.appointment).map((userId) =>
+        this.notifyTechnician({
+          actorId: input.actor.id,
+          appointment: input.appointment,
+          body,
+          title: 'Appointment cancelled',
+          type: 'APPOINTMENT_CANCELLED',
+          userId,
+        }),
       ),
-      title: 'Appointment cancelled',
-      type: 'APPOINTMENT_CANCELLED',
-      userId: input.appointment.assignedUserId,
-    });
+    );
   }
 
   async notifyCompleted(input: {
@@ -179,6 +194,15 @@ export class AppointmentNotificationsService {
         }`,
       );
     }
+  }
+
+  private assignedIds(appointment: Appointment) {
+    return [
+      ...new Set(
+        appointment.technicians?.map((technician) => technician.id) ??
+          (appointment.assignedUserId ? [appointment.assignedUserId] : []),
+      ),
+    ];
   }
 
   private async appointmentBody(appointment: Appointment, suffix: string) {

@@ -348,6 +348,7 @@ export class CustomerCommunicationsService {
       addressLine1: string;
       addressLine2: string | null;
       assignedUser?: { firstName: string; lastName: string } | null;
+      crewAssignments?: { user: { firstName: string; lastName: string } }[];
       appointmentType: string;
       id: string;
       job: {
@@ -394,7 +395,7 @@ export class CustomerCommunicationsService {
           jobTitle: appointment.job.title,
           serviceAddress,
           start: appointment.scheduledStart,
-          technicianName: this.technicianName(appointment.assignedUser),
+          technicianNames: this.technicianNames(appointment),
         }),
         type: 'APPOINTMENT_CONFIRMATION',
       });
@@ -805,7 +806,7 @@ export class CustomerCommunicationsService {
         jobTitle: appointment.job.title,
         serviceAddress: this.serviceAddress(appointment),
         start: appointment.scheduledStart,
-        technicianName: this.technicianName(appointment.assignedUser),
+        technicianNames: this.technicianNames(appointment),
       }),
       type: 'APPOINTMENT_REMINDER',
     });
@@ -1412,12 +1413,18 @@ export class CustomerCommunicationsService {
     );
   }
 
-  private technicianName(
-    user?: { firstName: string; lastName: string } | null,
-  ) {
-    return user
-      ? [user.firstName, user.lastName].filter(Boolean).join(' ')
-      : null;
+  private technicianNames(appointment: {
+    assignedUser?: { firstName: string; lastName: string } | null;
+    crewAssignments?: { user: { firstName: string; lastName: string } }[];
+  }) {
+    const crew = appointment.crewAssignments?.length
+      ? appointment.crewAssignments.map((member) => member.user)
+      : appointment.assignedUser
+        ? [appointment.assignedUser]
+        : [];
+    return crew.map((user) =>
+      [user.firstName, user.lastName].filter(Boolean).join(' '),
+    );
   }
 
   private recipientFor(
