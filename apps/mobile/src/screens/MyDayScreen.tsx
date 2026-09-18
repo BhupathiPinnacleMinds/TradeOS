@@ -37,6 +37,7 @@ import {
   type ApiRequestError,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { AppointmentAttentionNotice } from '../components/AppointmentAttentionNotice';
 import { useToast } from '../components/ToastProvider';
 import type { RootStackParamList } from '../navigation/types';
 import { colours } from '../theme';
@@ -405,6 +406,11 @@ function AppointmentCard({
           : formatBusinessTime(appointment.scheduledStart, timezone)}
       </Text>
       <Text style={styles.cardTitle}>{appointment.job.title}</Text>
+      <AppointmentAttentionNotice
+        appointment={appointment}
+        compact
+        viewerId={userId}
+      />
       <Text style={styles.meta}>
         {primaryCustomerName(appointment.job.customer)}
       </Text>

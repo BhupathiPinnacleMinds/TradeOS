@@ -1,5 +1,6 @@
 import type { BusinessRole } from './auth';
 import type { AustralianState } from './customers';
+import type { MemberLeaveType } from './member-leave';
 import type {
   JobAssignedUser,
   JobCustomerSummary,
@@ -85,6 +86,7 @@ export interface Appointment {
   multipleTechniciansRequired: boolean;
   technicians: JobAssignedUser[];
   completionCrew: { userId: string; displayName: string }[];
+  availabilityConflict?: AppointmentAvailabilityConflict | null;
   appointmentNumber: string;
   appointmentType: AppointmentType;
   locationSource: AppointmentLocationSource;
@@ -121,6 +123,32 @@ export interface Appointment {
   assignedUser: JobAssignedUser | null;
   job: AppointmentJobSummary;
   workLog: AppointmentWorkLog | null;
+}
+
+export interface AppointmentAvailabilityConflict {
+  requiresAttention: true;
+  technicians: Array<{
+    id: string;
+    name: string;
+    leaveType: MemberLeaveType;
+    leaveStart: string;
+    leaveEnd: string;
+  }>;
+}
+
+export function appointmentAttentionLabel(
+  appointment: Pick<Appointment, 'availabilityConflict'>,
+  viewerId?: string | null,
+) {
+  const conflict = appointment.availabilityConflict;
+  if (!conflict?.technicians.length) return null;
+  const names = conflict.technicians.map((member) => member.name).join(', ');
+  return {
+    title: 'Requires attention',
+    detail: conflict.technicians.some((member) => member.id === viewerId)
+      ? 'Your leave overlaps this appointment. The office has been notified to reassign it.'
+      : `${names} unavailable for this appointment.`,
+  };
 }
 
 export interface AppointmentListResponse {

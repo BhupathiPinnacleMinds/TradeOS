@@ -170,6 +170,22 @@ export function getBusinessDateParts(
   };
 }
 
+/** Inclusive business-calendar dates touched by a half-open appointment interval. */
+export function getBusinessDateSpan(
+  start: Date | string,
+  end: Date | string,
+  timezone: string = DEFAULT_BUSINESS_TIMEZONE,
+) {
+  const startParts = getBusinessDateParts(start, timezone);
+  const inclusiveEnd = new Date(
+    Math.max(new Date(start).getTime(), new Date(end).getTime() - 1),
+  );
+  const endParts = getBusinessDateParts(inclusiveEnd, timezone);
+  const dateOnly = (parts: { year: number; month: number; day: number }) =>
+    `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  return { startDate: dateOnly(startParts), endDate: dateOnly(endParts) };
+}
+
 function timezoneOffsetMilliseconds(value: Date, timezone: AustralianTimezone) {
   const parts = getBusinessDateParts(value, timezone);
   const asUtc = Date.UTC(

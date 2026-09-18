@@ -64,6 +64,7 @@ import {
   mediaRestoredMessage,
 } from '../api/mediaActions';
 import { useAuth } from '../auth/AuthContext';
+import { AppointmentAttentionNotice } from '../components/AppointmentAttentionNotice';
 import {
   MediaOverflowMenu,
   MediaRemovalConfirmation,
@@ -1106,6 +1107,11 @@ export function JobDetailsScreen({ navigation, route }: Props) {
               <Text style={styles.meta}>
                 Status: {appointmentDisplayStatus(appointment)}
               </Text>
+              <AppointmentAttentionNotice
+                appointment={appointment}
+                compact
+                viewerId={user?.id}
+              />
               <Text style={styles.meta}>
                 Technicians:{' '}
                 {getAppointmentTechnicianNames(appointment).join(', ') ||

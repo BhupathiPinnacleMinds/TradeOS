@@ -26,6 +26,51 @@ const activeRoles: BusinessRole[] = [
 ];
 
 describe('MemberLeaveService', () => {
+  it('notifies appointment managers once per appointment newly affected by leave', async () => {
+    const { attention, notifications, prisma, service } = createService();
+    prisma.businessMember.findFirst.mockResolvedValue(member());
+    prisma.memberLeave.findMany.mockResolvedValue([]);
+    prisma.memberLeave.create.mockResolvedValue(
+      leaveRecord({ type: 'SICK_LEAVE' }),
+    );
+    prisma.business.findUnique.mockResolvedValue({
+      timezone: 'Australia/Melbourne',
+    });
+    attention.affectedAppointmentsForLeave.mockResolvedValue([
+      {
+        id: 'apt-1',
+        job: { title: 'Bench top' },
+        scheduledStart: new Date('2026-09-15T00:00:00Z'),
+      },
+      {
+        id: 'apt-2',
+        job: { title: 'Tap' },
+        scheduledStart: new Date('2026-09-15T01:00:00Z'),
+      },
+    ]);
+    await service.createOwnLeave(user(), {
+      startDate: '2026-09-15',
+      endDate: '2026-09-15',
+      type: 'SICK_LEAVE',
+    });
+    expect(notifications.createForRoles).toHaveBeenCalledTimes(3);
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: 'apt-1',
+        entityType: 'appointment',
+        title: 'Appointment requires attention',
+        type: 'APPOINTMENT_ATTENTION',
+      }),
+    );
+    const notificationCalls = notifications.createForRoles.mock
+      .calls as unknown as Array<[{ body: string }]>;
+    const appointmentNotification = notificationCalls[1]?.[0];
+    expect(appointmentNotification.body).toContain('Bench top');
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 'apt-2' }),
+    );
+  });
+
   it.each(activeRoles)('%s can create their own leave', async (role) => {
     const { notifications, prisma, service } = createService();
     prisma.businessMember.findFirst.mockResolvedValue(member({ role }));
@@ -286,13 +331,18 @@ function createService() {
   const notifications = {
     createForRoles: jest.fn().mockResolvedValue({ count: 1 }),
   };
+  const attention = {
+    affectedAppointmentsForLeave: jest.fn().mockResolvedValue([]),
+  };
 
   return {
+    attention,
     notifications,
     prisma,
     service: new MemberLeaveService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
+      attention as never,
     ),
   };
 }

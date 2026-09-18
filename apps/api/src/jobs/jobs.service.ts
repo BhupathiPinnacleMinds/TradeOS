@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { AppointmentAttentionService } from '../appointments/appointment-attention.service';
 import type {
   Appointment,
   AppointmentStatus,
@@ -144,6 +145,7 @@ export class JobsService {
     private readonly prisma: PrismaService,
     private readonly communications: CustomerCommunicationsService,
     private readonly notifications: NotificationsService,
+    private readonly attention: AppointmentAttentionService,
   ) {}
 
   async findAll(
@@ -317,8 +319,9 @@ export class JobsService {
         createdAt: entry.createdAt.toISOString(),
         metadata: (entry.metadata as Record<string, unknown> | null) ?? null,
       })),
-      appointments: appointments.map((appointment) =>
-        this.toAppointment(appointment),
+      appointments: await this.attention.decorate(
+        currentUser.businessId,
+        appointments.map((appointment) => this.toAppointment(appointment)),
       ),
       invoices: invoices.map((invoice) => ({
         amountPaidCents: invoice.amountPaidCents,
@@ -1573,6 +1576,7 @@ export class JobsService {
       appointmentType: appointment.appointmentType,
       assignedUser: appointment.assignedUser,
       assignedUserId: appointment.assignedUserId,
+      availabilityConflict: null,
       multipleTechniciansRequired:
         appointment.multipleTechniciansRequired ?? false,
       technicians: appointment.crewAssignments?.length

@@ -288,7 +288,13 @@ function createService() {
     dispatchAppointmentConfirmation: jest.fn(),
     appointmentRescheduled: jest.fn(),
   };
+  const attention = {
+    decorate: jest.fn((_businessId: string, records: unknown[]) =>
+      Promise.resolve(records),
+    ),
+  };
   return {
+    attention,
     communications,
     notificationMocks,
     notifications,
@@ -298,11 +304,37 @@ function createService() {
       scheduling,
       notifications,
       communications as never,
+      attention as never,
     ),
   };
 }
 
 describe('AppointmentsService', () => {
+  it('blocks execution transitions when an assigned technician is on overlapping leave', async () => {
+    const { attention, prisma, service } = createService();
+    attention.decorate.mockImplementation(
+      (_businessId: string, records: unknown[]) =>
+        Promise.resolve(
+          records.map((record) => ({
+            ...(record as object),
+            availabilityConflict: {
+              requiresAttention: true,
+              technicians: [
+                {
+                  id: 'tech-1',
+                  name: 'Mia Technician',
+                  leaveType: 'SICK_LEAVE',
+                },
+              ],
+            },
+          })),
+        ),
+    );
+    await expect(
+      service.transition(technician, 'appointment-1', 'ON_THE_WAY'),
+    ).rejects.toThrow('needs reassignment');
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-07-14T00:00:00.000Z'));
   });
@@ -931,6 +963,11 @@ describe('AppointmentsService', () => {
         appointmentCreated: jest.fn(),
         dispatchAppointmentConfirmation: jest.fn(),
         appointmentRescheduled: jest.fn(),
+      } as never,
+      {
+        decorate: jest.fn((_businessId: string, records: unknown[]) =>
+          Promise.resolve(records),
+        ),
       } as never,
     );
 

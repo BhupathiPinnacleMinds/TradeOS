@@ -22,6 +22,7 @@ import {
   APPOINTMENT_WRITE_ROLES,
   AUSTRALIAN_STATES,
   FIELD_ASSIGNABLE_APPOINTMENT_ROLES,
+  formatMemberLeaveType,
   getBusinessDayRangeUtc,
   getAllowedAppointmentTransitions,
   getBusinessDateParts,
@@ -30,6 +31,7 @@ import {
   validateAppointmentFieldWork,
 } from '@tradieos/shared';
 import type { Prisma } from '../generated/prisma/client';
+import { AppointmentAttentionService } from './appointment-attention.service';
 import { CustomerCommunicationsService } from '../communications/communications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentNotificationsService } from './appointment-notifications.service';
@@ -113,6 +115,7 @@ export class AppointmentsService {
     private readonly scheduling: SchedulingService,
     private readonly notifications: AppointmentNotificationsService,
     private readonly communications: CustomerCommunicationsService,
+    private readonly attention: AppointmentAttentionService,
   ) {}
 
   async findAll(
@@ -139,7 +142,10 @@ export class AppointmentsService {
     ]);
 
     return {
-      records: records.map((appointment) => this.toAppointment(appointment)),
+      records: await this.attention.decorate(
+        currentUser.businessId,
+        records.map((appointment) => this.toAppointment(appointment)),
+      ),
       total,
       page,
       pageSize,
@@ -153,7 +159,11 @@ export class AppointmentsService {
   ): Promise<AppointmentDetailResponse> {
     this.assertRole(currentUser, APPOINTMENT_VIEW_ROLES);
     const appointment = await this.getAppointmentForUser(currentUser, id);
-    return { appointment: this.toAppointment(appointment) };
+    const [withAttention] = await this.attention.decorate(
+      currentUser.businessId,
+      [this.toAppointment(appointment)],
+    );
+    return { appointment: withAttention };
   }
 
   async recommend(
@@ -252,6 +262,11 @@ export class AppointmentsService {
       },
     });
 
+    const appointmentViews = await this.attention.decorate(
+      currentUser.businessId,
+      appointments.map((appointment) => this.toAppointment(appointment)),
+    );
+    const viewById = new Map(appointmentViews.map((view) => [view.id, view]));
     const unassignedAppointments = appointments.filter(
       (appointment) => !appointment.assignedUserId,
     );
@@ -268,7 +283,7 @@ export class AppointmentsService {
           },
         );
         return {
-          appointment: this.toAppointment(appointment),
+          appointment: viewById.get(appointment.id)!,
           recommendation: {
             reason: recommendation.reason,
             technicianId: recommendation.recommendedTechnicianId,
@@ -303,7 +318,7 @@ export class AppointmentsService {
         const status = this.dispatcherStatus(technicianAppointments, now);
         return {
           appointments: technicianAppointments.map((appointment) => ({
-            appointment: this.toAppointment(appointment),
+            appointment: viewById.get(appointment.id)!,
           })),
           availableMinutes,
           avatarInitials: this.initials(
@@ -428,21 +443,25 @@ export class AppointmentsService {
       }),
     ]);
     const now = new Date();
-    const mapped = appointments.map((appointment) =>
-      this.toAppointment(appointment),
+    const mapped = await this.attention.decorate(
+      currentUser.businessId,
+      appointments.map((appointment) => this.toAppointment(appointment)),
     );
     const remaining = mapped.filter(
       (appointment) =>
         REMAINING_MY_DAY_STATUSES.includes(appointment.status as never) &&
         !this.isExpiredUnstartedAppointment(appointment, now),
     );
-    const completedToday = [
-      ...new Map(
-        completedTodayAppointments
-          .map((appointment) => this.toAppointment(appointment))
-          .map((appointment) => [appointment.id, appointment]),
-      ).values(),
-    ];
+    const completedToday = await this.attention.decorate(
+      currentUser.businessId,
+      [
+        ...new Map(
+          completedTodayAppointments
+            .map((appointment) => this.toAppointment(appointment))
+            .map((appointment) => [appointment.id, appointment]),
+        ).values(),
+      ],
+    );
     const currentAppointment =
       CURRENT_MY_DAY_STATUSES.map((status) =>
         remaining.find((appointment) => appointment.status === status),
@@ -466,7 +485,11 @@ export class AppointmentsService {
         orderBy: [{ scheduledStart: 'asc' }, { createdAt: 'asc' }],
       });
       const mappedFutureAppointment = futureAppointment
-        ? this.toAppointment(futureAppointment)
+        ? (
+            await this.attention.decorate(currentUser.businessId, [
+              this.toAppointment(futureAppointment),
+            ])
+          )[0]
         : null;
       nextAppointment =
         mappedFutureAppointment &&
@@ -1228,6 +1251,22 @@ export class AppointmentsService {
     const existing = await this.getAppointmentForUser(currentUser, id);
     if (status !== 'CANCELLED') {
       this.assertJobAcceptsAppointments(existing.job.status);
+    }
+    if (
+      ['CONFIRMED', 'ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS'].includes(status)
+    ) {
+      const [current] = await this.attention.decorate(currentUser.businessId, [
+        this.toAppointment(existing),
+      ]);
+      const unavailable = current.availabilityConflict?.technicians[0];
+      if (unavailable) {
+        throw this.domainError(
+          'TECHNICIAN_UNAVAILABLE',
+          `${unavailable.name} cannot progress this appointment because ${formatMemberLeaveType(unavailable.leaveType).toLowerCase()} overlaps the scheduled time. The appointment needs reassignment.`,
+          HttpStatus.CONFLICT,
+          { technicianId: unavailable.id },
+        );
+      }
     }
     if (existing.status === status) {
       return { appointment: this.toAppointment(existing) };
@@ -2751,6 +2790,7 @@ export class AppointmentsService {
       appointmentType: appointment.appointmentType,
       assignedUser: appointment.assignedUser,
       assignedUserId: appointment.assignedUserId,
+      availabilityConflict: null,
       multipleTechniciansRequired:
         appointment.multipleTechniciansRequired ?? false,
       technicians: appointment.crewAssignments?.length

@@ -107,6 +107,7 @@ import {
   MediaRemovalConfirmation,
 } from '../components/MediaOverflowMenu';
 import { ScreenBackButton } from '../components/ScreenBackButton';
+import { AppointmentAttentionNotice } from '../components/AppointmentAttentionNotice';
 import { useToast } from '../components/ToastProvider';
 import { keyboardAvoidingBehavior } from '../components/keyboardAvoidance';
 import { mobileConfig } from '../config/mobileConfig';
@@ -1022,18 +1023,20 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
   const canEditAppointment = canCreateAppointment(user?.role);
   const canAddMedia = canAccessStackRoute(user?.role, 'MediaEvidence');
   const canCreateQuote = roleCanCreateQuotes(user?.role ?? 'READ_ONLY');
+  const manageTechniciansAction = reassignAction
+    ? {
+        ...reassignAction,
+        label: appointment.multipleTechniciansRequired
+          ? 'Manage Technicians'
+          : 'Reassign Technician',
+      }
+    : null;
   const primaryActions = [
+    appointment.availabilityConflict ? manageTechniciansAction : null,
     navigateAction,
     workflowAction && workflowAction.id !== 'complete' ? workflowAction : null,
     completeAction,
-    reassignAction
-      ? {
-          ...reassignAction,
-          label: appointment.multipleTechniciansRequired
-            ? 'Manage Technicians'
-            : 'Reassign Technician',
-        }
-      : null,
+    !appointment.availabilityConflict ? manageTechniciansAction : null,
   ].filter((action): action is AppointmentQuickAction => Boolean(action));
   const secondaryActionCandidates: Array<
     AppointmentDetailsAction | null | undefined
@@ -1121,6 +1124,11 @@ export function AppointmentDetailsScreen({ navigation, route }: Props) {
           {appointmentDisplayStatus(appointment)}
         </Text>
       </View>
+
+      <AppointmentAttentionNotice
+        appointment={appointment}
+        viewerId={user?.id}
+      />
 
       <View style={styles.quickRow}>
         {terminalStatus ? (

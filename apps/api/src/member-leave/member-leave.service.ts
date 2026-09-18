@@ -7,6 +7,8 @@ import type {
   MemberLeaveResponse,
 } from '@tradieos/shared';
 import {
+  APPOINTMENT_WRITE_ROLES,
+  formatBusinessTime,
   formatMemberLeaveDateRange,
   formatMemberLeaveType,
   getBusinessDateParts,
@@ -14,6 +16,7 @@ import {
   normaliseBusinessTimezone,
   validateMemberLeaveRange,
 } from '@tradieos/shared';
+import { AppointmentAttentionService } from '../appointments/appointment-attention.service';
 import type { Prisma } from '../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,6 +40,7 @@ export class MemberLeaveService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly attention: AppointmentAttentionService,
   ) {}
 
   async findOwnLeave(
@@ -76,6 +80,7 @@ export class MemberLeaveService {
     });
 
     await this.notifyOwners(currentUser, leave, 'created');
+    await this.notifyNewAppointmentConflicts(currentUser, leave, new Set());
     return { leave: this.toMemberLeave(leave) };
   }
 
@@ -91,6 +96,14 @@ export class MemberLeaveService {
       leaveId,
     );
     const payload = this.normalisePayload(dto);
+    const previousConflicts = await this.attention.affectedAppointmentsForLeave(
+      {
+        businessId: currentUser.businessId,
+        userId: currentUser.id,
+        startDate: existing.startDate,
+        endDate: existing.endDate,
+      },
+    );
     await this.assertNoOverlap(
       currentUser.businessId,
       member.id,
@@ -110,6 +123,13 @@ export class MemberLeaveService {
     });
 
     await this.notifyOwners(currentUser, leave, 'updated');
+    await this.notifyNewAppointmentConflicts(
+      currentUser,
+      leave,
+      existing.type === leave.type
+        ? new Set(previousConflicts.map((appointment) => appointment.id))
+        : new Set(),
+    );
     return { leave: this.toMemberLeave(leave) };
   }
 
@@ -312,6 +332,45 @@ export class MemberLeaveService {
       title,
       type: 'TEAM_LEAVE',
     });
+  }
+
+  private async notifyNewAppointmentConflicts(
+    actor: AuthenticatedUser,
+    leave: LeaveRecord,
+    previouslyAffected: Set<string>,
+  ) {
+    const affected = await this.attention.affectedAppointmentsForLeave({
+      businessId: actor.businessId,
+      userId: actor.id,
+      startDate: leave.startDate,
+      endDate: leave.endDate,
+    });
+    const newlyAffected = affected.filter(
+      (appointment) => !previouslyAffected.has(appointment.id),
+    );
+    if (!newlyAffected.length) return;
+    const business = await this.prisma.business.findUnique({
+      select: { timezone: true },
+      where: { id: actor.businessId },
+    });
+    const timezone = normaliseBusinessTimezone(business?.timezone);
+    for (const appointment of newlyAffected) {
+      await this.notifications.createForRoles({
+        body: `${this.memberName(leave.member)} added ${formatMemberLeaveType(leave.type)} for ${formatMemberLeaveDateRange(leave.startDate, leave.endDate)}. ${appointment.job.title} at ${formatBusinessTime(appointment.scheduledStart, timezone)} is already assigned and needs reassignment.`,
+        businessId: actor.businessId,
+        entityId: appointment.id,
+        entityType: 'appointment',
+        metadata: {
+          appointmentId: appointment.id,
+          leaveId: leave.id,
+          memberId: leave.memberId,
+          technicianId: actor.id,
+        },
+        roles: [...APPOINTMENT_WRITE_ROLES],
+        title: 'Appointment requires attention',
+        type: 'APPOINTMENT_ATTENTION',
+      });
+    }
   }
 
   private toMemberLeave(record: LeaveRecord): MemberLeave {

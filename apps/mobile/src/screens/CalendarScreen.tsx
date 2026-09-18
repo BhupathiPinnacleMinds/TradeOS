@@ -56,6 +56,7 @@ import {
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { AppointmentAttentionNotice } from '../components/AppointmentAttentionNotice';
 import type {
   MainTabsParamList,
   RootStackParamList,
@@ -1389,6 +1390,11 @@ function DispatcherAppointmentCard({
         </Text>
       </View>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
+      <AppointmentAttentionNotice
+        appointment={appointment}
+        compact
+        viewerId={userId}
+      />
       <Text style={styles.meta}>
         {primaryCustomerName(appointment.job.customer)}
       </Text>
@@ -1614,6 +1620,11 @@ function AppointmentCard({
         )}
       </Text>
       <Text style={styles.eventTitle}>{appointment.job.title}</Text>
+      <AppointmentAttentionNotice
+        appointment={appointment}
+        compact
+        viewerId={userId}
+      />
       <Text style={styles.meta}>
         {primaryCustomerName(appointment.job.customer)}
       </Text>

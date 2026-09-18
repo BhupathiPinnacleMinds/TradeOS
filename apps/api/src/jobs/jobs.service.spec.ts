@@ -298,6 +298,11 @@ function createService() {
       prisma as never,
       communications as never,
       notifications as never,
+      {
+        decorate: jest.fn((_businessId: string, records: unknown[]) =>
+          Promise.resolve(records),
+        ),
+      } as never,
     ),
   };
 }

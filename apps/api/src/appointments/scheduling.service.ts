@@ -12,6 +12,7 @@ import {
   formatDateOnlyForDisplay,
   formatMemberShiftTimeRange,
   getBusinessDateParts,
+  getBusinessDateSpan,
   getBusinessDayRangeUtc,
   normaliseBusinessTimezone,
 } from '@tradieos/shared';
@@ -530,9 +531,7 @@ export class SchedulingService {
   }
 
   private businessDatesTouched(start: Date, end: Date, timezone: string) {
-    const startDate = this.dateOnly(start, timezone);
-    const inclusiveEnd = new Date(Math.max(start.getTime(), end.getTime() - 1));
-    const endDate = this.dateOnly(inclusiveEnd, timezone);
+    const { startDate, endDate } = getBusinessDateSpan(start, end, timezone);
     const dates = [startDate];
     let cursor = startDate;
     while (cursor < endDate) {
