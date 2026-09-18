@@ -32,6 +32,7 @@ const owner: AuthenticatedUser = {
 describe('InvoicesService PDF generation', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it('sends invoices through the configured Resend provider without enabling broader customer communications', async () => {
@@ -234,6 +235,7 @@ describe('InvoicesService PDF generation', () => {
   });
 
   it('creates a fresh current PDF revision after recording a confirmed payment', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-12T02:00:00.000Z'));
     const tx = createTransactionMock(null, {
       amountPaidCents: 5000,
       balanceDueCents: 8200,
